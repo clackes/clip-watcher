@@ -1,0 +1,6 @@
+# Copy to operators.yaml (gitignored). Only these Telegram user IDs may press buttons.
+telegram_chat_id: 0
+operators:
+  owner: {telegram_id: 0, label: me}
+  manu: {telegram_id: 0, label: Manu}
+  samu: {telegram_id: 0, label: Samu}

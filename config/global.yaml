@@ -1,0 +1,80 @@
+# Global settings. Per-streamer overrides live in streamers.yaml.
+tools:
+  ffmpeg: null              # null = auto (ffmpeg-full on macOS, then PATH)
+  twitch_downloader: bin/TwitchDownloaderCLI
+
+buffer:
+  window_min: 30            # D2: ring buffer window, 15-60
+  segment_s: 10
+  pin_pad_s: 60
+  min_free_disk_pct: 15
+
+detector:                   # D3
+  weights: {U: 0.5, E: 0.35, S: 0.15}
+  window_s: 10
+  baseline_min: 15
+  fire_z: 3.0
+  pre_z: 2.0
+  min_unique: 8
+  min_unique_viewer_pct: 0.01
+  mute_after_notice_s: 75   # raid / sub-bomb / giveaway mute window (60-90 s)
+  cooldown_s: 45
+  keep_final: 4.5
+  default_delay_s: 8        # chat reacts ~5-15 s after the moment
+  bots: [nightbot, streamelements, moobot, fossabot, sery_bot, streamlabs, wizebot, soundalerts]
+  keywords:                 # weights for E (case-insensitive; emotes match whole tokens)
+    "clip it": 3
+    clip: 3
+    KEKW: 2
+    OMEGALUL: 2
+    LUL: 2
+    ICANT: 2
+    LMAO: 2
+    "💀": 2
+    "😂": 2
+    "🤣": 2
+    "😭": 2
+    Pog: 1.5
+    PogChamp: 1.5
+    W: 1.5
+    "LETS GO": 1.5
+    "?????": 1.5
+    # Italian laughter / surprise
+    "morto": 2
+    "sono morto": 2
+    "muoio": 2
+    "sto morendo": 2
+    "piango": 2
+    XD: 2
+    raga: 1
+    "ma che": 1
+    madonna: 1
+  laughter_regex: '(?i)\b(a?h+a+){2,}h?\b'
+  other_weight: 0.5
+
+vod:                        # Day-0 VOD lane defaults (21A)
+  top: 5
+  before_s: 20
+  after_s: 10
+  gap_s: 90
+  bucket_s: 10
+  pad_s: 6                  # D9 seek fix padding
+  quality: 1080p60
+
+render:
+  profile: cpu_batch        # cpu_batch | cpu_live | nvenc | mac_preview
+  default_cam: "480:213:1400:743"
+  default_game: "1920:960:0:60"
+
+judge:
+  screen_model: claude-haiku-5-5
+  judge_model: claude-sonnet-5-5
+  borderline_model: claude-opus-5-5
+  keyframes: 6
+  keyframe_height: 480
+  min_funny: 5
+
+publish:
+  auto_approve: false       # true = bot approves clips with judge score >= auto_approve_min
+  auto_approve_min: 8
+  claim_ttl_min: 15

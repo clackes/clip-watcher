@@ -1,0 +1,12 @@
+# Copy to streamers.yaml (gitignored). Keys are lowercase logins.
+streamers:
+  examplestreamer:
+    platform: twitch            # twitch | kick
+    url: https://www.twitch.tv/examplestreamer
+    language: it                # it | en
+    campaign_link: null
+    has_webcam: true
+    facecam_rect: "480:213:1400:743"   # w:h:x:y on 1920x1080, 2.25:1, human-confirmed
+    gameplay_rect: "1920:960:0:60"     # 2:1
+    delay_s: 8
+    keywords: {}                # extra E weights for this channel's emotes

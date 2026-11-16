@@ -1,0 +1,224 @@
+"""Screening and judging of candidates with structured outputs and a heuristic fallback."""
+
+from __future__ import annotations
+
+import base64
+import json
+import logging
+from pathlib import Path
+from typing import Any
+
+from .. import config
+from ..models import Candidate, JudgeResult, Word
+
+log = logging.getLogger(__name__)
+PROMPTS = config.ROOT / "prompts"
+
+_NUM = {"type": "number"}
+JUDGE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "funny_score": _NUM,
+        "hype_score": _NUM,
+        "visual_context_summary": {"type": "string"},
+        "trim_start_s": _NUM,
+        "trim_end_s": _NUM,
+        "hook_text": {"type": "string"},
+        "title_options": {"type": "array", "items": {"type": "string"}},
+        "setup_line": {"type": "string"},
+        "reject_reason": {"type": ["string", "null"]},
+    },
+    "required": [
+        "funny_score",
+        "hype_score",
+        "visual_context_summary",
+        "trim_start_s",
+        "trim_end_s",
+        "hook_text",
+        "title_options",
+        "setup_line",
+        "reject_reason",
+    ],  # fmt: skip
+    "additionalProperties": False,
+}
+SCREEN_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "funny_score": _NUM,
+        "hype_score": _NUM,
+        "works_without_context": {"type": "boolean"},
+        "reject_reason": {"type": ["string", "null"]},
+    },
+    "required": ["funny_score", "hype_score", "works_without_context", "reject_reason"],
+    "additionalProperties": False,
+}
+
+
+class JudgeError(RuntimeError):
+    pass
+
+
+def _prompt(name: str) -> str:
+    return (PROMPTS / name).read_text()
+
+
+def _client() -> Any:
+    import anthropic
+
+    return anthropic.Anthropic()
+
+
+def _jcfg() -> dict[str, Any]:
+    return config.global_config().get("judge", {})
+
+
+def _call(client: Any, model: str, system: str, content: list[dict], schema: dict, max_tokens: int) -> dict:
+    resp = client.messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+        messages=[{"role": "user", "content": content}],
+        output_config={"format": {"type": "json_schema", "schema": schema}},
+    )
+    stop = getattr(resp, "stop_reason", None)
+    if stop in ("refusal", "max_tokens"):
+        raise JudgeError(f"stop_reason={stop}")
+    text = "".join(getattr(b, "text", "") for b in resp.content if getattr(b, "type", "") == "text")
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        raise JudgeError("response is not an object")
+    return data
+
+
+def _transcript(words: list[Word]) -> str:
+    return " ".join(w.text for w in words)
+
+
+def _chat_block(chat_lines: list[str], limit: int = 60) -> str:
+    return "\n".join(chat_lines[:limit])
+
+
+def screen(
+    transcript_text: str, chat_lines: list[str], title: str, game: str, client: Any = None
+) -> dict[str, Any]:
+    """Cheap first pass. Returns funny_score, hype_score, works_without_context, reject_reason."""
+    try:
+        client = client or _client()
+        text = (
+            f"Stream title: {title}\nGame: {game}\n\nTranscript:\n{transcript_text}\n\n"
+            f"Chat:\n{_chat_block(chat_lines)}"
+        )
+        data = _call(
+            client,
+            _jcfg().get("screen_model", ""),
+            _prompt("screen.md"),
+            [{"type": "text", "text": text}],
+            SCREEN_SCHEMA,
+            400,
+        )
+        for k in ("funny_score", "hype_score"):
+            data[k] = max(0.0, min(10.0, float(data[k])))
+        data["works_without_context"] = bool(data["works_without_context"])
+        return data
+    except Exception as e:  # noqa: BLE001
+        log.warning("screen failed (%s); passing candidate through", e)
+        return {"funny_score": 5.0, "hype_score": 5.0, "works_without_context": True, "reject_reason": None}
+
+
+def _image_block(p: Path) -> dict:
+    data = base64.standard_b64encode(Path(p).read_bytes()).decode()
+    return {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": data}}
+
+
+def _streamer_name(login: str) -> str:
+    return login[:1].upper() + login[1:]
+
+
+def heuristic_judge(cand: Candidate, words: list[Word]) -> JudgeResult:
+    score = max(0.0, min(10.0, float(cand.final_score)))
+    hook = "WAIT FOR IT"
+    if words:
+        long_words = sorted((w.text.strip(".,!?") for w in words), key=len, reverse=True)[:2]
+        long_words = [w for w in long_words if w]
+        if long_words:
+            hook = " ".join(long_words).upper()
+    name = _streamer_name(cand.stream)
+    return JudgeResult(
+        funny_score=score,
+        hype_score=score,
+        visual_context_summary="",
+        trim_start_s=0.0,
+        trim_end_s=cand.duration,
+        hook_text=hook,
+        title_options=[f"{name} reacts", f"{name} didn't expect this", f"Chat made {name} lose it"],
+        setup_line=f"{name} reacts to a big moment in chat.",
+        reject_reason=None,
+        source="heuristic",
+    )
+
+
+def _validate(data: dict, cand: Candidate) -> JudgeResult:
+    dur = cand.duration
+    hook_words = str(data["hook_text"]).split()
+    if not 2 <= len(hook_words) <= 6:
+        raise JudgeError("hook must be 2-6 words")
+    titles = [str(t).strip()[:60].rstrip() for t in data["title_options"] if str(t).strip()]
+    if not titles:
+        raise JudgeError("no titles")
+    ts, te = float(data["trim_start_s"]), float(data["trim_end_s"])
+    ts, te = max(0.0, ts), min(dur, te)
+    if te <= ts:
+        raise JudgeError("trim outside window")
+    rr = data.get("reject_reason")
+    return JudgeResult(
+        funny_score=max(0.0, min(10.0, float(data["funny_score"]))),
+        hype_score=max(0.0, min(10.0, float(data["hype_score"]))),
+        visual_context_summary=str(data["visual_context_summary"]),
+        trim_start_s=ts,
+        trim_end_s=te,
+        hook_text=" ".join(hook_words),
+        title_options=titles,
+        setup_line=str(data["setup_line"]),
+        reject_reason=str(rr) if rr else None,
+        source="claude",
+    )
+
+
+def judge_candidate(
+    cand: Candidate,
+    words: list[Word],
+    chat_lines: list[str],
+    frames: list[Path],
+    *,
+    title: str = "",
+    game: str = "",
+    client: Any = None,
+    model: str | None = None,
+) -> JudgeResult:
+    try:
+        client = client or _client()
+        content: list[dict] = [_image_block(p) for p in frames]
+        content.append(
+            {
+                "type": "text",
+                "text": (
+                    f"Streamer: {_streamer_name(cand.stream)}\nStream title: {title}\nGame: {game}\n"
+                    f"Window length: {cand.duration:.1f}s (peak at {cand.peak_s - cand.start_s:.1f}s)\n\n"
+                    f"Transcript with times:\n"
+                    + " ".join(f"[{w.start:.1f}]{w.text}" for w in words)
+                    + f"\n\nChat:\n{_chat_block(chat_lines)}"
+                ),
+            }
+        )
+        data = _call(
+            client,
+            model or _jcfg().get("judge_model", ""),
+            _prompt("judge_rubric.md"),
+            content,
+            JUDGE_SCHEMA,
+            1200,
+        )
+        return _validate(data, cand)
+    except Exception as e:  # noqa: BLE001
+        log.warning("judge failed (%s); using heuristic", e)
+        return heuristic_judge(cand, words)
