@@ -31,16 +31,16 @@ def build_videodownload_cmd(
     tdl: str, vod: str, start_s: float, end_s: float, out: Path, quality: str = "1080p60"
 ) -> list[str]:
     # Verify flags with `TwitchDownloaderCLI videodownload --help` after upgrading the tool
-    # (-b / -e are begin / end in seconds, -q the quality label).
+    # (-b / -e take a unit suffix: 12s, 3m, 1h; -q is the quality label).
     return [
         tdl,
         "videodownload",
         "--id",
         vod_id(vod),
         "-b",
-        str(int(max(0, start_s))),
+        f"{int(max(0, start_s))}s",
         "-e",
-        str(int(end_s)),
+        f"{int(end_s)}s",
         "-q",
         quality,
         "-o",
@@ -107,8 +107,11 @@ def process_candidate(
         src, local_start = video, cand.start_s
     else:
         dl_start, dl_end, local_start = window_with_pad(cand, pad_s)
-        src = work / f"cand_{n}.mp4"
-        run_cmd(build_videodownload_cmd(config.twitch_downloader_bin(), vod, dl_start, dl_end, src, quality))
+        src = work / f"cand_{n}_{int(dl_start)}.mp4"
+        if not (src.exists() and src.stat().st_size > 0):  # reuse an earlier download of the same window
+            run_cmd(
+                build_videodownload_cmd(config.twitch_downloader_bin(), vod, dl_start, dl_end, src, quality)
+            )
 
     meta = heuristic_meta(streamer)
     words: list = []
@@ -151,6 +154,8 @@ def process_candidate(
         words=words,
         hook=meta["hook"],
         has_webcam=bool(scfg.get("has_webcam", True)),
+        cam=scfg.get("facecam_rect"),
+        game=scfg.get("gameplay_rect"),
     )
     clean = tpl.render_clean(src, local_start, dur, clip_dir / "clean_16x9.mp4")
     meta.update(

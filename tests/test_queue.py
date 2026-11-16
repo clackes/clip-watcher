@@ -98,7 +98,8 @@ def test_staging_flow(tmp_path, db):
 OPS = {"manu": {"telegram_id": 11, "label": "Manu"}, "samu": {"telegram_id": 22, "label": "Samu"}}
 
 
-def test_bot_logic(db):
+def test_bot_logic(db, tmp_path, monkeypatch):
+    monkeypatch.setattr(staging, "DEFAULT_ROOT", tmp_path / "staging")
     assert telegram_bot.handle_action(db, 999, "claim:c1:manu", operators=OPS) == ("", None)
     assert len(telegram_bot.buttons_for(db.get("c1"), OPS)[0]) == 2
     text, _ = telegram_bot.handle_action(db, 11, "claim:c1:manu", operators=OPS)

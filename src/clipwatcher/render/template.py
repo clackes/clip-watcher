@@ -47,6 +47,14 @@ def pick_style(clip_id: str) -> tuple[str, str]:
     return STYLES[h % 2], list(ACCENTS)[(h // 2) % 3]
 
 
+def parse_rect(r: Rect | str | None) -> Rect | None:
+    """Accept a Rect (x, y, w, h) or an ffmpeg crop string "w:h:x:y" as stored in streamers.yaml."""
+    if r is None or isinstance(r, tuple):
+        return r
+    w, h, x, y = (int(float(v)) for v in str(r).split(":"))
+    return (x, y, w, h)
+
+
 def default_cam(info: SourceInfo) -> Rect:
     w = int(info.width * 0.3) // 2 * 2
     h = int(w / 2.25) // 2 * 2
@@ -146,8 +154,8 @@ def render_short(
     if style not in STYLES or accent not in ACCENTS:
         raise ValueError(f"bad style/accent: {style}/{accent}")
     info = probe(src)
-    cam = cam or default_cam(info)
-    game = game or default_game(info)
+    cam = parse_rect(cam) or default_cam(info)
+    game = parse_rect(game) or default_game(info)
     coarse, trim = _seek(start_s)
     ensure_branding(BRANDING_DIR)
     cta = BRANDING_DIR / ("cta_youtube.png" if platform == "youtube" else "cta_social.png")

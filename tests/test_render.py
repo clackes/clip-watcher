@@ -116,3 +116,11 @@ def test_d9_ts_seek_lands_on_requested_second(synth_src, tmp_path, start):
         range(SRC_SECONDS), key=lambda i: sum(abs(a - b) for a, b in zip(second_colour(i), got, strict=False))
     )
     assert best == k, (got, second_colour(k))
+
+
+def test_parse_rect_accepts_config_strings():
+    from clipwatcher.render.template import parse_rect
+
+    assert parse_rect("520:231:0:500") == (0, 500, 520, 231)
+    assert parse_rect((1, 2, 3, 4)) == (1, 2, 3, 4)
+    assert parse_rect(None) is None

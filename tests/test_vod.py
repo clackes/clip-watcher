@@ -12,7 +12,8 @@ def test_build_videodownload_cmd():
         "tdl", "https://www.twitch.tv/videos/123456789", 94.5, 140, Path("o.mp4")
     )
     assert cmd == [
-        "tdl", "videodownload", "--id", "123456789", "-b", "94", "-e", "140", "-q", "1080p60", "-o", "o.mp4",
+        "tdl", "videodownload", "--id", "123456789", "-b", "94s", "-e", "140s",
+        "-q", "1080p60", "-o", "o.mp4",
     ]  # fmt: skip
 
 
