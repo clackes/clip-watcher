@@ -64,3 +64,10 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   `stage_package(clip_id, short, clean, meta) -> Path`, `mark_approved(...)`. `queue/telegram_bot.py`.
 - `publish/youtube.py` behind DRY_RUN.
 - `vod.py` Day-0 VOD lane CLI `python -m clipwatcher.vod`.
+- Live ingest (`ingest/`): `ringbuffer.RingBuffer(root, window_min, segment_s)` with `add_segment(path, pdt_ms)`,
+  `pin(start_ms, end_ms, ttl_s)`, `prune()`, `cut(start_ms, end_ms, out) -> Path` (wall-clock epoch ms via
+  #EXT-X-PROGRAM-DATE-TIME map). `watcher.py` live polling (Helix / Kick), `recorder.py` streamlink supervisor.
+- Live chat (`chat/twitch_irc.py`, `chat/kick.py`): async iterators yielding ChatMessage with epoch-ms ts.
+  `detect/live.py` `LiveDetector(streamer, viewers=None).feed(msg) -> Candidate | None` (epoch seconds).
+  `detect/viewer_clips.py` Helix Get Clips poller.
+- `fastlane.py` live lane orchestrator; `calibrate.py` facecam/gameplay rect suggestion + Telegram still.
