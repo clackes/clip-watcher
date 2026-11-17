@@ -8,6 +8,7 @@ buffer:
   segment_s: 10
   pin_pad_s: 60
   min_free_disk_pct: 15
+  min_free_disk_gb: 5     # recording pauses only below BOTH floors; pruning always runs
 
 detector:                   # D3
   weights: {U: 0.5, E: 0.35, S: 0.15}

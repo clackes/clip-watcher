@@ -53,6 +53,8 @@ async def run_streamer(login: str, *, db, bot=None, staging_root: Path | None = 
         segment_s=int(buf.get("segment_s", 10)),
         window_min=float(buf.get("window_min", 30)),
         min_free_disk_pct=float(buf.get("min_free_disk_pct", 15)),
+        min_free_disk_gb=float(buf.get("min_free_disk_gb", 5)),
+        on_alert=_alerter(bot),
     )
     steps = Steps()
     if bot is not None:
@@ -72,6 +74,17 @@ async def run_streamer(login: str, *, db, bot=None, staging_root: Path | None = 
         await lane.run()
     finally:
         await rec.stop()
+
+
+def _alerter(bot):
+    if bot is None:
+        return None
+    from clipwatcher.queue.telegram_bot import alert
+
+    async def send(text: str) -> None:
+        await alert(bot, text)
+
+    return send
 
 
 async def supervise(login: str, **kw) -> None:

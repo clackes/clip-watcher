@@ -10,3 +10,7 @@ def free_pct(path: str | Path) -> float:
     """Percent of the filesystem holding `path` that is free (0-100)."""
     u = shutil.disk_usage(path)
     return 100.0 * u.free / u.total if u.total else 0.0
+
+
+def free_gb(path: str | Path) -> float:
+    return shutil.disk_usage(path).free / 1e9

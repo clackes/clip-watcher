@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import shlex
@@ -15,6 +16,8 @@ from pathlib import Path
 from .. import config
 from .hls_map import PdtMap
 from .ringbuffer import RingBuffer
+
+log = logging.getLogger(__name__)
 
 QUALITY_DEFAULT = "720p60,720p,best"
 _AD_START = re.compile(r"detected advertisement break(?: of (\d+) seconds?)?", re.I)
@@ -143,19 +146,24 @@ class Recorder:
         segment_s: int = 10,
         window_min: float = 30,
         min_free_disk_pct: float = 15,
+        min_free_disk_gb: float = 5,
+        on_alert=None,
     ):
         self.platform, self.login, self.stream_id = platform, login, stream_id
         self.quality, self.segment_s = quality, segment_s
         self.dir = Path(ring_root) / login / stream_id
         self.dir.mkdir(parents=True, exist_ok=True)
-        self.ring = RingBuffer(self.dir, window_min, segment_s, min_free_disk_pct)
+        self.ring = RingBuffer(self.dir, window_min, segment_s, min_free_disk_pct, min_free_disk_gb)
         self.pdt = PdtMap(segment_s=segment_s)
         self.ads = AdLog(self.dir / "ads.jsonl")
         self._ingested: set[str] = set()
         self._procs: list[asyncio.subprocess.Process] = []
         self._tasks: list[asyncio.Task] = []
         self._run_start_ms = 0
+        self._run_id = ""
         self._n_runs = 0
+        self.paused = False
+        self.on_alert = on_alert  # async callable(text), e.g. a Telegram alert
 
     def newest_segment_age_s(self, now: float | None = None) -> float | None:
         rows = self.ring.segments()
@@ -183,14 +191,18 @@ class Recorder:
 
     async def start(self) -> None:
         await self.stop()
+        await self._spawn()
+        self._tasks.append(asyncio.create_task(self._ingest_loop()))
+
+    async def _spawn(self) -> None:
         self._n_runs += 1
-        run_id = f"r{int(time.time())}"
+        self._run_id = f"r{int(time.time())}"
         self._run_start_ms = int(time.time() * 1000)
         # One shell pipeline in its own session = one process group holding streamlink and ffmpeg, so
         # stop() and the startup sweep can kill the whole recorder. (Separate processes can't share a
         # group across sessions on macOS, and killing only the Python parent left both recording.)
         sl_cmd = shlex.join(build_streamlink_cmd(self.platform, self.login, self.quality))
-        ff_cmd = shlex.join(build_ffmpeg_cmd(self.dir, run_id, self.segment_s))
+        ff_cmd = shlex.join(build_ffmpeg_cmd(self.dir, self._run_id, self.segment_s))
         sl = await asyncio.create_subprocess_exec(
             "/bin/sh", "-c", f"{sl_cmd} | {ff_cmd} 2>/dev/null",
             stdout=asyncio.subprocess.DEVNULL,
@@ -199,25 +211,9 @@ class Recorder:
         )  # fmt: skip
         (self.dir / "pids.json").write_text(json.dumps({"pgid": sl.pid}))
         self._procs = [sl]
-        self._tasks = [
-            asyncio.create_task(self._read_stderr(sl)),
-            asyncio.create_task(self._ingest_loop(run_id, self._run_start_ms)),
-        ]
+        self._tasks.append(asyncio.create_task(self._read_stderr(sl)))
 
-    async def _read_stderr(self, proc: asyncio.subprocess.Process) -> None:
-        assert proc.stderr
-        async for raw in proc.stderr:
-            self.ads.feed(raw.decode(errors="replace"))
-
-    async def _ingest_loop(self, run_id: str, run_start_ms: int) -> None:
-        while True:
-            await asyncio.sleep(self.segment_s)
-            self.ingest_run(run_id, run_start_ms)
-            self.ring.prune()
-
-    async def stop(self) -> None:
-        for t in self._tasks:
-            t.cancel()
+    async def _kill_pipeline(self) -> None:
         if self._procs:
             kill_group(self._procs[0].pid, signal.SIGTERM)
         for p in self._procs:
@@ -226,8 +222,48 @@ class Recorder:
                     await asyncio.wait_for(p.wait(), 10)
                 except TimeoutError:
                     kill_group(self._procs[0].pid, signal.SIGKILL)
-        self._tasks, self._procs = [], []
+        self._procs = []
         (self.dir / "pids.json").unlink(missing_ok=True)
+
+    async def _read_stderr(self, proc: asyncio.subprocess.Process) -> None:
+        assert proc.stderr
+        async for raw in proc.stderr:
+            self.ads.feed(raw.decode(errors="replace"))
+
+    async def _ingest_loop(self) -> None:
+        while True:
+            await asyncio.sleep(self.segment_s)
+            await self.check_once()
+
+    async def check_once(self) -> None:
+        """Ingest finished segments, prune, and pause/resume recording on low disk."""
+        if self._run_id:
+            self.ingest_run(self._run_id, self._run_start_ms)
+        alert = self.ring.prune().alert
+        if alert and not self.paused:
+            self.paused = True
+            log.error("%s: %s", self.login, alert)
+            await self._kill_pipeline()
+            await self._alert(f"{self.login}: {alert}")
+        elif not alert and self.paused:
+            self.paused = False
+            log.warning("%s: disk free again, recording resumed", self.login)
+            await self._spawn()
+            await self._alert(f"{self.login}: disk free again, recording resumed")
+
+    async def _alert(self, text: str) -> None:
+        if self.on_alert is None:
+            return
+        try:
+            await self.on_alert(text)
+        except Exception:  # noqa: BLE001 - an alert must never stop recording
+            log.exception("alert failed")
+
+    async def stop(self) -> None:
+        for t in self._tasks:
+            t.cancel()
+        self._tasks = []
+        await self._kill_pipeline()
 
 
 def kill_group(pgid: int, sig: int) -> None:

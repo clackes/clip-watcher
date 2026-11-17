@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import config
-from .disk import free_pct
+from .disk import free_gb, free_pct
 
 
 @dataclass
@@ -27,12 +27,14 @@ class RingBuffer:
         window_min: float = 30,
         segment_s: float = 10,
         min_free_disk_pct: float = 15,
+        min_free_disk_gb: float = 5,
     ):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         self.window_ms = int(window_min * 60_000)
         self.segment_s = segment_s
         self.min_free = min_free_disk_pct
+        self.min_free_gb = min_free_disk_gb
         self.index_path = self.root / "index.jsonl"
         self.pins_path = self.root / "pins.json"
 
@@ -88,11 +90,7 @@ class RingBuffer:
     def prune(self, now_ms: int | None = None, now: float | None = None) -> PruneResult:
         now = time.time() if now is None else now
         now_ms = int(now * 1000) if now_ms is None else now_ms
-        res = PruneResult()
-        pct = free_pct(self.root)
-        if pct < self.min_free:
-            res.alert = f"disk free {pct:.1f}% < {self.min_free}%: pruning stopped"
-            return res
+        res = PruneResult(alert=self.low_disk())
         pins = [p for p in self._pins() if p["expires"] > now]
         self.pins_path.write_text(json.dumps(pins))
         rows = self.segments()
@@ -111,6 +109,19 @@ class RingBuffer:
         if res.deleted:
             self._write_index(keep)
         return res
+
+    def low_disk(self) -> str | None:
+        """Alert text when the disk is too full to keep recording, else None.
+
+        Low means below both the percent and the GB floor, so a big NAS volume at 14% (hundreds of GB) and
+        a laptop that starts at 10% free with 20 GB both keep recording. Pruning itself never stops: the
+        first version stopped pruning below 15% free, so a Mac that started at 10% grew every ring until
+        the disk was full and all recorders died.
+        """
+        pct, gb = free_pct(self.root), free_gb(self.root)
+        if pct < self.min_free and gb < self.min_free_gb:
+            return f"disk free {gb:.1f} GB ({pct:.1f}%) below {self.min_free_gb} GB: recording paused"
+        return None
 
     # -- cut -----------------------------------------------------------
     def cut(self, start_ms: int, end_ms: int, out: str | Path) -> tuple[Path, float]:

@@ -37,12 +37,55 @@ def test_prune_pin(tmp_path):
     assert [r["name"] for r in rb.segments()] == ["s9.ts"]
 
 
-def test_prune_disk_low(tmp_path, monkeypatch):
-    rb = RingBuffer(tmp_path / "r", window_min=1, min_free_disk_pct=15)
+def test_prune_disk_low_still_prunes(tmp_path, monkeypatch):
+    # Regression: pruning used to stop below 15% free, so a Mac that started at 10% free grew every ring
+    # until the disk was full. Pruning must always run; low disk only raises the alert.
+    rb = RingBuffer(tmp_path / "r", window_min=1, min_free_disk_pct=15, min_free_disk_gb=5)
     _fill(rb, 5)
     monkeypatch.setattr("clipwatcher.ingest.ringbuffer.free_pct", lambda p: 5.0)
+    monkeypatch.setattr("clipwatcher.ingest.ringbuffer.free_gb", lambda p: 2.0)
     res = rb.prune(now_ms=9_999_999)
-    assert res.alert and not res.deleted and len(rb.segments()) == 5
+    assert res.alert and res.deleted and len(rb.segments()) == 1
+
+
+def test_low_pct_but_enough_gb_is_not_low(tmp_path, monkeypatch):
+    rb = RingBuffer(tmp_path / "r", min_free_disk_pct=15, min_free_disk_gb=5)
+    monkeypatch.setattr("clipwatcher.ingest.ringbuffer.free_pct", lambda p: 9.6)
+    monkeypatch.setattr("clipwatcher.ingest.ringbuffer.free_gb", lambda p: 22.0)
+    assert rb.low_disk() is None
+
+
+def test_recorder_pauses_and_resumes_on_low_disk(tmp_path, monkeypatch):
+    import asyncio
+
+    from clipwatcher.ingest.recorder import Recorder
+
+    alerts, events = [], []
+
+    async def on_alert(t):
+        alerts.append(t)
+
+    rec = Recorder("twitch", "x", "s", tmp_path, on_alert=on_alert)
+
+    async def spawn():
+        events.append("spawn")
+
+    async def kill():
+        events.append("kill")
+
+    monkeypatch.setattr(rec, "_spawn", spawn)
+    monkeypatch.setattr(rec, "_kill_pipeline", kill)
+    low = {"v": "low"}
+    monkeypatch.setattr(rec.ring, "low_disk", lambda: low["v"])
+
+    async def run():
+        await rec.check_once()
+        await rec.check_once()  # still low: no second kill
+        low["v"] = None
+        await rec.check_once()
+
+    asyncio.run(run())
+    assert events == ["kill", "spawn"] and not rec.paused and len(alerts) == 2
 
 
 def test_zero_byte_segment_dropped(tmp_path):
