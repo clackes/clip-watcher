@@ -178,7 +178,7 @@ def test_cold_open_window(monkeypatch):
     assert cold_open.window(29.5, 0.0, 30.0) == (27.0, 3.0)  # clipped at the clip end
     # word-safe: start moves to the start of the word in progress, end finishes a short word
     ws = [Word(14.3, 14.7, "OH"), Word(17.8, 18.2, "NO")]
-    assert cold_open.window(17.0, 7.0, 23.0, ws) == (7.22, 4.06)
+    assert cold_open.window(17.0, 7.0, 23.0, ws) == (7.22, 4.23)
     monkeypatch.setattr(config, "global_config", lambda: {"render": {"cold_open_s": 0}})
     assert cold_open.window(17.0, 7.0, 23.0) is None
 
@@ -245,3 +245,17 @@ def test_plan_cold_open_only_with_the_judge(monkeypatch, tmp_path):
     assert (pl.t0, pl.t1) == (5.0, 28.0)
     assert 15.0 <= pl.reaction <= 15.5  # pk 14.0 moved onto the burst
     assert pl.cold_open is not None and abs(pl.cold_open[0] - (pl.reaction - 2.5 - 5.0)) < 0.01
+
+
+def test_cold_open_starts_with_the_sentence():
+    """Regression (officermesser): the cold open began at "my registration", mid-way through the joke."""
+    from clipwatcher.render.cold_open import sentence_start
+
+    text = "let me see your ID. Yeah, right now I'm gonna give you guys my ID and my registration. What"
+    times = [20.86, 20.92, 20.92, 20.92, 20.92, 20.92, 20.94, 21.08, 21.26, 21.32, 21.38, 21.56, 21.68,
+             21.78, 22.08, 22.24, 22.58, 22.66, 23.64]  # fmt: skip
+    ws = [Word(t, t + 0.15, x) for t, x in zip(times, text.split(), strict=True)]
+    assert sentence_start(22.59, ws) == 20.84  # "Yeah," right after "ID."
+    assert sentence_start(23.5, ws) == 23.5  # pause after a finished sentence: unchanged
+    long = [Word(10.0 + i * 0.3, 10.25 + i * 0.3, "word") for i in range(30)]  # one 9 s run-on sentence
+    assert sentence_start(17.0, long) == 16.82  # too far back: only the word in progress

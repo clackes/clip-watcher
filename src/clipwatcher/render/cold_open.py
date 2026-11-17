@@ -24,7 +24,10 @@ from clipwatcher.models import Word
 LEAD_S = 2.5  # default render.cold_open_lead_s: start this long before the peak (owner, 17 Nov: the build-up,
 # not the middle of the shout, which alone is unintelligible)
 MIN_INTO_CLIP_S = 3.0  # a reaction already in the first 3 s needs no cold open
+SENTENCE_BACK_S = 3.0  # move the start back to the start of the sentence in progress at most this far
+SENTENCE_GAP_S = 0.7  # a pause this long between words is a sentence boundary too
 MAX_WORD_TAIL_S = 0.8  # extend the cold open to finish the word in progress at most this far
+END_PAD_S = 0.25  # silence kept after the last word of the cold open (the cut swallowed the last syllable)
 EXCESS_DB = 8.0  # shout = this much louder than the streamer's usual talking level
 SILENCE_DB = -40.0  # frames below this are pauses, not talking
 EXCLAMATIONS = {
@@ -127,17 +130,42 @@ def window(
         return None
     s0 = reaction_rel - lead()
     e0 = s0 + co_s
-    s, e = s0, e0
+    s, e = sentence_start(s0, words or []), e0
     for w in words or []:
-        if w.start < s0 < w.end:  # never start mid-word
-            s = w.start - 0.08
         if w.start < e0 < w.end:  # finish the word in progress, or stop before it
-            e = w.end + 0.08 if w.end - e0 <= MAX_WORD_TAIL_S else w.start - 0.02
+            e = w.end + END_PAD_S if w.end - e0 <= MAX_WORD_TAIL_S else w.start - 0.02
+        elif e0 - END_PAD_S < w.end <= e0:  # a word just ended: let its last syllable ring out
+            e = max(e, w.end + END_PAD_S)
     s = max(s, trim_start)
     e = min(e, trim_start + dur)
     if e - s < 1.0:
         return None
     return round(s - trim_start, 2), round(e - s, 2)
+
+
+def sentence_start(t: float, words: list[Word]) -> float:
+    """Start of the sentence being spoken at t (owner, 17 Nov: the joke starts with the sentence, not
+    mid-way), at most SENTENCE_BACK_S earlier; a word start just before t otherwise; t in a pause."""
+    from clipwatcher.judge.snap import _ends_sentence
+
+    ws = sorted((w for w in words if w.text.strip()), key=lambda w: w.start)
+    i = next((k for k, w in enumerate(ws) if w.end > t), None)
+    if i is None or ws[i].start > t + 0.05:  # t falls in a pause: the next sentence starts after it
+        if i is None or i == 0 or ws[i].start - ws[i - 1].end >= SENTENCE_GAP_S or _ends_sentence(ws[i - 1]):
+            return t
+    k, found = i, False
+    while k > 0:
+        prev = ws[k - 1]
+        if _ends_sentence(prev) or ws[k].start - prev.end >= SENTENCE_GAP_S:
+            found = True
+            break
+        if t - prev.start > SENTENCE_BACK_S:
+            break
+        k -= 1
+    found = found or k == 0
+    if not found or t - ws[k].start > SENTENCE_BACK_S:  # no sentence start close by: only the word
+        return round(ws[i].start - 0.08, 2) if ws[i].start < t else t
+    return min(t, round(ws[k].start - 0.08, 2))
 
 
 def refine(series: list[tuple[float, float]], pk: float) -> float:
