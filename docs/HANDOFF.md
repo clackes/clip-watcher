@@ -15,15 +15,27 @@ Start the approval bot and a live test on the Mac (both detached; stop all with 
 ```
 set -a; . ./.env; set +a
 nohup .venv/bin/python -m clipwatcher.queue.telegram_bot > work/telegram_bot.log 2>&1 &
-nohup caffeinate -is .venv/bin/python -m clipwatcher.live --streamers kenetgr,minik --minutes 480 > work/live.log 2>&1 &
+nohup caffeinate -is .venv/bin/python -m clipwatcher.live --streamers zackrawrr,tfue --minutes 480 > work/live.log 2>&1 &
 ```
 
 ## Flow the owner wants (17 Nov)
 Clip ready -> Telegram card with video at once -> owner approves ASAP -> publish to YouTube/Instagram/TikTok.
 - Done: card on ready (plays correctly on iPhone); Approve uploads to YouTube immediately
   (`publish.youtube_on_approve`) and replies with the link. Tested only in dry run (no YouTube credentials).
-- Judge v2 writes the title (tt), hook (hk) and description (ds: teaser + credit, subscribe line, hashtags)
-  that YouTube uses; see docs/JUDGE_BENCHMARK.md for sample outputs and costs.
+- Judge v2 writes the title (tt), hook (hk) and description (ds) that YouTube uses; see
+  docs/JUDGE_BENCHMARK.md for costs (its copy samples predate the English-only switch).
+
+## Code review, 17 Nov late (commits eea983f, e10c8c6)
+- English only (CLAUDE.md D10, `channel.language: en`): all copy English, non-English streamers skipped by
+  live/vod (in streamers.yaml today: kenetgr es, paulinholokobr pt). No Italian left in code/config/tests/docs.
+- Description = 4 lines: teaser + credit / clip-specific question ending in 👇 / reason-to-follow promise /
+  hashtags. Generic "like, comment, subscribe" lines are stripped in code (`judge/compact.is_bait`).
+  The in-video "SUBSCRIBE · LIKE · COMMENT" banner stays (owner's design, confirmed).
+- Fixed: recorder timestamps when streamlink spawned before the stream went live; heuristic clips with
+  no title/description; VOD captions out of sync after judge trim; worker Kick credit, trim and rejects;
+  fast-lane pins and work dirs leaking disk; Whisper reloaded per clip; slow frame extraction.
+- Known, not done: `ClipDB.auto_approve` is not wired anywhere and would not move clips to
+  staging/approved; server-side refusal fallback not enabled (refusals use the English fallback copy).
 
 ## Next steps, in order
 1. Samu types `/id` in the group; put his ID in config/operators.yaml (same for Manu).
