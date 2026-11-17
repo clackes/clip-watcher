@@ -99,3 +99,25 @@ def upload(clip_id: str, meta: dict[str, Any], db: ClipDB, video: Path) -> str:
         log.warning("privacy mismatch for %s: want %s got %s", vid, privacy, actual)
     db.set_state(clip_id, "PUBLISHED", actor="publisher", youtube_id=vid)
     return vid
+
+
+def publish_clip(db: ClipDB, clip_id: str, root: Path | None = None) -> str:
+    """Upload an APPROVED clip's short from staging/approved. Returns a watch URL (or 'dryrun-…' id).
+
+    Title edits made in Telegram live in the DB row's meta and win over the staged meta.json.
+    """
+    import json
+
+    from ..queue import staging
+
+    root = Path(root) if root else staging.DEFAULT_ROOT
+    folder = root / "approved" / clip_id
+    meta = json.loads((folder / "meta.json").read_text())
+    row = db.get(clip_id) or {}
+    meta.update(json.loads(row.get("meta_json") or "{}"))
+    vid = upload(clip_id, meta, db, folder / "short_9x16.mp4")
+    if vid.startswith("dryrun-"):
+        return vid
+    url = f"https://youtube.com/shorts/{vid}"
+    staging.update_published(clip_id, "youtube", url, root)
+    return url

@@ -41,3 +41,18 @@ def test_dry_run_no_network(db, tmp_path, monkeypatch):
     assert youtube.upload("c1", META, db, tmp_path / "v.mp4").startswith("dryrun-")
     assert instagram.publish_reel("c1", META, db, "https://x").startswith("dryrun-")
     assert any(r["action"] == "youtube_dry_run" for r in db.audit_rows("c1"))
+
+
+def test_publish_clip_from_approved_folder(db, tmp_path, monkeypatch):
+    import json
+
+    monkeypatch.setenv("DRY_RUN", "1")
+    monkeypatch.delenv("YOUTUBE_CREDENTIALS", raising=False)
+    monkeypatch.setattr(youtube, "_service", lambda *_: pytest.fail("network"))
+    folder = tmp_path / "approved" / "c1"
+    folder.mkdir(parents=True)
+    (folder / "meta.json").write_text(json.dumps({"streamer": "gioco"}))
+    (folder / "short_9x16.mp4").write_bytes(b"x")
+    db.claim("c1", "manu")
+    db.approve("c1", "manu")
+    assert youtube.publish_clip(db, "c1", tmp_path).startswith("dryrun-")

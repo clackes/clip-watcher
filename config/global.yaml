@@ -91,6 +91,7 @@ publish:
   auto_approve: false       # true = bot approves clips with judge score >= auto_approve_min
   auto_approve_min: 8
   claim_ttl_min: 15
+  youtube_on_approve: true  # Approve in Telegram uploads at once (private while DRY_RUN=1)
 
 fastlane:                   # live lane (python -m clipwatcher.live)
   min_score: 5              # peak chat score gate; replay of 4 VODs: ~3-5 clips/h/streamer, keeps most top moments

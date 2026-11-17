@@ -106,7 +106,7 @@ def handle_edit_reply(
 def build_application(db: ClipDB, token: str | None = None) -> Any:
     """Create the python-telegram-bot Application (lazy import)."""
     from telegram import ForceReply, InlineKeyboardButton, InlineKeyboardMarkup
-    from telegram.ext import Application, CallbackQueryHandler, MessageHandler, filters
+    from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
     token = token or os.environ["TELEGRAM_BOT_TOKEN"]
     app = Application.builder().token(token).build()
@@ -135,6 +135,8 @@ def build_application(db: ClipDB, token: str | None = None) -> Any:
         except BadRequest as e:
             if "not modified" not in str(e):  # pressing a button that changes nothing is fine
                 raise
+        if q.data.startswith("approve:") and text == "Approved." and _youtube_on_approve():
+            context.application.create_task(_publish(q.message, db, row["id"]))
         if q.data.startswith("edit:") and text.startswith("Reply"):
             await q.message.reply_text(f"Edit {row['id']}: send the new title.", reply_markup=ForceReply())
             context.user_data["editing"] = row["id"]
@@ -144,9 +146,38 @@ def build_application(db: ClipDB, token: str | None = None) -> Any:
         if cid and handle_edit_reply(db, update.effective_user.id, cid, update.message.text):
             await update.message.reply_text("Title updated.")
 
+    async def on_id(update: Any, context: Any) -> None:
+        u = update.effective_user
+        log.info("telegram id: %s %s (@%s)", u.id, u.full_name, u.username)
+        await update.message.reply_text(f"{u.full_name}: your Telegram ID is {u.id}")
+
+    app.add_handler(CommandHandler("id", on_id))
     app.add_handler(CallbackQueryHandler(on_button))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
     return app
+
+
+def _youtube_on_approve() -> bool:
+    return bool(config.global_config().get("publish", {}).get("youtube_on_approve", True))
+
+
+async def _publish(message: Any, db: ClipDB, clip_id: str) -> None:
+    """Upload right after Approve and reply under the card with the link (or the error)."""
+    import asyncio
+
+    from clipwatcher.publish import youtube
+
+    try:
+        res = await asyncio.to_thread(youtube.publish_clip, db, clip_id)
+    except Exception as e:  # noqa: BLE001 - report every failure to the operators
+        log.exception("youtube upload failed for %s", clip_id)
+        await message.reply_text(f"YouTube upload failed for {clip_id}: {e}")
+        return
+    if res.startswith("dryrun-"):
+        await message.reply_text(f"DRY RUN: {clip_id} not uploaded (no YouTube credentials set).")
+    else:
+        privacy = "private (DRY_RUN=1)" if config.dry_run() else "public"
+        await message.reply_text(f"YouTube {privacy}: {res}")
 
 
 async def post_card(app: Any, db: ClipDB, clip_id: str, video: Path | None = None) -> None:
