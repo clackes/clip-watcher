@@ -39,6 +39,13 @@ def test_resolve_new_scene_is_flagged(monkeypatch, tmp_path):
     assert lay.source == "auto-new" and lay.has_webcam and lay.cam
     lay = layout.resolve(tmp_path / "x.mp4", "x", detector=lambda p: [])
     assert lay.source == "no-face" and not lay.has_webcam
+    # Regression: a missed face on a streamer with a confirmed cam scene kept the full frame (tfue).
+    monkeypatch.setattr(
+        layout.config, "streamer",
+        lambda n: {"has_webcam": True, "facecam_rect": "494:220:0:180", "gameplay_rect": "1426:712:494:184"},
+    )  # fmt: skip
+    lay = layout.resolve(tmp_path / "x.mp4", "x", detector=lambda p: [])
+    assert lay.source == "default-noface" and lay.has_webcam and lay.cam == "494:220:0:180"
 
 
 def test_confirmed_no_webcam_streamer_skips_face_detection(monkeypatch, tmp_path):

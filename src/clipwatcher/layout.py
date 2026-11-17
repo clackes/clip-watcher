@@ -31,7 +31,7 @@ class Layout:
     has_webcam: bool
     cam: str | None
     game: str | None
-    source: str  # fixed | scene:<name> | auto-new | no-face | fullcam | default
+    source: str  # fixed | scene:<name> | auto-new | no-face | default-noface | fullcam | default
 
     def as_render_kwargs(self) -> dict:
         return {"has_webcam": self.has_webcam, "cam": self.cam, "game": self.game}
@@ -108,6 +108,14 @@ def resolve(media: Path, streamer: str, *, n_frames: int = 4, detector=None) -> 
             hit.get("gameplay_rect"),
             f"scene:{hit.get('name', '?')}",
         )
+    if face is None and not full_cam:
+        # A missed face (looking down, small cam, headset) is far likelier than the cam vanishing: keep the
+        # streamer's confirmed cam scene instead of dropping the cam, and flag it for the operator.
+        cam_scene = next((s for s in sc if s.get("has_webcam", True) and s.get("facecam_rect")), None)
+        if cam_scene:
+            return Layout(
+                True, cam_scene.get("facecam_rect"), cam_scene.get("gameplay_rect"), "default-noface"
+            )
     if face is None or full_cam:
         return Layout(False, None, None, "fullcam" if full_cam else "no-face")
     rects = calibrate.compute_rects(boxes, fw, fh, len(frames))

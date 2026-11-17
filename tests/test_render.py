@@ -207,3 +207,21 @@ def test_audio_reaction_needs_a_shout_with_an_exclamation():
     assert audio_reaction(series, 0, 30, [Word(3.2, 3.6, "okay")]) is None  # loud but no exclamation
     flat = [(round(i * 0.1, 1), -20.0) for i in range(300)]
     assert audio_reaction(flat, 0, 30, words) is None
+
+
+def test_plan_cold_open_only_with_the_judge(monkeypatch, tmp_path):
+    from clipwatcher import config
+    from clipwatcher.render import cold_open
+
+    monkeypatch.setattr(config, "global_config", lambda: {"render": {"cold_open_s": 2.0}})
+    # loud burst at 15.0-16.0 s on a -24 talking bed
+    series = [(round(i * 0.1, 1), -10.0 if 15.0 <= i * 0.1 < 16.0 else -24.0) for i in range(300)]
+    monkeypatch.setattr(cold_open, "loudness", lambda m, s, d: series)
+    heur = {"source": "heuristic", "trim_start_s": 0.0, "trim_end_s": 30.0}
+    pl = cold_open.plan(tmp_path / "x.mp4", 0.0, 30.0, 20.0, heur, [])
+    assert pl.cold_open is None and pl.t0 == 7.0  # late start only, no guessed cold open
+    judged = {"source": "claude", "trim_start_s": 5.0, "trim_end_s": 28.0, "peak_rel_s": 14.0}
+    pl = cold_open.plan(tmp_path / "x.mp4", 0.0, 30.0, 20.0, judged, [])
+    assert (pl.t0, pl.t1) == (5.0, 28.0)
+    assert 15.0 <= pl.reaction <= 15.5  # pk 14.0 moved onto the burst
+    assert pl.cold_open is not None and abs(pl.cold_open[0] - (pl.reaction - 0.3 - 5.0)) < 0.01

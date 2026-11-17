@@ -1,8 +1,9 @@
 """Cold open: replay the strongest reaction, zoomed in, before the clip starts (stops the scroll).
 
-The reaction instant comes from the judge (pk, it sees frames and transcript). Without the judge it is
-a shout near the chat spike: much louder than the streamer's usual talking, with an exclamation said
-right there. Nothing clear means no cold open, because a random talking fragment is worse than none.
+The reaction instant comes from the judge (pk): only it sees the frames, so only it knows when something
+happens on screen. The audio then moves pk onto the loudest instant within +/-REFINE_S. Without the judge
+there is no cold open (owner, 17 Nov: chat timing and loudness alone picked moments where nothing happens);
+render.cold_open_audio_fallback: true re-enables the shout detector (audio_reaction) for experiments.
 The cold open is cut on word boundaries so it never starts or ends mid-word.
 """
 
@@ -30,6 +31,7 @@ EXCLAMATIONS = {
 }  # fmt: skip
 SEARCH_BEFORE_S = 15.0  # look for the reaction this far before the chat spike...
 SEARCH_AFTER_S = 3.0  # ...and this far after it
+REFINE_S = 1.5  # move the judge's pk to the loudest instant this close to it
 
 
 def settings() -> tuple[float, float]:
@@ -130,6 +132,19 @@ def window(
     return round(s - trim_start, 2), round(e - s, 2)
 
 
+def refine(series: list[tuple[float, float]], pk: float) -> float:
+    """Judge pk moved onto the loudest (1 s average) instant within +/-REFINE_S, minus a short lead-in."""
+    near = [(t, v) for t, v in series if abs(t - pk) <= REFINE_S]
+    if len(near) < 5:
+        return pk
+    smooth = []
+    for i, (t, _) in enumerate(near):
+        win = [v for _, v in near[max(0, i - 3) : i + 4]]
+        smooth.append((t, sum(win) / len(win)))
+    t, _ = max(smooth, key=lambda x: x[1])
+    return round(t, 2)
+
+
 @dataclass
 class Plan:
     t0: float  # trim, relative to the candidate window
@@ -147,9 +162,14 @@ def plan(
     get = jr.get if isinstance(jr, dict) else lambda k, d=None: getattr(jr, k, d)
     judged = get("source") == "claude"
     react = get("peak_rel_s") if judged else None
-    if react is None and settings()[0] > 0:
+    fallback = bool(config.global_config().get("render", {}).get("cold_open_audio_fallback", False))
+    if settings()[0] > 0 and (react is not None or fallback):
         series = loudness(media, win_start, win_dur)
-        react = audio_reaction(series, chat_peak_rel - SEARCH_BEFORE_S, chat_peak_rel + SEARCH_AFTER_S, words)
+        if react is not None:
+            react = refine(series, float(react))
+        else:
+            lo, hi = chat_peak_rel - SEARCH_BEFORE_S, chat_peak_rel + SEARCH_AFTER_S
+            react = audio_reaction(series, lo, hi, words)
     t0, t1 = float(get("trim_start_s") or 0.0), float(get("trim_end_s") or win_dur)
     if not judged:
         t0, t1 = heuristic_trim(react if react is not None else reaction_s(None, chat_peak_rel), win_dur)
