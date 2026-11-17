@@ -79,7 +79,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 else:
                     parts.append(t)
             lines.append(
-                f"Dialogue: 0,{ts(start)},{ts(end)},Cap,,0,0,0,,{{\\an5\\pos(540,1350)}}{' '.join(parts)}"
+                f"Dialogue: 0,{ts(start)},{ts(end)},Cap,,0,0,0,,{{\\an5\\pos(540,1480)}}{' '.join(parts)}"
             )
     return head + "\n".join(lines) + "\n"
 

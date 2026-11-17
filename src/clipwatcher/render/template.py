@@ -129,7 +129,7 @@ def build_short_graph(
         sh = ":shortest=1" if not use_bg else ""
         g.append(f"{last}[full]overlay=0:{270 + (1020 - 608) // 2}{sh}[v1]")
     g.append(f"[v1][{logo_idx}:v]overlay=140:150[v2]")
-    g.append(f"[v2][{cta_idx}:v]overlay=120:1410[v3]")
+    g.append(f"[v2][{cta_idx}:v]overlay=120:1300[v3]")
     if has_hook:
         g.append(f"[v3][{hook_idx}:v]overlay=(W-w)/2:702:enable='lt(t,2.5)'[v4]")
     else:

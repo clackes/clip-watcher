@@ -61,7 +61,7 @@ def test_pure_helpers():
     assert pick_style("abc") == pick_style("abc")
     assert esc_filter_path("/a b/c:d'e") == "/a b/c\\:d\\'e"
     ass = build_ass(demo_words(4), 4, credit="twitch.tv/x")
-    assert "PlayResX: 1080" in ass and "\\pos(540,1350)" in ass and "&H00E6FF&" in ass
+    assert "PlayResX: 1080" in ass and "\\pos(540,1480)" in ass and "&H00E6FF&" in ass
     assert "\\an9\\pos(1060,282)" in ass
     assert "{" not in esc("a{b}\\c")
     pill = hook_pill("x" * 200)
