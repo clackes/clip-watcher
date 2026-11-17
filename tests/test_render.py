@@ -7,6 +7,7 @@ import subprocess
 import pytest
 
 from clipwatcher.config import ffmpeg_bin, ffprobe_bin
+from clipwatcher.models import Word
 from clipwatcher.render.branding import hook_pill
 from clipwatcher.render.captions import build_ass, caption_style, demo_words, esc
 from clipwatcher.render.encoders import resolve, video_args
@@ -160,7 +161,8 @@ def test_pop_captions_one_event_set_per_word():
     assert len(active) == len(words)  # each word pops exactly once, when spoken
     assert all("\\t(0,70,\\fscx135" in ln for ln in active)
     colours = {re.search(r"\\c(&H[0-9A-F]+&)", ln).group(1) for ln in active}
-    assert len(colours) == len(words)  # every word its own colour
+    assert colours == {"&H00E6FF&"}  # only the spoken word is coloured
+    assert not [ln for ln in ass.splitlines() if ln.startswith("Dialogue: 1,") and "\\c" in ln]
     assert "Style: Pop3,Anton," in ass
 
 
@@ -169,10 +171,13 @@ def test_cold_open_window(monkeypatch):
     from clipwatcher.render import cold_open
 
     monkeypatch.setattr(config, "global_config", lambda: {"render": {"cold_open_s": 2.0}})
-    assert cold_open.window(17.0, 7.0, 23.0) == (9.4, 2.0)  # reaction 10 s into the clip
+    assert cold_open.window(17.0, 7.0, 23.0) == (9.7, 2.0)  # reaction 10 s into the clip
     assert cold_open.window(8.0, 7.0, 23.0) is None  # already in the first 3 s
     assert cold_open.window(None, 0.0, 30.0) is None
-    assert cold_open.window(29.9, 0.0, 30.0) == (28.0, 2.0)  # clamped inside the clip
+    assert cold_open.window(29.0, 0.0, 30.0) == (28.7, 1.3)  # clipped at the clip end
+    # word-safe: start moves to the start of the word in progress, end finishes a short word
+    ws = [Word(16.5, 16.9, "OH"), Word(18.6, 19.0, "NO")]
+    assert cold_open.window(17.0, 7.0, 23.0, ws) == (9.42, 2.66)
     monkeypatch.setattr(config, "global_config", lambda: {"render": {"cold_open_s": 0}})
     assert cold_open.window(17.0, 7.0, 23.0) is None
 
@@ -186,3 +191,19 @@ def test_short_with_cold_open(synth_src, tmp_path, webcam):
         hook="WATCH HIS FACE", has_webcam=webcam, profile="cpu_live", captions="pop", cold_open=(2.5, 1.5),
     )  # fmt: skip
     check_short(out, 5.5)
+
+
+def test_audio_reaction_needs_a_shout_with_an_exclamation():
+    from clipwatcher.render.cold_open import audio_reaction
+
+    # talking at -24, a loud stretch of plain talk at -12 (3-6 s), a shout -10 with "NO!" at 14.0-15.5 s
+    def level(t):
+        return -12.0 if 3 <= t < 6 else (-10.0 if 14.0 <= t < 15.5 else -24.0)
+
+    series = [(round(i * 0.1, 1), level(i * 0.1)) for i in range(300)]
+    words = [Word(3.2, 3.6, "okay"), Word(3.7, 4.0, "so"), Word(14.1, 14.5, "NO!"), Word(14.6, 15.0, "bro")]
+    r = audio_reaction(series, 0, 30, words)
+    assert r is not None and 13.0 <= r <= 14.2  # onset of the shout, not the loud talk at 3 s
+    assert audio_reaction(series, 0, 30, [Word(3.2, 3.6, "okay")]) is None  # loud but no exclamation
+    flat = [(round(i * 0.1, 1), -20.0) for i in range(300)]
+    assert audio_reaction(flat, 0, 30, words) is None

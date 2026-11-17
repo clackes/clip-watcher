@@ -322,15 +322,11 @@ class FastLane:
                 self._unpin(cand)
                 self._cleanup(cand)
                 return Outcome(cid, "rejected", timings, error=str(jr.reject_reason or jr.why))
-        from .judge.snap import reaction_s
         from .render import cold_open
 
-        trim0 = 0.0
-        if 0 <= jr.trim_start_s < jr.trim_end_s <= dur + 0.5 and jr.trim_end_s - jr.trim_start_s >= 12:
-            words = trim_words(words, jr.trim_start_s, jr.trim_end_s)
-            trim0 = jr.trim_start_s
-            t0_s, dur = t0_s + jr.trim_start_s, jr.trim_end_s - jr.trim_start_s
-        co = cold_open.window(reaction_s(jr.peak_rel_s, cand.peak_s - cand.start_s), trim0, dur)
+        pl = cold_open.plan(src, t0_s, dur, cand.peak_s - cand.start_s, jr, words)
+        words = trim_words(words, pl.t0, pl.t1)
+        t0_s, dur, co = t0_s + pl.t0, pl.t1 - pl.t0, pl.cold_open
 
         prof = self.cfg["profile"]
         from . import layout

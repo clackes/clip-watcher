@@ -64,8 +64,8 @@ def reaction_s(judge_peak: float | None, chat_peak_rel: float) -> float:
     return float(judge_peak) if judge_peak is not None else max(0.0, chat_peak_rel - CHAT_LAG_S)
 
 
-def heuristic_trim(chat_peak_rel: float, dur: float) -> tuple[float, float]:
+def heuristic_trim(reaction_rel: float, dur: float) -> tuple[float, float]:
     """Start late without the judge: HEURISTIC_LEAD_S before the reaction, keeping at least 12 s."""
-    t0 = max(0.0, reaction_s(None, chat_peak_rel) - HEURISTIC_LEAD_S)
+    t0 = max(0.0, reaction_rel - HEURISTIC_LEAD_S)
     t0 = min(t0, max(0.0, dur - 12.0))
     return round(t0, 2), float(dur)

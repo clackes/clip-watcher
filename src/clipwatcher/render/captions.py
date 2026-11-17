@@ -6,8 +6,7 @@ Styles:
 - bounce: 1-2 words (max ~14 chars) per page, page pops in 70% -> 118% -> 100%, current word in a
   colour that rotates per page.
 - pop (default): the "scale-up" look of MrBeast-style clippers. Anton, thick black stroke, up to 3 words
-  per page on one line; each word has its own colour, white until spoken, and the spoken word pops
-  100% -> 135% -> 125%. Every word is its own positioned event so a growing word scales around its own
+  per page on one line, white; the spoken word turns yellow and pops 100% -> 135% -> 125%. Every word is its own positioned event so a growing word scales around its own
   centre instead of pushing the line around.
 """
 
@@ -28,8 +27,8 @@ POP_SIZE = 145  # ASS size: libass fits winAscent+winDescent (1.733 em for Anton
 POP_EM = POP_SIZE / 1.733  # glyph em in PlayRes px, used to measure widths with PIL
 POP_MAX_W = 960  # px of a page line, with room left for the active word's growth
 POP_GROW = 0.13  # each side of a word gets this share of its width as room to grow (125% hold)
-# yellow, green, cyan, pink, orange, red (#FFE600 #3DFF5A #33E1FF #FF5CF0 #FF9F1C #FF4040) in BGR
-POP_COLOURS = ("&H00E6FF&", "&H5AFF3D&", "&HFFE133&", "&HF05CFF&", "&H1C9FFF&", "&H4040FF&")
+# Highlight colours, cycled per word (#FFE600 yellow, BGR). Owner, 17 Nov: one colour, the rest white.
+POP_COLOURS = ("&H00E6FF&",)
 POP_ACTIVE = "\\fscx100\\fscy100\\t(0,70,\\fscx135\\fscy135)\\t(70,150,\\fscx125\\fscy125)"
 # #FFE600 yellow, #00F0FF cyan, #7CFF3A lime, #FF8A1E orange (BGR)
 BOUNCE_COLOURS = ("&H00E6FF&", "&HFFF000&", "&H3AFF7C&", "&H1E8AFF&")
@@ -106,7 +105,7 @@ def build_pop_events(words: list[Word], dur_s: float, y: int = 1495) -> list[str
             spans = [
                 (p0, a0, 0, f"{{{pos}}}{t}"),  # not said yet: white
                 (a0, a1, 2, f"{{{pos}\\c{colour}{POP_ACTIVE}}}{t}"),  # being said: pops, own colour
-                (a1, page_end, 1, f"{{{pos}\\c{colour}}}{t}"),  # said: own colour
+                (a1, page_end, 1, f"{{{pos}}}{t}"),  # said: back to white
             ]
             for s, e, layer, txt in spans:
                 e = min(e, dur_s)

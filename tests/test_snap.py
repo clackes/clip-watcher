@@ -30,9 +30,9 @@ def test_start_never_cuts_a_word_and_never_rewinds_to_the_sentence_start():
 
 
 def test_heuristic_trim_starts_late():
-    assert heuristic_trim(20.0, 30.0) == (7.0, 30.0)  # reaction ~17 s, start 10 s before it
-    assert heuristic_trim(5.0, 30.0) == (0.0, 30.0)
-    assert heuristic_trim(29.0, 30.0) == (16.0, 30.0)  # 14 s left, >= 12 s kept
+    assert heuristic_trim(17.0, 30.0) == (7.0, 30.0)  # start 10 s before the reaction
+    assert heuristic_trim(2.0, 30.0) == (0.0, 30.0)
+    assert heuristic_trim(26.0, 30.0) == (16.0, 30.0)  # 14 s left, >= 12 s kept
     assert reaction_s(12.5, 20.0) == 12.5 and reaction_s(None, 20.0) == 17.0
 
 

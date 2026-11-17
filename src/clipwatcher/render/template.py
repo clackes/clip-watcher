@@ -202,8 +202,14 @@ def render_short(
     fps = min(info.fps, 60.0)
     co_d = cold_open[1] if cold_open else 0.0
     total = dur_s + co_d
-    if co_d:
-        words = [Word(w.start + co_d, w.end + co_d, w.text) for w in words]
+    if cold_open:  # captions for the replayed shout (sound-off viewers), then the clip re-timed after it
+        cs = cold_open[0]
+        co_words = [
+            Word(max(0.0, w.start - cs), min(co_d, w.end - cs), w.text)
+            for w in words
+            if cs - 0.05 <= w.start < cs + co_d - 0.1
+        ]
+        words = co_words + [Word(w.start + co_d, w.end + co_d, w.text) for w in words]
 
     with tempfile.TemporaryDirectory(prefix="clipwatcher_") as td:
         work = Path(td)

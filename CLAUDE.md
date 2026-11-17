@@ -41,9 +41,10 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 - D5 One 9:16 template (1080x1920): bg | ClipVault top banner 1000x166 centred @y96 | webcam 1080x480 @y270 | hook pill
   y702 t<render.hook_s (3.5s) | gameplay 1080x540 @y750 | CTA banner 920x152 centred @y1300 | subs \pos(540,1495) 80px current word #FFE600
   110% (owner's call 17 Nov; replaced the same day by `render.captions: pop`: Anton (assets/fonts, OFL), up to 3
-  words per line, every word its own colour, white until spoken, spoken word pops 100->135->125%; classic/bounce/ab
-  kept as options, choice in meta.captions. Cold open (owner, 17 Nov): the strongest reaction (judge pk, else chat
-  peak - 3 s) plays first for render.cold_open_s=2 with a facecam punch-in, then the clip from its start; banners from assets/branding/src via
+  words per line, white, spoken word yellow and pops 100->135->125% (owner: one colour only); classic/bounce/ab
+  kept as options, choice in meta.captions. Cold open (owner, 17 Nov): the strongest reaction plays first (~2 s,
+  facecam punch-in, captioned), then the clip from its start. Reaction = judge pk; without the judge a shout
+  (>= 8 dB over the streamer's talking level + an exclamation word, render/cold_open.py), else no cold open; banners from assets/branding/src via
   scripts/build_brand_assets.py) | dead zone 1536-1920. Credit {\an9\pos(1060,282)}. Background ambient blur or
   frame_gradient_<accent>.png (-loop 1); accent red/yellow/cyan from hash(clip_id). No webcam -> 16:9 frame
   1080x608 centred in y270-1290.

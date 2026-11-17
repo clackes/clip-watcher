@@ -112,7 +112,9 @@ def test_sequence_and_pins(tmp_path):
     assert pin[3] == 48 * 3600
     cut = next(e for e in log if e[0] == "cut")
     assert cut[2] - cut[1] == (40 + 5) * 1000  # window plus post-roll
-    assert ("render_start", 3.5) in log  # clip starts at the cut's local offset, not at 0
+    # cut's local offset (3.5) + late start: no judge, no audio -> reaction = chat peak (20 s in) - 3 s lag,
+    # clip starts 10 s before it
+    assert ("render_start", 3.5 + 7.0) in log
     assert ("render_short", "cpu_live", "NO WAY") in log and ("render_clean", "cpu_live") in log
     assert set(out[0].timings) >= {
         "cut",

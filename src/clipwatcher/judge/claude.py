@@ -10,7 +10,7 @@ from typing import Any
 
 from .. import config
 from ..models import Candidate, JudgeResult, Word
-from .snap import heuristic_trim, snap_trim
+from .snap import heuristic_trim, reaction_s, snap_trim
 
 log = logging.getLogger(__name__)
 PROMPTS = config.ROOT / "prompts"
@@ -141,7 +141,7 @@ def heuristic_judge(cand: Candidate, words: list[Word], *, game: str | None = No
     copy = compact.fallback_copy(
         cand.stream, scfg.get("platform", "twitch"), game if game is not None else scfg.get("game"), seed
     )
-    t0, t1 = heuristic_trim(cand.peak_s - cand.start_s, cand.duration)
+    t0, t1 = heuristic_trim(reaction_s(None, cand.peak_s - cand.start_s), cand.duration)
     return JudgeResult(
         funny_score=score,
         hype_score=score,
