@@ -63,7 +63,7 @@ def test_pure_helpers():
     assert esc_filter_path("/a b/c:d'e") == "/a b/c\\:d\\'e"
     ass = build_ass(demo_words(4), 4, credit="twitch.tv/x")
     assert "PlayResX: 1080" in ass and "\\pos(540,1495)" in ass and "&H00E6FF&" in ass
-    assert "\\an9\\pos(1060,282)" in ass
+    assert "\\an9\\pos(1060,407)" in ass
     assert "{" not in esc("a{b}\\c")
     pill = hook_pill("x" * 200)
     assert pill.size[1] == 96 and pill.size[0] <= 1000
@@ -206,7 +206,7 @@ def test_short_graph_cold_open_hides_hook_and_uses_measured_loudnorm(tmp_path):
     }
     g = build_short_graph(
         trim=6.0, dur=20.0, style="gradient", has_webcam=True, has_hook=True, cam=(0, 0, 480, 270),
-        game=(0, 0, 1920, 960), gradient_idx=4, cta_idx=2, logo_idx=1, hook_idx=3, ass=tmp_path / "s.ass",
+        game=(0, 0, 1920, 960), gradient_idx=4, logo_idx=1, hook_idx=3, ass=tmp_path / "s.ass",
         fontsdir=tmp_path, hook_s=3.5, cold_open=(9.0, 3.5), measured=m,
     )  # fmt: skip
     assert "enable='between(t,3.500,7.000)'" in g  # hook pill only after the cold open

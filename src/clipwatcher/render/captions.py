@@ -21,6 +21,7 @@ from clipwatcher.models import Word
 from clipwatcher.render.branding import FONTS_DIR
 
 HIGHLIGHT = "&H00E6FF&"  # #FFE600 in ASS BGR order
+CREDIT_Y = 407  # streamer credit, top-right of the panel (template.PANEL_Y + 12)
 CAPTION_STYLES = ("classic", "bounce", "pop")
 POP_FONT = ("Anton", "Anton-Regular.ttf")
 POP_SIZE = 145  # ASS size: libass fits winAscent+winDescent (1.733 em for Anton) in it -> 72 px caps
@@ -175,7 +176,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     lines = []
     if credit:
-        lines.append(f"Dialogue: 1,{ts(0)},{ts(dur_s)},Credit,,0,0,0,,{{\\an9\\pos(1060,282)}}{esc(credit)}")
+        lines.append(
+            f"Dialogue: 1,{ts(0)},{ts(dur_s)},Credit,,0,0,0,,{{\\an9\\pos(1060,{CREDIT_Y})}}{esc(credit)}"
+        )
     if style == "pop":
         return head + "\n".join(lines + build_pop_events(words, dur_s)) + "\n"
     groups = group_words(words, max_words=2, max_chars=14) if bounce else group_words(words)

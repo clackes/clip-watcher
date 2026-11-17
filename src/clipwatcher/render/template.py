@@ -134,7 +134,13 @@ def _measure(src: Path, coarse: float, trim: float, dur: float, cold_open=None) 
         return None
 
 
-PANEL_Y, PANEL_H = 270, 1020  # area between the top banner and the CTA
+# 9:16 stack (owner, 17 Nov: no subscribe/like/comment banner). Captions stay at y1495, the lowest spot
+# clear of the Shorts UI; logo, panel and hook moved down 125 px to close the gap the banner left.
+STACK_SHIFT = 125
+LOGO_Y = 96 + STACK_SHIFT
+PANEL_Y, PANEL_H = 270 + STACK_SHIFT, 1020  # webcam + gameplay (or the cold open / no-webcam frame)
+GAME_Y = PANEL_Y + 480
+HOOK_Y = PANEL_Y + 432  # hook pill over the webcam/gameplay seam
 
 
 def _cold_open_panel(cam: Rect | None, src_wh: tuple[int, int], face: Rect | None = None) -> Rect:
@@ -192,7 +198,7 @@ def _cold_open_graph(
 
 def build_short_graph(
     *, trim: float, dur: float, style: str, has_webcam: bool, has_hook: bool, cam: Rect, game: Rect,
-    gradient_idx: int, cta_idx: int, logo_idx: int, hook_idx: int, ass: Path, fontsdir: Path,
+    gradient_idx: int, logo_idx: int, hook_idx: int, ass: Path, fontsdir: Path, cta_idx: int = -1,
     hook_s: float = 3.5, cold_open: tuple[float, float] | None = None, zoom: float = 1.15,
     measured: dict | None = None, src_wh: tuple[int, int] = (1920, 1080), fps: float = 30.0,
     face: Rect | None = None,
@@ -238,7 +244,7 @@ def build_short_graph(
         g.append(f"[cs]crop={cw}:{ch}:{cx}:{cy},scale=1080:480:flags=lanczos,setsar=1[cam]")
         g.append(f"[gs]crop={gw}:{gh}:{gx}:{gy},scale=1080:540:flags=lanczos,setsar=1[game]")
         g.append(f"{last}[cam]overlay=0:{PANEL_Y}{sh}[v0]")
-        g.append("[v0][game]overlay=0:750[v1m]")
+        g.append(f"[v0][game]overlay=0:{GAME_Y}[v1m]")
     else:
         g.append("[fs]scale=1080:608:flags=lanczos,setsar=1[full]")
         g.append(f"{last}[full]overlay=0:{PANEL_Y + (PANEL_H - 608) // 2}{sh}[v1m]")
@@ -246,11 +252,12 @@ def build_short_graph(
         g.append("[v1m]format=yuv420p,setsar=1[mcomp];[cocomp][mcomp]concat=n=2:v=1:a=0[v1]")
     else:
         g.append("[v1m]null[v1]")
-    g.append(f"[v1][{logo_idx}:v]overlay=(W-w)/2:96[v2]")
-    g.append(f"[v2][{cta_idx}:v]overlay=(W-w)/2:1300[v3]")
+    g.append(f"[v1][{logo_idx}:v]overlay=(W-w)/2:{LOGO_Y}[v3]")
     if has_hook:
         h0 = cold_open[1] if cold_open else 0.0  # no centre text over the cold open (owner, 17 Nov)
-        g.append(f"[v3][{hook_idx}:v]overlay=(W-w)/2:702:enable='between(t,{h0:.3f},{h0 + hook_s:.3f})'[v4]")
+        g.append(
+            f"[v3][{hook_idx}:v]overlay=(W-w)/2:{HOOK_Y}:enable='between(t,{h0:.3f},{h0 + hook_s:.3f})'[v4]"
+        )
     else:
         g.append("[v3]null[v4]")
     g.append(
@@ -281,7 +288,6 @@ def render_short(
     game = parse_rect(game) or default_game(info)
     coarse, trim = _seek(start_s)
     ensure_branding(BRANDING_DIR)
-    cta = BRANDING_DIR / ("cta_youtube.png" if platform == "youtube" else "cta_social.png")
     fps = min(info.fps, 60.0)
     co_d = cold_open[1] if cold_open else 0.0
     total = dur_s + co_d
@@ -305,9 +311,6 @@ def render_short(
         logo_idx = idx
         cmd += ["-i", str(BRANDING_DIR / "top_logo.png")]
         idx += 1
-        cta_idx = idx
-        cmd += ["-i", str(cta)]
-        idx += 1
         hook_idx = -1
         if hook:
             hook_pill(hook, work / "hook_pill.png")
@@ -328,7 +331,7 @@ def render_short(
             idx += 1
         graph = build_short_graph(
             trim=trim, dur=dur_s, style=style, has_webcam=has_webcam, has_hook=bool(hook), cam=cam,
-            game=game, gradient_idx=gradient_idx, cta_idx=cta_idx, logo_idx=logo_idx, hook_idx=hook_idx,
+            game=game, gradient_idx=gradient_idx, logo_idx=logo_idx, hook_idx=hook_idx,
             ass=ass, fontsdir=FONTS_DIR, hook_s=hook_seconds(), cold_open=cold_open,
             zoom=co_settings()[1], measured=_measure(src, coarse, trim, dur_s, cold_open),
             src_wh=(info.width, info.height), fps=fps, face=parse_rect(face),

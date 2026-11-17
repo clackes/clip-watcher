@@ -38,16 +38,17 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   viewer clips + audio loudness (final >= 4.5).
 - D4 Dual export: clean_16x9.mp4 (trimmed, no overlays, -14 LUFS) + short_9x16.mp4. Profiles cpu_batch,
   cpu_live, nvenc, mac_preview.
-- D5 One 9:16 template (1080x1920): bg | ClipVault top banner 1000x166 centred @y96 | webcam 1080x480 @y270 | hook pill
-  y702 t<render.hook_s (3.5s) | gameplay 1080x540 @y750 | CTA banner 920x152 centred @y1300 | subs \pos(540,1495) 80px current word #FFE600
+- D5 One 9:16 template (1080x1920; owner 17 Nov: no CTA banner, stack moved down 125 px, see template.STACK_SHIFT):
+  bg | ClipVault top banner 1000x166 centred @y221 | webcam 1080x480 @y395 | hook pill
+  y827 t<render.hook_s (3.5s) | gameplay 1080x540 @y875 | (CTA banner removed) | subs \pos(540,1495) 80px current word #FFE600
   110% (owner's call 17 Nov; replaced the same day by `render.captions: pop`: Anton (assets/fonts, OFL), up to 3
   words per line, white, spoken word yellow and pops 100->135->125% (owner: one colour only); classic/bounce/ab
   kept as options, choice in meta.captions. Cold open (owner, 17 Nov): the strongest reaction plays first (~2 s,
   facecam punch-in, captioned), then the clip from its start. Reaction = judge pk; without the judge a shout
   (>= 8 dB over the streamer's talking level + an exclamation word, render/cold_open.py), else no cold open; banners from assets/branding/src via
-  scripts/build_brand_assets.py) | dead zone 1536-1920. Credit {\an9\pos(1060,282)}. Background ambient blur or
+  scripts/build_brand_assets.py) | dead zone 1536-1920. Credit {\an9\pos(1060,407)}. Background ambient blur or
   frame_gradient_<accent>.png (-loop 1); accent red/yellow/cyan from hash(clip_id). No webcam -> 16:9 frame
-  1080x608 centred in y270-1290.
+  1080x608 centred in y395-1415. Cold open: webcam only (centred on the face) filling y395-1415, zoompan punch-in.
 - D6 Judge (v2, 17 Nov): one static cached system prompt (prompts/judge_v2.md, no per-clip variables) + 8
   labelled 480x270 JPEG q65 frames + compact JSON {meta,tr,ch,task}; short-key output {ok,sc,t0,t1,hk,tt,ds,
   fl{sp,mu,gb},why}, caps/credit enforced in code (judge/compact.py). Thinking off, effort low (judge.* in
