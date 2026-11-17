@@ -8,7 +8,7 @@ import pytest
 
 from clipwatcher.config import ffmpeg_bin, ffprobe_bin
 from clipwatcher.render.branding import hook_pill
-from clipwatcher.render.captions import build_ass, demo_words, esc
+from clipwatcher.render.captions import build_ass, caption_style, demo_words, esc
 from clipwatcher.render.encoders import resolve, video_args
 from clipwatcher.render.template import (
     esc_filter_path,
@@ -69,13 +69,40 @@ def test_pure_helpers():
     assert resolve("nope") == "cpu_batch" and "libx264" in video_args("cpu_live")
 
 
+def test_bounce_captions():
+    words = demo_words(6, "NO WAY DID YOU SEE THAT UNBELIEVABLE")
+    ass = build_ass(words, 6, style="bounce")
+    events = [ln for ln in ass.splitlines() if ln.startswith("Dialogue: 0")]
+    assert len(events) == len(words)  # one event per spoken word
+    pops = [e for e in events if "\\t(0,90,\\fscx118" in e]
+    assert 0 < len(pops) < len(events)  # page pops in once, on its first word
+    assert "UNBELIEVABLE" in pops[-1]  # 12 chars: never shares a page past 14 chars
+    assert "&HFFF000&" in ass  # colour rotates to cyan on page 2
+    with pytest.raises(ValueError):
+        build_ass(words, 6, style="nope")
+
+
+def test_caption_style_ab_is_stable_and_splits(monkeypatch):
+    from clipwatcher import config
+
+    monkeypatch.setattr(config, "global_config", lambda: {"render": {"captions": "ab"}})
+    picks = {caption_style(f"x-{i}") for i in range(40)}
+    assert picks == {"classic", "bounce"} and caption_style("x-1") == caption_style("x-1")
+    monkeypatch.setattr(config, "global_config", lambda: {"render": {"captions": "bounce"}})
+    assert caption_style("x-1") == "bounce"
+
+
 @pytest.mark.ffmpeg
-@pytest.mark.parametrize("style,webcam", [("ambient", True), ("gradient", True), ("ambient", False)])
-def test_short(synth_src, tmp_path, style, webcam):
+@pytest.mark.parametrize(
+    "style,webcam,captions",
+    [("ambient", True, "classic"), ("gradient", True, "bounce"), ("ambient", False, "bounce")],
+)
+def test_short(synth_src, tmp_path, style, webcam, captions):
     out = tmp_path / "s.mp4"
     render_short(
         synth_src, 8.0, 3.0, out, clip_id="t", streamer="tester", words=demo_words(3),
         hook="HE DID NOT SEE THAT", style=style, accent="cyan", has_webcam=webcam, profile="cpu_live",
+        captions=captions,
     )  # fmt: skip
     check_short(out, 3.0)
 

@@ -13,7 +13,7 @@ from clipwatcher import config
 from clipwatcher.config import ffmpeg_bin, ffprobe_bin
 from clipwatcher.models import Word
 from clipwatcher.render.branding import ACCENTS, BRANDING_DIR, FONTS_DIR, ensure_branding, hook_pill
-from clipwatcher.render.captions import write_ass
+from clipwatcher.render.captions import caption_style, write_ass
 from clipwatcher.render.encoders import video_args
 
 STYLES = ("ambient", "gradient")
@@ -46,6 +46,10 @@ def stable_hash(clip_id: str) -> int:
 def pick_style(clip_id: str) -> tuple[str, str]:
     h = stable_hash(clip_id)
     return STYLES[h % 2], list(ACCENTS)[(h // 2) % 3]
+
+
+def hook_seconds() -> float:
+    return float(config.global_config().get("render", {}).get("hook_s", 3.5))
 
 
 def parse_rect(r: Rect | str | None) -> Rect | None:
@@ -98,6 +102,7 @@ def _audio_chain(trim: float, dur: float) -> str:
 def build_short_graph(
     *, trim: float, dur: float, style: str, has_webcam: bool, has_hook: bool, cam: Rect, game: Rect,
     gradient_idx: int, cta_idx: int, logo_idx: int, hook_idx: int, ass: Path, fontsdir: Path,
+    hook_s: float = 3.5,
 ) -> str:  # fmt: skip
     trimmed = f"[0:v]trim=start={trim:.3f}:duration={dur:.3f},setpts=PTS-STARTPTS"
     use_bg = style == "ambient"
@@ -131,7 +136,7 @@ def build_short_graph(
     g.append(f"[v1][{logo_idx}:v]overlay=(W-w)/2:96[v2]")
     g.append(f"[v2][{cta_idx}:v]overlay=(W-w)/2:1300[v3]")
     if has_hook:
-        g.append(f"[v3][{hook_idx}:v]overlay=(W-w)/2:702:enable='lt(t,2.5)'[v4]")
+        g.append(f"[v3][{hook_idx}:v]overlay=(W-w)/2:702:enable='lt(t,{hook_s:g})'[v4]")
     else:
         g.append("[v3]null[v4]")
     g.append(
@@ -145,7 +150,7 @@ def render_short(
     src: Path, start_s: float, dur_s: float, out: Path, *, clip_id: str, streamer: str,
     words: list[Word], hook: str | None, platform: str = "youtube", style: str | None = None,
     accent: str | None = None, cam: Rect | None = None, game: Rect | None = None,
-    has_webcam: bool = True, profile: str = "cpu_batch",
+    has_webcam: bool = True, profile: str = "cpu_batch", captions: str | None = None,
 ) -> Path:  # fmt: skip
     src, out = Path(src), Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -164,7 +169,10 @@ def render_short(
 
     with tempfile.TemporaryDirectory(prefix="clipwatcher_") as td:
         work = Path(td)
-        ass = write_ass(work / "subs.ass", words, dur_s, credit=config.credit(streamer))
+        ass = write_ass(
+            work / "subs.ass", words, dur_s, credit=config.credit(streamer),
+            style=captions or caption_style(clip_id),
+        )  # fmt: skip
         cmd = [ffmpeg_bin(), "-y", "-hide_banner", "-ss", f"{coarse:.3f}", "-i", str(src)]
         idx = 1
         logo_idx = idx
@@ -194,7 +202,7 @@ def render_short(
         graph = build_short_graph(
             trim=trim, dur=dur_s, style=style, has_webcam=has_webcam, has_hook=bool(hook), cam=cam,
             game=game, gradient_idx=gradient_idx, cta_idx=cta_idx, logo_idx=logo_idx, hook_idx=hook_idx,
-            ass=ass, fontsdir=FONTS_DIR,
+            ass=ass, fontsdir=FONTS_DIR, hook_s=hook_seconds(),
         )  # fmt: skip
         cmd += ["-filter_complex", graph, "-map", "[v]", "-map", "[a]", *video_args(profile)]
         cmd += ["-fps_mode", "cfr", "-r", f"{fps:g}", "-c:a", "aac", "-b:a", "192k", "-ar", "48000"]

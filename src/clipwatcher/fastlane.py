@@ -328,6 +328,7 @@ class FastLane:
 
         prof = self.cfg["profile"]
         from . import layout
+        from .render.captions import caption_style
 
         lay = await self._timed("layout", timings, layout.resolve, src, self.streamer)
         short = await self._timed(
@@ -354,6 +355,7 @@ class FastLane:
             "chat_score": cand.chat_score, "final_score": cand.final_score, "peak_s": cand.peak_s,
             "start_s": cand.start_s, "end_s": cand.end_s, "funny_score": screen.get("funny_score"),
             "hype_score": screen.get("hype_score"), "layout": lay.source,
+            "captions": caption_style(cid),
         }  # fmt: skip
         meta.update(title=jr.title_options[0], description=jr.description)  # heuristic copy too
         if jr.source == "claude":

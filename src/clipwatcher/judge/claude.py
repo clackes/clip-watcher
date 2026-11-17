@@ -10,6 +10,7 @@ from typing import Any
 
 from .. import config
 from ..models import Candidate, JudgeResult, Word
+from .snap import snap_trim
 
 log = logging.getLogger(__name__)
 PROMPTS = config.ROOT / "prompts"
@@ -229,6 +230,7 @@ def judge_clip(
         mdl = model or (jcfg.get("screen_model") if task == "screen" else jcfg.get("judge_model", ""))
         data, usage = call_v2(client, compact.build_request(mdl, frames, payload))
         out = compact.normalize_output(data, login=login, platform=plat, dur=cand.duration)
+        out["t0"], out["t1"] = snap_trim(out["t0"], out["t1"], words, cand.duration)
         log.info("judge %s %s sc=%s ok=%s usage=%s", task, login, out["sc"], out["ok"], usage)
         reasons = [k for k, v in out["fl"].items() if v]
         return JudgeResult(

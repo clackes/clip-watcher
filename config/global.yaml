@@ -71,6 +71,8 @@ render:
   profile: cpu_batch        # cpu_batch | cpu_live | nvenc | mac_preview
   default_cam: "480:213:1400:743"
   default_game: "1920:960:0:60"
+  captions: ab              # classic | bounce | ab (50/50 by clip_id, recorded in meta.captions)
+  hook_s: 3.5               # hook pill on screen for the first N seconds
 
 judge:
   mode: single              # single = one multimodal call | two_stage = text screen, then multimodal judge | off

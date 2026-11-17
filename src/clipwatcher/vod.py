@@ -171,6 +171,7 @@ def process_candidate(
     clip_dir.mkdir(parents=True, exist_ok=True)
     lay = _mod("clipwatcher.layout").resolve(src, streamer)
     meta["layout"] = lay.source
+    meta["captions"] = _mod("clipwatcher.render.captions").caption_style(clip_id)
     short = tpl.render_short(
         src,
         local_start,

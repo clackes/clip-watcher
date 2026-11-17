@@ -144,6 +144,9 @@ def h_stage(p: dict[str, Any], w: Worker) -> list[dict[str, Any]]:
     }  # fmt: skip
     if j.get("source") == "claude":
         meta.update(why=j.get("why"), flags=j.get("flags"), judge_score=j.get("score"))
+    from .render.captions import caption_style
+
+    meta["captions"] = caption_style(p["clip_id"])
     stage_package(p["clip_id"], Path(p["short"]), Path(p["clean"]), meta, root=w.staging_root, db=w.db)
     return []
 
