@@ -1,0 +1,117 @@
+# Backup of the live config/streamers.yaml (17 Nov 2026). Restore: cp config/streamers.backup.yaml config/streamers.yaml
+# layouts are detected per clip; facecam rects here are confirmed defaults
+streamers:
+  zackrawrr:
+    platform: twitch
+    url: https://www.twitch.tv/zackrawrr
+    language: en
+    campaign_link: null
+    has_webcam: true
+    facecam_rect: 766:340:0:446
+    gameplay_rect: 1164:582:756:248
+    delay_s: 8
+    keywords: {}
+  ishowspeed:
+    platform: twitch
+    url: https://www.twitch.tv/ishowspeed
+    language: en
+    campaign_link: null
+    has_webcam: true
+    facecam_rect: 578:256:1342:544
+    gameplay_rect: 1342:670:0:204
+    delay_s: 8
+    keywords: {}
+  clix:
+    platform: twitch
+    url: https://www.twitch.tv/clix
+    language: en
+    campaign_link: null
+    has_webcam: true
+    facecam_rect: 494:220:0:304
+    gameplay_rect: 1398:698:522:190
+    delay_s: 8
+    keywords: {}
+  tfue:
+    platform: twitch
+    url: https://www.twitch.tv/tfue
+    language: en
+    campaign_link: null
+    has_webcam: true
+    facecam_rect: 494:220:0:180
+    gameplay_rect: 1426:712:494:184
+    delay_s: 8
+    keywords: {}
+  kaicenat:
+    platform: twitch
+    url: https://www.twitch.tv/kaicenat
+    language: en
+    campaign_link: null
+    has_webcam: false
+    delay_s: 8
+    keywords: {}
+  ninja:
+    platform: twitch
+    url: https://www.twitch.tv/ninja
+    language: en
+    campaign_link: null
+    has_webcam: false
+    delay_s: 8
+    keywords: {}
+  myth:
+    platform: twitch
+    url: https://www.twitch.tv/myth
+    language: en
+    campaign_link: null
+    has_webcam: false
+    delay_s: 8
+    keywords: {}
+  harry:
+    platform: twitch
+    url: https://www.twitch.tv/harry
+    language: en
+    campaign_link: null
+    has_webcam: false
+    delay_s: 8
+    keywords: {}
+  uhsnow:
+    platform: twitch
+    url: https://www.twitch.tv/uhsnow
+    language: en
+    campaign_link: null
+    has_webcam: false
+    delay_s: 8
+    keywords: {}
+  matteu:
+    platform: twitch
+    url: https://www.twitch.tv/matteu
+    language: en
+    campaign_link: null
+    has_webcam: false
+    delay_s: 8
+    keywords: {}
+  kenetgr:
+    platform: kick
+    url: https://kick.com/kenetgr
+    language: en
+    campaign_link: null
+    delay_s: 8
+    keywords: {}
+  minik:
+    platform: kick
+    url: https://kick.com/minik
+    language: en
+    campaign_link: null
+    delay_s: 8
+    keywords: {}
+  paulinholokobr:
+    platform: kick
+    url: https://kick.com/paulinholokobr
+    language: pt
+    campaign_link: null
+    delay_s: 8
+    keywords: {}
+    has_webcam: false
+  ratedpicz:
+    platform: kick
+    url: https://kick.com/ratedpicz
+    note: slug unverified

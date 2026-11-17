@@ -11,7 +11,7 @@
 | 5 | YouTube, Instagram, TikTok inbox, campaign link collection | 7 days scheduled posts, no errors |
 | 6 | weekly compilation + voiceover, analytics, learning loop, Kick adapter | first compilation monetized |
 
-Status (17 Nov 2026, evening):
+Status (17 Nov 2026, evening). Handoff and next steps: docs/HANDOFF.md.
 - Done: VOD lane (Twitch), live lane `python -m clipwatcher.live` (record + anonymous chat + detect + cut +
   captions + per-clip layout + render + stage + Telegram card) verified on real Twitch and Kick streams;
   Docker image for a NAS.
@@ -30,5 +30,6 @@ Status (17 Nov 2026, evening):
   `clipwatcher.queue.telegram_bot` (log work/telegram_bot.log). Stop with `pkill -TERM -f clipwatcher`.
 - Before launch (19 Nov): Manu/Samu IDs, streamer list for launch night, a host that stays on, maybe
   fastlane.min_score 4 for more choice, a FOLLOW banner for IG/TikTok.
+- YouTube: Approve uploads at once (dry run until scripts/youtube_auth.py has run).
 - Next: Claude judge (ANTHROPIC_API_KEY; hook is the first spoken words until then), publishing (YouTube/IG
   creds; uploader not running, DRY_RUN=1), viewer-clip confirmation, ratedpicz Kick slug.
