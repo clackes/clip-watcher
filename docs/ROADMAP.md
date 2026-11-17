@@ -11,13 +11,14 @@
 | 5 | YouTube, Instagram, TikTok inbox, campaign link collection | 7 days scheduled posts, no errors |
 | 6 | weekly compilation + voiceover, analytics, learning loop, Kick adapter | first compilation monetized |
 
-Status (17 Nov 2026, evening). Handoff and next steps: docs/HANDOFF.md.
+Status (17 Nov 2026, night). Handoff and next steps: docs/HANDOFF.md.
 - Done: VOD lane (Twitch), live lane `python -m clipwatcher.live` (record + anonymous chat + detect + cut +
   captions + per-clip layout + render + stage + Telegram card) verified on real Twitch and Kick streams;
   Docker image for a NAS.
 - Telegram: bot @clippersosabot in the group (chat id in config/operators.yaml, token in .env); approval cards
-  post with video; Claim/Approve/Reject/Edit/Release work for the owner. Manu/Samu IDs still 0: they must
-  join the group and send a message, then read their IDs (getUpdates or getChatAdministrators).
+  post with video (sent with width/height/duration + thumbnail, so iOS no longer stretches 9:16; owner
+  confirmed on iPhone); card shows title, hook, judge score, flags, description. Claim/Approve/Reject/Edit/
+  Release work for the owner. `/id` in the group replies with a member's Telegram ID; Manu/Samu still 0.
 - Branding: ClipVault (youtube.com/@clipvault4.0). Pill banners from assets/branding/src via
   scripts/build_brand_assets.py: top banner @y96, SUBSCRIBE/LIKE/COMMENT banner @y1300, subs at y1495.
 - Lessons from real runs: small chats need an adaptive unique-chatter floor; bots posting every few seconds
@@ -25,11 +26,16 @@ Status (17 Nov 2026, evening). Handoff and next steps: docs/HANDOFF.md.
   through PyAV; each clip needs its own layout detection; Kick chat = web.kick.com history polling (skip the
   first backlog page); pruning must never stop on low disk (it filled the Mac twice); resolve streamlink next
   to the venv Python; kill recorders by process group.
-- Running on the Mac (detached, nohup + caffeinate): `clipwatcher.live` on illojuan, peereira7, teegrizzley,
-  officermesser, paulinholokobr, kenetgr, minik for 480 min (log work/live_mix7.log) and
-  `clipwatcher.queue.telegram_bot` (log work/telegram_bot.log). Stop with `pkill -TERM -f clipwatcher`.
+- Judge v2 (built, not yet run against the API): static cached prompt prompts/judge_v2.md, 8 labelled
+  480x270 frames, compact JSON in/out, clickbait title/description rules, spoiler/music/gambling flags that
+  reject a clip. Live lane calls it once per clip when ANTHROPIC_API_KEY is set and trims to its t0/t1.
+  Simulated benchmark (docs/JUDGE_BENCHMARK.md): ~$0.0044/clip on Sonnet 5.5 (was ~$0.015), $0.23 for 50
+  clips, ~135k clips on $600. Config: judge.* in config/global.yaml (mode single, Sonnet).
+- Nothing is running: the live test and the Telegram bot were stopped on 17 Nov. Restart commands in
+  docs/HANDOFF.md.
 - Before launch (19 Nov): Manu/Samu IDs, streamer list for launch night, a host that stays on, maybe
   fastlane.min_score 4 for more choice, a FOLLOW banner for IG/TikTok.
 - YouTube: Approve uploads at once (dry run until scripts/youtube_auth.py has run).
-- Next: Claude judge (ANTHROPIC_API_KEY; hook is the first spoken words until then), publishing (YouTube/IG
-  creds; uploader not running, DRY_RUN=1), viewer-clip confirmation, ratedpicz Kick slug.
+- Next: ANTHROPIC_API_KEY -> `scripts/judge_cost_benchmark.py BENCH --exact` and real judge calls on staged
+  clips (until then the hook is the heuristic), publishing (YouTube/IG creds; DRY_RUN=1), viewer-clip
+  confirmation, ratedpicz Kick slug, minik's language.

@@ -1,4 +1,4 @@
-# Handoff (17 Nov 2026)
+# Handoff (17 Nov 2026, night)
 
 Everything needed to continue is in this repo (github.com/clackes/clip-watcher, branch main) plus three
 local files that are gitignored on purpose. Status and lessons: docs/ROADMAP.md. Rules: CLAUDE.md.
@@ -10,16 +10,20 @@ local files that are gitignored on purpose. Status and lessons: docs/ROADMAP.md.
 - Rebuildable, not needed: `staging/` (test clips), `work/` (logs, ring buffers), `models/` (face model,
   downloaded again by the Dockerfile), `.venv/`.
 
-## Running right now on the Mac (detached; survives closing Claude)
-- `clipwatcher.live` on 7 test channels, 480 min, log `work/live_mix7.log` (stops by itself).
-- `clipwatcher.queue.telegram_bot` (runs until stopped), log `work/telegram_bot.log`.
-- Stop all: `pkill -TERM -f clipwatcher`. Restart:
-  `set -a; . ./.env; set +a; nohup .venv/bin/python -m clipwatcher.queue.telegram_bot > work/telegram_bot.log 2>&1 &`
+## Nothing is running (stopped 17 Nov)
+Start the approval bot and a live test on the Mac (both detached; stop all with `pkill -TERM -f clipwatcher`):
+```
+set -a; . ./.env; set +a
+nohup .venv/bin/python -m clipwatcher.queue.telegram_bot > work/telegram_bot.log 2>&1 &
+nohup caffeinate -is .venv/bin/python -m clipwatcher.live --streamers kenetgr,minik --minutes 480 > work/live.log 2>&1 &
+```
 
 ## Flow the owner wants (17 Nov)
 Clip ready -> Telegram card with video at once -> owner approves ASAP -> publish to YouTube/Instagram/TikTok.
-- Done: card on ready; Approve uploads to YouTube immediately (`publish.youtube_on_approve`) and replies with
-  the link. Tested only in dry run (no YouTube credentials yet).
+- Done: card on ready (plays correctly on iPhone); Approve uploads to YouTube immediately
+  (`publish.youtube_on_approve`) and replies with the link. Tested only in dry run (no YouTube credentials).
+- Judge v2 writes the title (tt), hook (hk) and description (ds: teaser + credit, subscribe line, hashtags)
+  that YouTube uses; see docs/JUDGE_BENCHMARK.md for sample outputs and costs.
 
 ## Next steps, in order
 1. Samu types `/id` in the group; put his ID in config/operators.yaml (same for Manu).
@@ -30,7 +34,10 @@ Clip ready -> Telegram card with video at once -> owner approves ASAP -> publish
    (pick the ClipVault channel) -> add `YOUTUBE_CREDENTIALS=secrets/youtube_token.json` to .env.
    Expect: unaudited API projects upload as private (flip to Public in YouTube Studio) and ~6 uploads/day
    quota; apply for the YouTube API audit for public uploads + more quota.
-3. ANTHROPIC_API_KEY into .env, then test the Claude judge on real clips (never run against the API yet).
+3. ANTHROPIC_API_KEY into .env, then: exact token counts with
+   `.venv/bin/python scripts/judge_cost_benchmark.py <bench dir> --exact`, and real judge calls on a few
+   staged clips to check copy quality (watch that titles tease without giving away the payoff). Clips in
+   languages other than it/en get Italian copy (`judge.default_copy_language`).
 4. Launch-night streamer list from the owner -> config/streamers.yaml (platform, has_webcam, layouts).
 5. NAS deploy: need brand/model, CPU arch, Docker support, free disk. Then
    `docker compose -f deploy/docker/compose.yaml up -d --build` with .env, operators.yaml, streamers.yaml and
