@@ -197,8 +197,10 @@ def history_message_to_chat(m: dict, bots: set[str] | frozenset[str] = frozenset
         return None
     ts = None
     try:
-        ts = int(json.loads(m.get("metadata") or "{}").get("message_ref"))
-    except (TypeError, ValueError):
+        meta = m.get("metadata")
+        meta = json.loads(meta) if isinstance(meta, str) else meta
+        ts = int((meta or {}).get("message_ref"))
+    except (TypeError, ValueError, AttributeError):
         pass
     if not ts:
         ts = iso_to_ms(m["created_at"])
@@ -256,7 +258,10 @@ class KickHistoryChat:
                 if m["id"] in seen:
                     continue
                 seen[m["id"]] = None
-                msg = history_message_to_chat(m, self.bots)
+                try:
+                    msg = history_message_to_chat(m, self.bots)
+                except Exception:  # noqa: BLE001 - one malformed message must not stop the lane
+                    msg = None
                 if msg is not None:
                     out.append(msg)
             while len(seen) > 2000:

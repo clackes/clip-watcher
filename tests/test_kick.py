@@ -147,3 +147,13 @@ def test_history_chat_polls_dedupes_and_orders():
     assert [m.ts_ms for m in got] == [1000, 2000, 3000, 9000]
     assert got[0].user == "user1" and "KEKW" in got[0].text and got[0].platform == "kick"
     assert chat.gaps == 1
+
+
+def test_history_message_with_null_metadata():
+    from clipwatcher.chat.kick import history_message_to_chat
+
+    m = {"id": "a", "type": "message", "content": "hey", "metadata": "null",
+         "created_at": "2026-11-17T00:00:01Z", "sender": {"slug": "x"}}  # fmt: skip
+    assert history_message_to_chat(m).ts_ms > 0
+    m["metadata"] = None
+    assert history_message_to_chat(m).user == "x"
