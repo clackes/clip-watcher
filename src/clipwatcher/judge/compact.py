@@ -336,7 +336,7 @@ def normalize_output(data: dict[str, Any], *, login: str, platform: str, dur: fl
     pk = data.get("pk")
     pk = round(min(max(float(pk), t0), t1), 1) if isinstance(pk, (int, float)) else None
     ds = build_description(str(data.get("ds", "")).split("\n"), login, platform)
-    reject = config.global_config().get("judge", {}).get("reject_flags", ["sp", "mu", "gb"])
+    reject = config.global_config().get("judge", {}).get("reject_flags", ["sp", "mu"])
     ok = bool(data.get("ok", False)) and not any(fl[k] for k in reject if k in fl)
     return {
         "ok": ok,
