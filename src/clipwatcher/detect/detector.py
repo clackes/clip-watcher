@@ -26,6 +26,22 @@ class _Rec:
     norm: str
 
 
+def prompted_share(window: Sequence[_Rec], other_weight: float) -> float:
+    """Share of chatters repeating keyword-less messages that 3+ chatters typed (copy-paste).
+
+    Streamer-prompted copy-paste ("type IWASHERE", "1 if you ...") looks like a spike but is not a moment;
+    reaction spam (KEKW, LMAO, skulls) has keyword weight and is not counted here.
+    """
+    users = {r.user for r in window}
+    if not users:
+        return 0.0
+    plain: dict[str, set[str]] = {}
+    for r in window:
+        if r.norm and r.weight <= other_weight:
+            plain.setdefault(r.norm, set()).add(r.user)
+    return sum(len(v) for v in plain.values() if len(v) >= 3) / len(users)
+
+
 def _norm(text: str) -> str:
     t = re.sub(r"[^\w\s]", "", text.lower())
     t = re.sub(r"(.)\1{2,}", r"\1\1", t)
@@ -154,6 +170,8 @@ def detect(
     if delay_s is None:
         delay_s = float(sc.get("delay_s", cfg.get("default_delay_s", 8)))
     hist_n = int(cfg.get("baseline_min", 15)) * 60
+    other_w = float(cfg.get("other_weight", 0.5))
+    prompt_max = float(cfg.get("prompt_share", 0.4))
     u_need = max(min_unique, pct * viewers if viewers else 0)
 
     msgs = sorted(messages, key=lambda m: m.ts_ms)
@@ -188,7 +206,9 @@ def detect(
         if t >= 60:
             zu, ze, zs = rU.z(u), rE.z(e), rS.z(s)
             score = w["U"] * zu + w["E"] * ze + w["S"] * zs
-            muted = any(a <= t <= b for a, b in spans)
+            muted = any(a <= t <= b for a, b in spans) or (
+                bool(window) and prompted_share(window, other_w) >= prompt_max
+            )
             steps.append(None if muted else (score, zu, ze, zs, u))
         else:
             steps.append(None)

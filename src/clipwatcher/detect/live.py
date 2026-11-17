@@ -13,7 +13,7 @@ import re
 from collections import Counter, deque
 
 from clipwatcher import config
-from clipwatcher.detect.detector import _FLOORS, _kw_patterns, _median, _norm, _Rec, _Robust
+from clipwatcher.detect.detector import _FLOORS, _kw_patterns, _median, _norm, _Rec, _Robust, prompted_share
 from clipwatcher.models import Candidate, ChatMessage
 
 _SUB_BOMB_MIN = 5
@@ -48,6 +48,7 @@ class LiveDetector:
         default_delay = sc.get("delay_s", cfg.get("default_delay_s", 8))
         self.delay_s = float(delay_s if delay_s is not None else default_delay)
         self.other_weight = float(cfg.get("other_weight", 0.5))
+        self.prompt_max = float(cfg.get("prompt_share", 0.4))
         self._laugh = re.compile(cfg["laughter_regex"]) if cfg.get("laughter_regex") else None
         self._pats = _kw_patterns(config.keywords_for(streamer))
         self._wmap = {k: w for k, _, w in self._pats}
@@ -207,7 +208,9 @@ class LiveDetector:
         if self._start is not None and t - self._start >= 60:
             zu, ze, zs = rU.z(u), rE.z(e), rS.z(s)
             sc = self.w["U"] * zu + self.w["E"] * ze + self.w["S"] * zs
-            if not any(a <= t <= b for a, b in self._spans):
+            if not any(a <= t <= b for a, b in self._spans) and not (
+                window and prompted_share(window, self.other_weight) >= self.prompt_max
+            ):
                 score = sc
         if score is not None and score >= self.pre_z:
             if self._run_first is None:

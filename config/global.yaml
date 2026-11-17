@@ -21,6 +21,7 @@ detector:                   # D3
   min_unique_viewer_pct: 0.01
   mute_after_notice_s: 75   # raid / sub-bomb / giveaway mute window (60-90 s)
   cooldown_s: 45
+  prompt_share: 0.4         # one keyword-less message from >= 40% of chatters = prompted copy-paste, not a moment
   keep_final: 4.5
   default_delay_s: 8        # chat reacts ~5-15 s after the moment
   bots: [nightbot, streamelements, moobot, fossabot, sery_bot, streamlabs, wizebot, soundalerts]
@@ -41,6 +42,15 @@ detector:                   # D3
     W: 1.5
     "LETS GO": 1.5
     "?????": 1.5
+    lol: 2
+    lmfao: 2
+    omg: 1.5
+    wtf: 1.5
+    "no way": 1.5
+    nah: 1
+    bro: 1
+    jajaja: 2                # Spanish / Portuguese laughter
+    kkkk: 2
     # Italian laughter / surprise
     "morto": 2
     "sono morto": 2

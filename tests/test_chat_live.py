@@ -198,3 +198,23 @@ def test_frequent_bot_messages_do_not_block_fires():
     fired = [c for m in msgs if (c := det.feed(m))] + det.drain()
     assert any(abs(c.signals["fire_s"] - (base / 1000 + 1000)) < 15 for c in fired)
     assert max(c.chat_score for c in fired) >= 5
+
+
+def test_streamer_prompted_copy_paste_is_not_a_moment():
+    """Regression from a live run: chat typing IWASHERE / yo on request fired a clip of nothing."""
+    from clipwatcher.detect.live import LiveDetector
+    from clipwatcher.models import ChatMessage
+
+    base = 1_790_000_000_000
+
+    def run(burst_text):
+        msgs = [ChatMessage(base + t * 1000, f"u{t % 40}", f"talking {t}") for t in range(1200)]
+        for i in range(90):
+            text = burst_text[i % len(burst_text)]
+            msgs.append(ChatMessage(base + 1000_000 + i * 100, f"fan{i}", text))
+        msgs.sort(key=lambda m: m.ts_ms)
+        det = LiveDetector("nobody")
+        return [c for m in msgs if (c := det.feed(m))] + det.drain()
+
+    assert not [c for c in run(["IWASHERE", "IWASHERE", "yo"]) if c.chat_score >= 5]
+    assert [c for c in run(["KEKW", "LMAO", "no way", "OMEGALUL"]) if c.chat_score >= 5]
