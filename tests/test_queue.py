@@ -108,3 +108,25 @@ def test_bot_logic(db, tmp_path, monkeypatch):
     assert telegram_bot.handle_action(db, 22, "approve:c1", operators=OPS)[0].startswith("Only")
     assert [b[0] for b in telegram_bot.buttons_for(db.get("c1"), OPS)[0]] == ["Approve", "Edit"]
     assert telegram_bot.handle_action(db, 11, "approve:c1", operators=OPS)[0] == "Approved."
+
+
+@pytest.mark.ffmpeg
+def test_telegram_video_attrs_and_thumbnail(tmp_path):
+    import subprocess
+
+    from clipwatcher import config
+    from clipwatcher.queue import telegram_bot
+
+    v = tmp_path / "s.mp4"
+    subprocess.run(
+        [config.ffmpeg_bin(), "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=s=1080x1920:r=30", "-t", "3",
+         "-pix_fmt", "yuv420p", str(v)],
+        check=True,
+    )  # fmt: skip
+    assert telegram_bot.video_attrs(v) == {"width": 1080, "height": 1920, "duration": 3}
+    th = telegram_bot.thumbnail(v)
+    from PIL import Image
+
+    with Image.open(th) as im:
+        assert im.size == (180, 320)
+    assert telegram_bot.video_attrs(tmp_path / "missing.mp4") == {}

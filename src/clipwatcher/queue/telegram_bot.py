@@ -198,10 +198,55 @@ async def post_card(app: Any, db: ClipDB, clip_id: str, video: Path | None = Non
         [[InlineKeyboardButton(label, callback_data=cb) for label, cb in r] for r in buttons_for(row)]
     )
     if video and Path(video).exists() and Path(video).stat().st_size < MAX_VIDEO_BYTES:
+        attrs = video_attrs(Path(video))
+        thumb = thumbnail(Path(video))
         with open(video, "rb") as f:
-            await app.bot.send_video(chat_id, f, caption=card_text(row), reply_markup=kb)
+            # Without explicit width/height/duration Telegram's iOS player guesses the shape and stretches
+            # the 9:16 video (the downloaded file is fine); the thumbnail keeps the preview vertical too.
+            await app.bot.send_video(
+                chat_id, f, caption=card_text(row), reply_markup=kb, supports_streaming=True,
+                thumbnail=thumb.read_bytes() if thumb else None, **attrs,
+            )  # fmt: skip
+        if thumb:
+            thumb.unlink(missing_ok=True)
     else:
         await app.bot.send_message(chat_id, card_text(row), reply_markup=kb)
+
+
+def video_attrs(video: Path) -> dict[str, int]:
+    """width, height and duration (s) for send_video, from ffprobe; {} if probing fails."""
+    import json
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            [config.ffprobe_bin(), "-v", "error", "-select_streams", "v:0", "-show_entries",
+             "stream=width,height:format=duration", "-of", "json", str(video)],
+            check=True, capture_output=True, text=True,
+        ).stdout  # fmt: skip
+        d = json.loads(out)
+        st = d["streams"][0]
+        return {"width": int(st["width"]), "height": int(st["height"]),
+                "duration": round(float(d["format"]["duration"]))}  # fmt: skip
+    except Exception:  # noqa: BLE001 - a card without size hints is still better than no card
+        log.warning("ffprobe failed for %s", video)
+        return {}
+
+
+def thumbnail(video: Path) -> Path | None:
+    """320 px tall JPEG from 1 s in (Telegram: <= 320 px, < 200 KB), or None."""
+    import subprocess
+
+    out = video.with_name(video.stem + "_tg_thumb.jpg")
+    try:
+        subprocess.run(
+            [config.ffmpeg_bin(), "-y", "-v", "error", "-ss", "1", "-i", str(video), "-frames:v", "1",
+             "-vf", "scale=-2:320", "-q:v", "5", str(out)],
+            check=True, capture_output=True,
+        )  # fmt: skip
+        return out if out.exists() else None
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _chat_id() -> int | None:
