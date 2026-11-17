@@ -61,6 +61,25 @@ def _first_existing(*cands: str | None) -> str | None:
 
 
 @lru_cache
+def streamlink_bin() -> str:
+    """streamlink from env/config, next to this Python (the venv), then PATH.
+
+    The venv's bin/ is not on PATH unless the venv is activated, and a bare "streamlink" then made every
+    recorder exit at once.
+    """
+    import sys
+
+    found = _first_existing(
+        os.environ.get("CLIPWATCHER_STREAMLINK"),
+        global_config().get("tools", {}).get("streamlink"),
+        str(Path(sys.executable).parent / "streamlink"),
+        "streamlink",
+    )
+    if not found:
+        raise RuntimeError("streamlink not found")
+    return found
+
+
 def ffmpeg_bin() -> str:
     """Prefer ffmpeg-full (has libass), then config/env, then PATH."""
     found = _first_existing(

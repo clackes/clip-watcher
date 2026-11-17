@@ -1,5 +1,6 @@
 import asyncio
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -312,3 +313,40 @@ def test_covered_until_ms(tmp_path):
         seg.write_bytes(b"x" * 10)
         rb.add_segment(seg, 1_000_000 + i * 10_000, duration_s=10)
     assert rb.covered_until_ms() == 1_030_000
+
+
+def test_streamlink_bin_found_without_activated_venv(monkeypatch):
+    # Regression: a bare "streamlink" made every recorder exit at once when the venv wasn't on PATH.
+    from clipwatcher import config
+
+    config.streamlink_bin.cache_clear()
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.delenv("CLIPWATCHER_STREAMLINK", raising=False)
+    try:
+        assert Path(config.streamlink_bin()).name == "streamlink"
+    finally:
+        config.streamlink_bin.cache_clear()
+
+
+def test_recorder_respawns_dead_pipeline(tmp_path, monkeypatch):
+    import asyncio
+    import types
+
+    from clipwatcher.ingest.recorder import Recorder
+
+    rec = Recorder("twitch", "x", "s", tmp_path)
+    events = []
+
+    async def spawn():
+        events.append("spawn")
+
+    async def kill():
+        events.append("kill")
+
+    monkeypatch.setattr(rec, "_spawn", spawn)
+    monkeypatch.setattr(rec, "_kill_pipeline", kill)
+    monkeypatch.setattr(rec.ring, "low_disk", lambda: None)
+    rec._procs = [types.SimpleNamespace(returncode=127, pid=1)]
+    rec._run_start_ms = 0  # spawned long ago
+    asyncio.run(rec.check_once())
+    assert events == ["kill", "spawn"]

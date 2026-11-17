@@ -30,10 +30,10 @@ def channel_url(platform: str, login: str) -> str:
 
 
 def build_streamlink_cmd(
-    platform: str, login: str, quality: str = QUALITY_DEFAULT, binary: str = "streamlink"
+    platform: str, login: str, quality: str = QUALITY_DEFAULT, binary: str | None = None
 ) -> list[str]:
     cmd = [
-        binary,
+        binary or config.streamlink_bin(),
         "--retry-streams",
         "30",
         "--retry-max",
@@ -240,6 +240,14 @@ class Recorder:
         if self._run_id:
             self.ingest_run(self._run_id, self._run_start_ms)
         alert = self.ring.prune().alert
+        proc = self._procs[0] if self._procs else None
+        if not alert and not self.paused and proc is not None and proc.returncode is not None:
+            # streamlink waits for offline channels itself (--retry-streams), so an exit is an error
+            # (bad binary, network, auth); respawn at most once a minute instead of silently stopping.
+            if time.time() - self._run_start_ms / 1000 >= 60:
+                log.warning("%s: recorder exited (code %s); restarting", self.login, proc.returncode)
+                await self._kill_pipeline()
+                await self._spawn()
         if alert and not self.paused:
             self.paused = True
             log.error("%s: %s", self.login, alert)
