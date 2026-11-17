@@ -16,6 +16,7 @@ detector:                   # D3
   fire_z: 3.0
   pre_z: 2.0
   min_unique: 8
+  min_unique_floor: 3       # small channels: adaptive floor (99.5th pct of unique chatters per window)
   min_unique_viewer_pct: 0.01
   mute_after_notice_s: 75   # raid / sub-bomb / giveaway mute window (60-90 s)
   cooldown_s: 45

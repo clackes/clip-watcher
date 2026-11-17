@@ -1,0 +1,22 @@
+[Unit]
+Description=Clip Watcher live watcher and recorder supervisor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=clipbot
+WorkingDirectory=/opt/clip-watcher
+EnvironmentFile=/etc/clipwatcher/env
+LoadCredential=secrets.env:/etc/clipwatcher/secrets.env
+Environment=CLIPWATCHER_CREDENTIALS_FILE=%d/secrets.env
+ExecStart=/opt/clip-watcher/.venv/bin/python -m clipwatcher.ingest.watcher
+Restart=always
+RestartSec=5
+WatchdogSec=60
+NoNewPrivileges=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

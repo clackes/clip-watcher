@@ -1,0 +1,187 @@
+import asyncio
+from pathlib import Path
+
+from clipwatcher import fastlane
+from clipwatcher.models import Candidate, ChatMessage, JudgeResult, Word
+
+
+class FakeChat:
+    def __init__(self, msgs):
+        self.msgs = msgs
+
+    def __aiter__(self):
+        return self._gen()
+
+    async def _gen(self):
+        for m in self.msgs:
+            yield m
+            await asyncio.sleep(0)
+
+
+class FakeDetector:
+    def __init__(self, fire_on):
+        self.fire_on = fire_on
+
+    def feed(self, msg):
+        if msg.text in self.fire_on:
+            t = msg.ts_ms / 1000
+            return Candidate("zack", t - 10, t - 30, t + 10, 5.0, 6.0)
+        return None
+
+
+class FakeRing:
+    def __init__(self, log):
+        self.log = log
+
+    def pin(self, s, e, ttl):
+        self.log.append(("pin", s, e, ttl))
+
+    def unpin(self, s, e):
+        self.log.append(("unpin", s, e))
+
+    def covered_until_ms(self):
+        self.log.append(("covered",))
+        return 10**15
+
+    def cut(self, s, e, out):
+        self.log.append(("cut", s, e))
+        Path(out).write_bytes(b"x")
+        return Path(out)
+
+
+def _steps(log):
+    def tr(src, st, dur, lang):
+        log.append(("transcribe", dur))
+        return [Word(0, 1, "wow")]
+
+    def sc(cand, words, chat, title, game):
+        log.append(("screen", list(chat)))
+        return {"funny_score": 7, "hype_score": 7, "reject_reason": None}
+
+    def heur(cand, words):
+        return JudgeResult(7, 7, "", 0, 1, "NO WAY", ["t"], "s", source="heuristic")
+
+    def rs(src, st, dur, out, **kw):
+        log.append(("render_short", kw["profile"], kw["hook"]))
+        Path(out).write_bytes(b"s")
+        return Path(out)
+
+    def rc(src, st, dur, out, **kw):
+        log.append(("render_clean", kw["profile"]))
+        Path(out).write_bytes(b"c")
+        return Path(out)
+
+    def stage(cid, short, clean, meta, **kw):
+        log.append(("stage", cid, meta["lane"]))
+        return Path("/staged") / cid
+
+    async def post(app, db, cid, video):
+        log.append(("post", cid))
+
+    return fastlane.Steps(tr, sc, heur, rs, rc, stage, post)
+
+
+def test_sequence_and_pins(tmp_path):
+    log: list = []
+    t0 = 1_700_000_000_000
+    msgs = [ChatMessage(t0 + i * 1000, f"u{i}", "KEKW" if i == 40 else "hi") for i in range(60)]
+    msgs[41] = ChatMessage(t0 + 41_000, "late", "fire")
+    lane = fastlane.FastLane(
+        "zack", FakeChat(msgs), FakeDetector({"fire"}), FakeRing(log), steps=_steps(log),
+        cfg={"work_dir": str(tmp_path), "pin_pad_s": 60}, db=object(), bot=object(),
+    )  # fmt: skip
+    out = asyncio.run(lane.run())
+    assert [o.status for o in out] == ["staged"]
+    names = [e[0] for e in log if e[0] != "covered"]
+    assert names == [
+        "pin",
+        "pin",
+        "cut",
+        "transcribe",
+        "screen",
+        "render_short",
+        "render_clean",
+        "stage",
+        "post",
+        "unpin",
+    ]
+    peak = t0 / 1000 + 41
+    pin = next(e for e in log if e[0] == "pin")
+    assert pin[1] == int((peak - 30 - 60) * 1000) and pin[2] == int((peak + 10 + 60) * 1000)
+    assert pin[3] == 48 * 3600
+    cut = next(e for e in log if e[0] == "cut")
+    assert cut[2] - cut[1] == (40 + 5) * 1000  # window plus post-roll
+    assert ("render_short", "cpu_live", "NO WAY") in log and ("render_clean", "cpu_live") in log
+    assert set(out[0].timings) >= {
+        "cut",
+        "transcribe",
+        "screen",
+        "render_short",
+        "render_clean",
+        "stage",
+        "total",
+    }
+    assert any("late: fire" in str(e) for e in log if e[0] == "screen")
+
+
+def test_reject_skips_render(tmp_path):
+    log: list = []
+    st = _steps(log)
+    st.screen = lambda *a: {"funny_score": 1, "hype_score": 1, "reject_reason": "dead air"}
+    msgs = [ChatMessage(1_700_000_000_000, "a", "fire")]
+    lane = fastlane.FastLane(
+        "zack",
+        FakeChat(msgs),
+        FakeDetector({"fire"}),
+        FakeRing(log),
+        steps=st,
+        cfg={"work_dir": str(tmp_path)},
+    )
+    out = asyncio.run(lane.run())
+    assert out[0].status == "rejected"
+    assert not any(e[0] == "render_short" for e in log)
+
+
+def test_bounded_concurrency(tmp_path):
+    log: list = []
+    active = {"n": 0, "max": 0}
+    st = _steps(log)
+
+    def slow_tr(*a):
+        import time
+
+        active["n"] += 1
+        active["max"] = max(active["max"], active["n"])
+        time.sleep(0.05)
+        active["n"] -= 1
+        return []
+
+    st.transcribe = slow_tr
+    msgs = [ChatMessage(1_700_000_000_000 + i * 200_000, "a", "fire") for i in range(5)]
+    lane = fastlane.FastLane(
+        "zack", FakeChat(msgs), FakeDetector({"fire"}), FakeRing(log), steps=st,
+        cfg={"work_dir": str(tmp_path), "max_parallel": 2},
+    )  # fmt: skip
+    out = asyncio.run(lane.run())
+    assert len(out) == 5 and active["max"] <= 2
+
+
+def test_wall_clock_wait_when_ring_has_no_coverage_api(tmp_path):
+    log: list = []
+    ring = FakeRing(log)
+    ring.covered_until_ms = None  # type: ignore[assignment]
+    now = [0.0]
+    sleeps = []
+
+    async def sleep(s):
+        sleeps.append(s)
+        now[0] += s
+
+    cand = Candidate("zack", 100, 90, 110, 5, 6)
+    now[0] = 100.0
+    lane = fastlane.FastLane(
+        "zack", FakeChat([]), FakeDetector(set()), ring, steps=_steps(log),
+        cfg={"work_dir": str(tmp_path), "segment_s": 10}, clock=lambda: now[0], sleep=sleep,
+    )  # fmt: skip
+    asyncio.run(lane._wait_for_buffer(cand.end_s + 5))
+    assert now[0] >= 125.0

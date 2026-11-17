@@ -147,7 +147,7 @@ def detect(
     w = cfg.get("weights", {"U": 0.5, "E": 0.35, "S": 0.15})
     win = int(cfg.get("window_s", 10))
     fire_z, pre_z = float(cfg.get("fire_z", 3.0)), float(cfg.get("pre_z", 2.0))
-    min_unique = int(cfg.get("min_unique", 8))
+    min_unique = int(sc.get("min_unique", cfg.get("min_unique", 8)))
     pct = float(cfg.get("min_unique_viewer_pct", 0.01))
     mute_s = float(cfg.get("mute_after_notice_s", 75))
     cooldown = float(cfg.get("cooldown_s", 45))
@@ -195,6 +195,12 @@ def detect(
         rU.push(u)
         rE.push(e)
         rS.push(s)
+
+    # Small channels: never ask for more unique chatters than the busiest 0.5% of windows reach.
+    us = sorted(st[4] for st in steps if st)
+    if us:
+        q = us[int(0.995 * (len(us) - 1))]
+        u_need = max(int(cfg.get("min_unique_floor", 3)), min(u_need, q))
 
     series = x_normal_series(msgs, bucket_s)
     found: list[Candidate] = []

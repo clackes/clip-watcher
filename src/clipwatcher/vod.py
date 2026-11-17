@@ -10,6 +10,7 @@ import importlib
 import re
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from clipwatcher import config
@@ -99,6 +100,8 @@ def process_candidate(
     judge: bool,
     pad_s: float,
     quality: str,
+    fetch_window: Callable[[float, float, Path], None] | None = None,
+    platform: str = "twitch",
 ) -> Path:
     scfg = config.streamer(streamer)
     clip_id = f"{streamer}-{vid}-{int(cand.start_s * 1000)}"
@@ -109,9 +112,14 @@ def process_candidate(
         dl_start, dl_end, local_start = window_with_pad(cand, pad_s)
         src = work / f"cand_{n}_{int(dl_start)}.mp4"
         if not (src.exists() and src.stat().st_size > 0):  # reuse an earlier download of the same window
-            run_cmd(
-                build_videodownload_cmd(config.twitch_downloader_bin(), vod, dl_start, dl_end, src, quality)
-            )
+            if fetch_window:
+                fetch_window(dl_start, dl_end, src)
+            else:
+                run_cmd(
+                    build_videodownload_cmd(
+                        config.twitch_downloader_bin(), vod, dl_start, dl_end, src, quality
+                    )
+                )
 
     meta = heuristic_meta(streamer)
     words: list = []
@@ -162,7 +170,7 @@ def process_candidate(
         clip_id=clip_id,
         streamer=streamer,
         vod_id=vid,
-        credit=f"twitch.tv/{streamer}",
+        credit=f"{platform}.{'tv' if platform == 'twitch' else 'com'}/{streamer}",
         campaign_link=scfg.get("campaign_link"),
         chat_score=cand.chat_score,
         final_score=cand.final_score,
@@ -182,7 +190,12 @@ def process_candidate(
 
 def main(argv: list[str] | None = None) -> int:
     vcfg = config.global_config().get("vod", {})
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--platform", choices=["twitch", "kick"], default="twitch")
+    if pre.parse_known_args(argv)[0].platform == "kick":
+        return _mod("clipwatcher.kickvod").main(argv)
     ap = argparse.ArgumentParser(prog="clipwatcher.vod")
+    ap.add_argument("--platform", choices=["twitch", "kick"], default="twitch")
     ap.add_argument("--vod", required=True)
     ap.add_argument("--streamer", required=True)
     ap.add_argument("--chat", type=Path)

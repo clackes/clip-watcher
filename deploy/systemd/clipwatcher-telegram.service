@@ -1,0 +1,21 @@
+[Unit]
+Description=Clip Watcher Telegram approval bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+NotifyAccess=main
+User=clipbot
+WorkingDirectory=/opt/clip-watcher
+EnvironmentFile=/etc/clipwatcher/env
+LoadCredential=secrets.env:/etc/clipwatcher/secrets.env
+Environment=CLIPWATCHER_CREDENTIALS_FILE=%d/secrets.env
+ExecStart=/opt/clip-watcher/.venv/bin/python -m clipwatcher.queue.telegram_bot
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
