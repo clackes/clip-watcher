@@ -177,3 +177,24 @@ def test_viewer_clip_window_and_poll():
         confirm(cand, [cand.peak_s + 5]).final_score
         == vc_confirm(cand, [ViewerClip("y", cand.peak_s + 22.5)]).final_score
     )
+
+
+def test_frequent_bot_messages_do_not_block_fires():
+    """Regression: big channels have bots posting every few seconds; holding every fire for 20 s after
+    any bot message dropped real spikes (replay missed 4 of 10 top moments)."""
+    from clipwatcher.detect.live import LiveDetector
+    from clipwatcher.models import ChatMessage
+
+    base = 1_790_000_000_000
+    msgs = []
+    for t in range(0, 1200):  # 20 min: 1 msg/s background from 40 users, nightbot every 5 s
+        msgs.append(ChatMessage(base + t * 1000, f"u{t % 40}", f"talking {t}"))
+        if t % 5 == 0:
+            msgs.append(ChatMessage(base + t * 1000 + 1, "nightbot", "follow on twitter!", is_bot=True))
+    for i in range(80):  # spike at 1000 s: 80 different chatters laughing within 8 s
+        msgs.append(ChatMessage(base + 1000_000 + i * 100, f"fan{i}", "KEKW LMAO"))
+    msgs.sort(key=lambda m: m.ts_ms)
+    det = LiveDetector("nobody")
+    fired = [c for m in msgs if (c := det.feed(m))] + det.drain()
+    assert any(abs(c.signals["fire_s"] - (base / 1000 + 1000)) < 15 for c in fired)
+    assert max(c.chat_score for c in fired) >= 5

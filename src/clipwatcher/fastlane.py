@@ -33,6 +33,7 @@ def fastlane_config() -> dict[str, Any]:
         "profile": "cpu_live",
         "work_dir": str(config.ROOT / "work" / "fastlane"),
         "chat_context_s": 120.0,
+        "min_score": 5.0,
     }
     base.update(c.get("fastlane", {}))
     base["pin_pad_s"] = c.get("buffer", {}).get("pin_pad_s", 60)
@@ -160,6 +161,9 @@ class FastLane:
         async for msg in self.chat:
             self._remember(msg)
             cand = self.detector.feed(msg)
+            if cand is not None and cand.chat_score < float(self.cfg["min_score"]):
+                log.info("%s: skip weak moment score=%.1f", self.streamer, cand.chat_score)
+                cand = None
             if cand is not None:
                 t = asyncio.create_task(self._guarded(cand))
                 self._tasks.add(t)

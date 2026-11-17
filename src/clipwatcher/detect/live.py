@@ -40,6 +40,7 @@ class LiveDetector:
         self.min_unique = int(sc0.get("min_unique", cfg.get("min_unique", 8)))
         self.min_unique_floor = int(cfg.get("min_unique_floor", 3))
         self._u_hist: deque[int] = deque(maxlen=int(cfg.get("baseline_min", 15)) * 60)
+        self.trace: deque[tuple] | None = None  # set to a deque to record (t, score, u, u_need, hold, muted)
         self.viewers = viewers
         self.mute_s = float(cfg.get("mute_after_notice_s", 75))
         self.cooldown = float(cfg.get("cooldown_s", 45))
@@ -69,6 +70,8 @@ class LiveDetector:
         self._last_fire = -1e9
         self._counts: deque[int] = deque(maxlen=hist_n)  # messages per window, for x_normal
         self._out: deque[Candidate] = deque()
+        self._maturing: list[Candidate] = []
+        self.mature_s = float(cfg.get("live_mature_s", 15))
 
     # -- public ---------------------------------------------------------------------------------
     def feed(self, msg: ChatMessage) -> Candidate | None:
@@ -86,8 +89,9 @@ class LiveDetector:
         return self._out.popleft() if self._out else None
 
     def drain(self) -> list[Candidate]:
-        out = list(self._out)
+        out = list(self._out) + self._maturing
         self._out.clear()
+        self._maturing = []
         return out
 
     # -- ingestion ------------------------------------------------------------------------------
@@ -145,26 +149,36 @@ class LiveDetector:
             self._step(self._next)
             self._next += 1
 
+    def _word_burst(self, b: float, until_ms: float) -> tuple[int, int]:
+        """(chatters typing the most common message, all chatters) between bot message b and until_ms."""
+        span = [h for h in self._humans if b < h[0] <= until_ms]
+        users = {h[1] for h in span}
+        top: Counter[str] = Counter()
+        seen = set()
+        for _, u, n in span:
+            if n and (u, n) not in seen:
+                seen.add((u, n))
+                top[n] += 1
+        return (top.most_common(1)[0][1] if top else 0), len(users)
+
     def _eval_giveaways(self, t: int) -> bool:
-        """True while a bot message is still inside its 20 s observation window."""
+        """Hold fires only while a same-word burst is forming after a bot message.
+
+        Big channels have bots posting every few seconds (timers, alerts), so holding after *every* bot
+        message blocked nearly all fires; a replay of an 8 h VOD missed 4 of the top 10 moments that way.
+        """
         hold = False
         keep = []
         for b in self._bots_pending:
             if t * 1000 < b + _GIVEAWAY_LOOKAHEAD_S * 1000:
-                hold = True
                 keep.append(b)
+                same, n = self._word_burst(b, t * 1000)
+                if same >= 3 and same >= 0.3 * max(n, 1):
+                    hold = True
                 continue
-            span = [h for h in self._humans if b < h[0] <= b + _GIVEAWAY_LOOKAHEAD_S * 1000]
-            users = {h[1] for h in span}
-            if len(users) >= self.min_unique:
-                top: Counter[str] = Counter()
-                seen = set()
-                for _, u, n in span:
-                    if n and (u, n) not in seen:
-                        seen.add((u, n))
-                        top[n] += 1
-                if top and top.most_common(1)[0][1] >= max(self.min_unique, 0.5 * len(users)):
-                    self._spans.append((b / 1000, b / 1000 + self.mute_s))
+            same, n = self._word_burst(b, b + _GIVEAWAY_LOOKAHEAD_S * 1000)
+            if n >= self.min_unique and same >= max(self.min_unique, 0.5 * n):
+                self._spans.append((b / 1000, b / 1000 + self.mute_s))
         self._bots_pending = keep
         return hold
 
@@ -206,6 +220,9 @@ class LiveDetector:
         if len(self._u_hist) >= 60:
             q = sorted(self._u_hist)[int(0.995 * (len(self._u_hist) - 1))]
             u_need = max(self.min_unique_floor, min(u_need, q))
+        if self.trace is not None:
+            muted = any(a <= t <= b for a, b in self._spans)
+            self.trace.append((t, score, u, u_need, hold, muted, t - self._last_fire))
         if (
             score is not None
             and not hold
@@ -217,7 +234,7 @@ class LiveDetector:
             self._last_fire = t
             peak = first - self.delay_s
             med = _median(list(self._counts)) if self._counts else 0.0
-            self._out.append(
+            self._maturing.append(
                 Candidate(
                     stream=self.streamer,
                     peak_s=peak,
@@ -230,6 +247,18 @@ class LiveDetector:
                     signals={"zU": rU.z(u), "zE": rE.z(e), "zS": rS.z(s), "fire_s": float(t)},
                 )
             )
+        # Let fired candidates mature: the score keeps climbing for seconds after the threshold is
+        # crossed, so emit after mature_s with the peak score (the fast lane waits that long anyway).
+        still = []
+        for c in self._maturing:
+            if score is not None and score > c.chat_score:
+                c.chat_score = c.final_score = score
+                c.unique_chatters = max(c.unique_chatters, u)
+            if t - c.signals["fire_s"] >= self.mature_s:
+                self._out.append(c)
+            else:
+                still.append(c)
+        self._maturing = still
         self._counts.append(len(window))
         rU.push(u)
         self._u_hist.append(u)

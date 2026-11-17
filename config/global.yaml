@@ -16,6 +16,7 @@ detector:                   # D3
   fire_z: 3.0
   pre_z: 2.0
   min_unique: 8
+  live_mature_s: 15         # live: emit a fire after 15 s with its peak score
   min_unique_floor: 3       # small channels: adaptive floor (99.5th pct of unique chatters per window)
   min_unique_viewer_pct: 0.01
   mute_after_notice_s: 75   # raid / sub-bomb / giveaway mute window (60-90 s)
@@ -79,3 +80,8 @@ publish:
   auto_approve: false       # true = bot approves clips with judge score >= auto_approve_min
   auto_approve_min: 8
   claim_ttl_min: 15
+
+fastlane:                   # live lane (python -m clipwatcher.live)
+  min_score: 5              # peak chat score gate; replay of 4 VODs: ~3-5 clips/h/streamer, keeps most top moments
+  max_parallel: 2
+  profile: cpu_live
