@@ -9,6 +9,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from clipwatcher import config
 from clipwatcher.config import ffmpeg_bin, ffprobe_bin
 from clipwatcher.models import Word
 from clipwatcher.render.branding import ACCENTS, BRANDING_DIR, FONTS_DIR, ensure_branding, hook_pill
@@ -163,7 +164,7 @@ def render_short(
 
     with tempfile.TemporaryDirectory(prefix="clipwatcher_") as td:
         work = Path(td)
-        ass = write_ass(work / "subs.ass", words, dur_s, credit=f"twitch.tv/{streamer}")
+        ass = write_ass(work / "subs.ass", words, dur_s, credit=config.credit(streamer))
         cmd = [ffmpeg_bin(), "-y", "-hide_banner", "-ss", f"{coarse:.3f}", "-i", str(src)]
         idx = 1
         logo_idx = idx

@@ -36,9 +36,9 @@ async def run_streamer(login: str, *, db, bot=None, staging_root: Path | None = 
     scfg = config.streamer(login)
     platform = scfg.get("platform", "twitch")
     if platform != "twitch":
-        from clipwatcher.chat.kick import KickChat
+        from clipwatcher.chat.kick import KickHistoryChat
 
-        chat_src = KickChat(login)
+        chat_src = KickHistoryChat(login)
     else:
         chat_src = TwitchChat(login)
     stream_id = time.strftime("%Y%m%d-%H%M%S")

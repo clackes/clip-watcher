@@ -279,7 +279,7 @@ class FastLane:
             profile=prof,
         )
         meta = {
-            "streamer": self.streamer, "credit": f"twitch.tv/{self.streamer}", "lane": "live",
+            "streamer": self.streamer, "credit": config.credit(self.streamer), "lane": "live",
             "campaign_link": scfg.get("campaign_link"), "hook": jr.hook_text, "titles": jr.title_options,
             "setup_line": jr.setup_line, "judge_source": jr.source, "score": cand.final_score,
             "chat_score": cand.chat_score, "final_score": cand.final_score, "peak_s": cand.peak_s,

@@ -87,3 +87,9 @@ def twitch_downloader_bin() -> str:
         or global_config().get("tools", {}).get("twitch_downloader")
         or str(ROOT / "bin" / "TwitchDownloaderCLI")
     )
+
+
+def credit(name: str) -> str:
+    """On-screen / metadata credit for a streamer: twitch.tv/<name> or kick.com/<name>."""
+    plat = streamer(name).get("platform", "twitch")
+    return f"{'kick.com' if plat == 'kick' else 'twitch.tv'}/{name.lower()}"

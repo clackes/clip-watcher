@@ -31,7 +31,7 @@ def build_metadata(meta: dict[str, Any]) -> dict[str, Any]:
     streamer = str(meta.get("streamer", ""))
     name = streamer.lower()
     title = str(meta.get("title") or f"{streamer} reacts").strip()[:60].rstrip()
-    lines = [f"🎥 {streamer}: twitch.tv/{name}"]
+    lines = [f"🎥 {streamer}: {config.credit(name)}"]
     if meta.get("setup_line"):
         lines.append(str(meta["setup_line"]))
     campaign = meta.get("campaign_link")

@@ -180,3 +180,87 @@ class KickChat:
                 return
             await asyncio.sleep(backoff_delay(attempt, self.backoff_base, self.backoff_cap))
             attempt += 1
+
+
+# --------------------------------------------------------------------------- history polling (default)
+HISTORY_URL = "https://web.kick.com/api/v1/chat/{channel_id}/history"
+
+
+def resolve_channel_id(slug: str, *, fetch: Callable[[str, dict[str, str]], Any] | None = None) -> int:
+    data = (fetch or (lambda u, h: _http_json(u, h)))(f"https://kick.com/api/v2/channels/{slug}", {})
+    return int(data["id"])
+
+
+def history_message_to_chat(m: dict, bots: set[str] | frozenset[str] = frozenset()) -> ChatMessage | None:
+    """web.kick.com chat history item -> ChatMessage. ``metadata.message_ref`` carries epoch ms."""
+    if m.get("type") not in (None, "message", "reply"):
+        return None
+    ts = None
+    try:
+        ts = int(json.loads(m.get("metadata") or "{}").get("message_ref"))
+    except (TypeError, ValueError):
+        pass
+    if not ts:
+        ts = iso_to_ms(m["created_at"])
+    user = (m.get("sender") or {}).get("slug") or (m.get("sender") or {}).get("username", "")
+    user = user.lower()
+    return ChatMessage(ts, user, strip_emotes(m.get("content", "")), platform="kick", is_bot=user in bots)
+
+
+class KickHistoryChat:
+    """``async for msg in KickHistoryChat(slug)``: polls the public chat history (latest 25 messages) every
+    ``poll_s`` and yields unseen messages in time order. Kick's web client moved off Pusher in 2026; this
+    needs no login or websocket. A poll with no overlap with the previous one means messages were missed
+    (only on very fast chats) and is counted in ``self.gaps``."""
+
+    def __init__(self, slug: str, *, channel_id: int | None = None, poll_s: float = 1.0,
+                 fetch: Callable[[str, dict[str, str]], Any] | None = None,
+                 sleep: Callable[[float], Any] = asyncio.sleep, bots: set[str] | None = None):  # fmt: skip
+        self.slug, self.channel_id, self.poll_s = slug, channel_id, poll_s
+        self.fetch = fetch or (lambda u, h: _http_json(u, h))
+        self.sleep = sleep
+        self.bots = (
+            bots if bots is not None else set(config.global_config().get("detector", {}).get("bots", []))
+        )
+        self.gaps = 0
+        self._closed = False
+
+    def close(self) -> None:
+        self._closed = True
+
+    def __aiter__(self) -> AsyncIterator[ChatMessage]:
+        return self._run()
+
+    async def _run(self) -> AsyncIterator[ChatMessage]:
+        if self.channel_id is None:
+            self.channel_id = await asyncio.to_thread(resolve_channel_id, self.slug, fetch=self.fetch)
+        url = HISTORY_URL.format(channel_id=self.channel_id)
+        seen: dict[str, None] = {}
+        prev: set[str] = set()
+        attempt = 0
+        while not self._closed:
+            try:
+                data = await asyncio.to_thread(self.fetch, url, {"Accept": "application/json"})
+                items = (data.get("data") or {}).get("messages") or []
+                attempt = 0
+            except Exception:  # noqa: BLE001 - network hiccup: back off and keep polling
+                attempt += 1
+                await self.sleep(backoff_delay(attempt))
+                continue
+            ids = {m["id"] for m in items}
+            if prev and ids and not (ids & prev):
+                self.gaps += 1
+            prev = ids
+            out = []
+            for m in items:
+                if m["id"] in seen:
+                    continue
+                seen[m["id"]] = None
+                msg = history_message_to_chat(m, self.bots)
+                if msg is not None:
+                    out.append(msg)
+            while len(seen) > 2000:
+                seen.pop(next(iter(seen)))
+            for msg in sorted(out, key=lambda x: x.ts_ms):
+                yield msg
+            await self.sleep(self.poll_s)

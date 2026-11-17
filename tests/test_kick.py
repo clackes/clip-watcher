@@ -108,3 +108,42 @@ def test_vod_platform_dispatch(monkeypatch):
     monkeypatch.setattr(kickvod, "main", lambda argv: seen.setdefault("argv", argv) and 0)
     assert vod.main(["--platform", "kick", "--vod", "x", "--streamer", "s"]) == 0
     assert seen["argv"][:2] == ["--platform", "kick"]
+
+
+def test_history_chat_polls_dedupes_and_orders():
+    import asyncio
+    import json
+
+    from clipwatcher.chat.kick import KickHistoryChat
+
+    def item(i, ms):
+        return {"id": f"m{i}", "type": "message", "content": f"hi [emote:1:KEKW] {i}",
+                "metadata": json.dumps({"message_ref": str(ms)}), "created_at": "2026-11-17T00:00:00Z",
+                "sender": {"slug": f"User{i}"}}  # fmt: skip
+
+    pages = [
+        {"data": {"messages": [item(2, 2000), item(1, 1000)]}},
+        {"data": {"messages": [item(3, 3000), item(2, 2000)]}},
+        {"data": {"messages": [item(9, 9000)]}},  # no overlap -> a gap
+    ]
+    calls = iter(pages)
+
+    def fetch(url, headers):
+        try:
+            return next(calls)
+        except StopIteration:
+            chat.close()
+            return {"data": {"messages": []}}
+
+    async def no_sleep(_):
+        return None
+
+    chat = KickHistoryChat("x", channel_id=1, fetch=fetch, sleep=no_sleep, bots=set())
+
+    async def collect():
+        return [m async for m in chat]
+
+    got = asyncio.run(collect())
+    assert [m.ts_ms for m in got] == [1000, 2000, 3000, 9000]
+    assert got[0].user == "user1" and "KEKW" in got[0].text and got[0].platform == "kick"
+    assert chat.gaps == 1
