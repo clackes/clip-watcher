@@ -11,5 +11,11 @@
 | 5 | YouTube, Instagram, TikTok inbox, campaign link collection | 7 days scheduled posts, no errors |
 | 6 | weekly compilation + voiceover, analytics, learning loop, Kick adapter | first compilation monetized |
 
-Status: M0 scaffold + M1 part 0 (VOD lane) and part 1D (render/queue/publisher) in progress.
-Next: M1 part 1A (watcher/recorder/ring buffer) and 1B (live IRC/Kick chat adapters).
+Status (17 Nov 2026):
+- Done: VOD lane (Twitch; Kick untested), live lane `python -m clipwatcher.live` (record + anonymous chat +
+  detect + cut + captions + layout + render + stage) verified on real live streams; Docker image for a NAS.
+- Lessons from real runs: small chats need an adaptive unique-chatter floor; bots posting every few seconds
+  must not hold fires; live fires must mature ~15 s to get their real peak score; faster-whisper must not go
+  through PyAV; each clip needs its own layout detection.
+- Before launch: Telegram bot token + operator IDs, streamer list for 19 Nov, a host that stays on.
+- Next: Claude judge (API key), publishing (YouTube/IG creds), Kick live test, viewer-clip confirmation.

@@ -23,6 +23,11 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/ruff check . && .venv/bin/ruff format --check .
 ```
 
+## Testing against reality
+- Replay real VOD chats through `LiveDetector` and compare with batch `detect()` top-10 (see git log
+  81afd37). Keep >= 8/10 matches on clix/zackrawrr/tfue/kaicenat VODs when changing the detector.
+- `scripts/force_clip.py` pushes one forced moment through the live pipeline on a running ring buffer.
+
 ## Decision log (v2.1, binding)
 - D1 Ingestion: streamlink -> .ts + anonymous Twitch IRC TLS (irc.chat.twitch.tv:6697) + Kick Pusher/webhooks.
   patchright only as optional Kick Cloudflare cookie adapter, never video capture.
