@@ -38,6 +38,8 @@ class LiveDetector:
         self.fire_z, self.pre_z = float(cfg.get("fire_z", 3.0)), float(cfg.get("pre_z", 2.0))
         sc0 = config.streamer(streamer)
         self.min_unique = int(sc0.get("min_unique", cfg.get("min_unique", 8)))
+        self.min_unique_floor = int(cfg.get("min_unique_floor", 3))
+        self._u_hist: deque[int] = deque(maxlen=int(cfg.get("baseline_min", 15)) * 60)
         self.viewers = viewers
         self.mute_s = float(cfg.get("mute_after_notice_s", 75))
         self.cooldown = float(cfg.get("cooldown_s", 45))
@@ -199,6 +201,11 @@ class LiveDetector:
         else:
             self._run_first = None
         u_need = max(self.min_unique, self._pct * self.viewers if self.viewers else 0)
+        # Small channels (most GTA RP chats): never ask for more unique chatters than the busiest 0.5% of
+        # recent windows reached, as the batch detector does.
+        if len(self._u_hist) >= 60:
+            q = sorted(self._u_hist)[int(0.995 * (len(self._u_hist) - 1))]
+            u_need = max(self.min_unique_floor, min(u_need, q))
         if (
             score is not None
             and not hold
@@ -225,5 +232,6 @@ class LiveDetector:
             )
         self._counts.append(len(window))
         rU.push(u)
+        self._u_hist.append(u)
         rE.push(e)
         rS.push(s)

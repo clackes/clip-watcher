@@ -1,0 +1,18 @@
+# Clip Watcher for a NAS / any Docker host (amd64 or arm64). Build from the repo root:
+#   docker compose -f deploy/docker/compose.yaml up -d --build
+FROM python:3.12-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ffmpeg fonts-dejavu-core libgl1 libglib2.0-0 ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY pyproject.toml ./
+COPY src ./src
+RUN pip install --no-cache-dir -e ".[judge,telegram,live]" streamlink==8.6.3
+COPY config ./config
+COPY prompts ./prompts
+COPY assets ./assets
+COPY scripts ./scripts
+ENV CLIPWATCHER_DATA=/data/work CLIPWATCHER_STAGING=/data/staging HF_HOME=/data/hf DRY_RUN=1 PYTHONUNBUFFERED=1
+VOLUME ["/data"]
+HEALTHCHECK --interval=2m --timeout=10s CMD python -m clipwatcher.health || exit 1
+CMD ["python", "-m", "clipwatcher.live"]

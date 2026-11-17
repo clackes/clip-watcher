@@ -233,12 +233,15 @@ class FastLane:
         work.mkdir(parents=True, exist_ok=True)
         dur = cand.end_s - cand.start_s
         end_ms = int((cand.end_s + float(self.cfg["post_roll_s"])) * 1000)
-        src = await self._timed(
+        cut = await self._timed(
             "cut", timings, self.ring.cut, int(cand.start_s * 1000), end_ms, work / "src.ts"
         )
+        # RingBuffer.cut returns (path, local_start_s): the clip starts that far into the concatenated
+        # segments. Treating it as a bare path would start every clip at the segment boundary instead.
+        src, t0_s = cut if isinstance(cut, tuple) else (cut, 0.0)
 
         words = await self._timed(
-            "transcribe", timings, self.steps.transcribe, src, 0.0, dur, scfg.get("language")
+            "transcribe", timings, self.steps.transcribe, src, t0_s, dur, scfg.get("language")
         )
         chat_lines = self._chat_lines(cand)
         title, game = scfg.get("title", f"{self.streamer} live"), scfg.get("game", "")
@@ -253,18 +256,20 @@ class FastLane:
         jr = self.steps.heuristic(cand, words)
 
         prof = self.cfg["profile"]
+        from . import layout
+
+        lay = await self._timed("layout", timings, layout.resolve, src, self.streamer)
         short = await self._timed(
-            "render_short", timings, self.steps.render_short, src, 0.0, dur, work / "short_9x16.mp4",
+            "render_short", timings, self.steps.render_short, src, t0_s, dur, work / "short_9x16.mp4",
             clip_id=cid, streamer=self.streamer, words=words, hook=jr.hook_text,
-            has_webcam=bool(scfg.get("has_webcam", True)), cam=scfg.get("facecam_rect"),
-            game=scfg.get("gameplay_rect"), profile=prof,
+            **lay.as_render_kwargs(), profile=prof,
         )  # fmt: skip
         clean = await self._timed(
             "render_clean",
             timings,
             self.steps.render_clean,
             src,
-            0.0,
+            t0_s,
             dur,
             work / "clean_16x9.mp4",
             profile=prof,
@@ -275,7 +280,7 @@ class FastLane:
             "setup_line": jr.setup_line, "judge_source": jr.source, "score": cand.final_score,
             "chat_score": cand.chat_score, "final_score": cand.final_score, "peak_s": cand.peak_s,
             "start_s": cand.start_s, "end_s": cand.end_s, "funny_score": screen.get("funny_score"),
-            "hype_score": screen.get("hype_score"),
+            "hype_score": screen.get("hype_score"), "layout": lay.source,
         }  # fmt: skip
         kw: dict[str, Any] = {"db": self.db}
         if self.staging_root:

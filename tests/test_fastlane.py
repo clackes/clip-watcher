@@ -46,7 +46,7 @@ class FakeRing:
     def cut(self, s, e, out):
         self.log.append(("cut", s, e))
         Path(out).write_bytes(b"x")
-        return Path(out)
+        return Path(out), 3.5  # real RingBuffer.cut returns (path, local_start_s)
 
 
 def _steps(log):
@@ -63,6 +63,7 @@ def _steps(log):
 
     def rs(src, st, dur, out, **kw):
         log.append(("render_short", kw["profile"], kw["hook"]))
+        log.append(("render_start", st))
         Path(out).write_bytes(b"s")
         return Path(out)
 
@@ -92,7 +93,7 @@ def test_sequence_and_pins(tmp_path):
     )  # fmt: skip
     out = asyncio.run(lane.run())
     assert [o.status for o in out] == ["staged"]
-    names = [e[0] for e in log if e[0] != "covered"]
+    names = [e[0] for e in log if e[0] not in ("covered", "render_start")]
     assert names == [
         "pin",
         "pin",
@@ -111,6 +112,7 @@ def test_sequence_and_pins(tmp_path):
     assert pin[3] == 48 * 3600
     cut = next(e for e in log if e[0] == "cut")
     assert cut[2] - cut[1] == (40 + 5) * 1000  # window plus post-roll
+    assert ("render_start", 3.5) in log  # clip starts at the cut's local offset, not at 0
     assert ("render_short", "cpu_live", "NO WAY") in log and ("render_clean", "cpu_live") in log
     assert set(out[0].timings) >= {
         "cut",

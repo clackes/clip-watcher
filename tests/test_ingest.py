@@ -257,3 +257,15 @@ def test_cut(tmp_path):
     assert dur == pytest.approx(2.0, abs=0.3)
     with pytest.raises(LookupError):
         rb.cut(5, 6, tmp_path / "x.ts")
+
+
+def test_covered_until_ms(tmp_path):
+    from clipwatcher.ingest.ringbuffer import RingBuffer
+
+    rb = RingBuffer(tmp_path / "ring", window_min=30, segment_s=10)
+    assert rb.covered_until_ms() == 0
+    for i in range(3):
+        seg = tmp_path / f"s{i}.ts"
+        seg.write_bytes(b"x" * 10)
+        rb.add_segment(seg, 1_000_000 + i * 10_000, duration_s=10)
+    assert rb.covered_until_ms() == 1_030_000

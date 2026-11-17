@@ -168,3 +168,14 @@ async def alert(app: Any, text: str) -> None:
     chat_id = _chat_id()
     if chat_id:
         await app.bot.send_message(chat_id, f"ALERT: {text}")
+
+
+def main() -> None:
+    """Run the approval bot (button presses, title edits). The live lane posts cards with its own client."""
+    root = Path(os.environ.get("CLIPWATCHER_STAGING", config.ROOT / "staging"))
+    root.mkdir(parents=True, exist_ok=True)
+    build_application(ClipDB(root / "clips.db")).run_polling()
+
+
+if __name__ == "__main__":
+    main()

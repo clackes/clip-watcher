@@ -37,6 +37,10 @@ class RingBuffer:
         self.pins_path = self.root / "pins.json"
 
     # -- index ---------------------------------------------------------
+    def covered_until_ms(self) -> int:
+        """Wall-clock end of the newest complete segment (0 when empty)."""
+        return max((int(r["end_ms"]) for r in self.segments()), default=0)
+
     def segments(self) -> list[dict]:
         if not self.index_path.exists():
             return []

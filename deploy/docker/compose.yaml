@@ -1,0 +1,18 @@
+services:
+  live:
+    build: {context: ../.., dockerfile: deploy/docker/Dockerfile}
+    restart: unless-stopped
+    env_file: ../../.env            # TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY (optional), DRY_RUN
+    volumes:
+      - ${CLIPWATCHER_DATA_DIR:-./data}:/data
+      - ../../config/streamers.yaml:/app/config/streamers.yaml:ro
+      - ../../config/operators.yaml:/app/config/operators.yaml:ro
+    # command: python -m clipwatcher.live --streamers kaicenat,clix
+  telegram:
+    build: {context: ../.., dockerfile: deploy/docker/Dockerfile}
+    restart: unless-stopped
+    env_file: ../../.env
+    volumes:
+      - ${CLIPWATCHER_DATA_DIR:-./data}:/data
+      - ../../config/operators.yaml:/app/config/operators.yaml:ro
+    command: python -m clipwatcher.queue.telegram_bot
