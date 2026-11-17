@@ -88,6 +88,11 @@ def resolve(media: Path, streamer: str, *, n_frames: int = 4, detector=None) -> 
         )
     with tempfile.TemporaryDirectory() as td:
         frames = calibrate.sample_frames(Path(media), Path(td), n_frames)
+        if not frames:  # unreadable / too short media: fall back to the confirmed default scene
+            s = sc[0] if sc else {}
+            return Layout(
+                bool(s.get("has_webcam", False)), s.get("facecam_rect"), s.get("gameplay_rect"), "default"
+            )
         boxes = [b for _, p in frames for b in detector(p)]
         from PIL import Image
 

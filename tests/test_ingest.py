@@ -1,4 +1,5 @@
 import asyncio
+import os
 import subprocess
 from pathlib import Path
 
@@ -150,11 +151,25 @@ def test_ad_parser_and_log(tmp_path):
 def test_recorder_ingest_run(tmp_path):
     rec = Recorder("twitch", "foo", "123", tmp_path)
     (rec.dir / "seg_a_00000.ts").write_bytes(b"1")
+    os.utime(rec.dir / "seg_a_00000.ts", (5_012, 5_012))  # segment finished 2 s after its 10 s of video
     (rec.dir / "seg_a_00001.ts").write_bytes(b"")
     (rec.dir / "a.csv").write_text("seg_a_00000.ts,0.0,10.0\nseg_a_00001.ts,10.0,20.0\n")
     assert rec.ingest_run("a", 5_000_000) == 1
     assert rec.ring.segments()[0]["start_ms"] == 5_000_000 and not (rec.dir / "seg_a_00001.ts").exists()
     assert rec.newest_segment_age_s(now=5_020) is not None
+
+
+def test_recorder_anchors_run_that_waited_for_the_stream(tmp_path):
+    """Regression: streamlink spawned 1 h before the channel went live; segments must not be 1 h early."""
+    rec = Recorder("twitch", "foo", "123", tmp_path)
+    (rec.dir / "seg_b_00000.ts").write_bytes(b"1")
+    (rec.dir / "seg_b_00001.ts").write_bytes(b"1")
+    os.utime(rec.dir / "seg_b_00000.ts", (8_610, 8_610))  # live at 8_600 s, spawned at 5_000 s
+    (rec.dir / "b.csv").write_text("seg_b_00000.ts,0.0,10.0\n")
+    assert rec.ingest_run("b", 5_000_000) == 1
+    (rec.dir / "b.csv").write_text("seg_b_00000.ts,0.0,10.0\nseg_b_00001.ts,10.0,20.0\n")
+    assert rec.ingest_run("b", 5_000_000) == 1  # later polls keep the same anchor
+    assert [r["start_ms"] for r in rec.ring.segments()] == [8_600_000, 8_610_000]
 
 
 class FakeHttp:

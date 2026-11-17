@@ -30,7 +30,6 @@ def extract_wav(media: str | Path, start_s: float, dur_s: float, out: Path) -> P
     return out
 
 
-@lru_cache
 def load_wav(path: Path) -> Any:
     """16 kHz mono s16 WAV -> float32 array. Passing an array keeps faster-whisper away from PyAV, whose
     newer releases dropped an argument faster-whisper 1.2.1 still passes."""
@@ -44,9 +43,14 @@ def load_wav(path: Path) -> Any:
 
 
 def _model() -> Any:
+    return _load_model(config.global_config().get("judge", {}).get("whisper_model", "large-v3-turbo"))
+
+
+@lru_cache(maxsize=2)
+def _load_model(name: str) -> Any:
+    """Load each Whisper model once per process (loading large-v3-turbo takes seconds and ~1.5 GB)."""
     from faster_whisper import WhisperModel
 
-    name = config.global_config().get("judge", {}).get("whisper_model", "large-v3-turbo")
     return WhisperModel(name, compute_type="int8")
 
 

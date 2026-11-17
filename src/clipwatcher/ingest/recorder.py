@@ -20,6 +20,8 @@ from .ringbuffer import RingBuffer
 log = logging.getLogger(__name__)
 
 QUALITY_DEFAULT = "720p60,720p,best"
+# A run whose first segment ended more than this after spawn waited for the channel to go live.
+ANCHOR_SLACK_MS = 30_000
 _AD_START = re.compile(r"detected advertisement break(?: of (\d+) seconds?)?", re.I)
 _AD_END = re.compile(r"resuming stream output", re.I)
 _AD_ANY = re.compile(r"advertisement", re.I)
@@ -157,6 +159,7 @@ class Recorder:
         self.pdt = PdtMap(segment_s=segment_s)
         self.ads = AdLog(self.dir / "ads.jsonl")
         self._ingested: set[str] = set()
+        self._anchor: dict[str, int] = {}  # run id -> wall-clock ms of the run's first video packet
         self._procs: list[asyncio.subprocess.Process] = []
         self._tasks: list[asyncio.Task] = []
         self._run_start_ms = 0
@@ -172,9 +175,28 @@ class Recorder:
         return (time.time() if now is None else now) - rows[-1]["end_ms"] / 1000
 
     def ingest_run(self, run_id: str, run_start_ms: int) -> int:
-        """Register finished segments from a run's csv into the ring; delete 0-byte files."""
+        """Register finished segments from a run's csv into the ring; delete 0-byte files.
+
+        Segment times in the csv count from the first video packet, not from when the pipeline was
+        spawned. streamlink waits for an offline channel (--retry-streams), so a run spawned hours before
+        the stream starts would stamp every segment hours early and every cut would miss the moment. The
+        first finished segment's mtime (= its end, wall clock) re-anchors the run when the two disagree.
+        """
         n = 0
-        for name, s, e in read_segment_list(self.dir / f"{run_id}.csv"):
+        rows = read_segment_list(self.dir / f"{run_id}.csv")
+        if rows and run_id not in self._anchor:
+            name, _s, e = rows[0]
+            f = self.dir / name
+            anchor = run_start_ms
+            if f.exists():
+                from_file = int(f.stat().st_mtime * 1000 - e * 1000)
+                if from_file - run_start_ms > ANCHOR_SLACK_MS:
+                    log.info("%s: run %s started %.0fs after spawn", self.login, run_id,
+                             (from_file - run_start_ms) / 1000)  # fmt: skip
+                    anchor = from_file
+            self._anchor[run_id] = anchor
+        run_start_ms = self._anchor.get(run_id, run_start_ms)
+        for name, s, e in rows:
             if name in self._ingested:
                 continue
             f = self.dir / name

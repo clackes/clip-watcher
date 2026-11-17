@@ -41,6 +41,15 @@ def stage_package(
     return d
 
 
+def _link_or_copy(src: Path, dst: Path) -> None:
+    """Hard link (no second copy of every approved video on disk); copy across filesystems."""
+    dst.unlink(missing_ok=True)
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+
+
 def mark_approved(clip_id: str, approved_by: str, root: Path | None = None) -> Path:
     root = Path(root) if root else DEFAULT_ROOT
     src = root / clip_id
@@ -48,7 +57,7 @@ def mark_approved(clip_id: str, approved_by: str, root: Path | None = None) -> P
     dst.mkdir(parents=True, exist_ok=True)
     for f in src.iterdir():
         if f.is_file() and f.name != "meta.json":
-            shutil.copy2(f, dst / f.name)
+            _link_or_copy(f, dst / f.name)
     meta = json.loads((src / "meta.json").read_text())
     meta.update(state="APPROVED", approved_by=approved_by)
     atomic_write_json(dst / "meta.json", meta)

@@ -22,11 +22,9 @@ def keyframes(
     """n JPEGs at `height`. Coarse seek, then trim in the graph (D9)."""
     out_dir = Path(out_dir) if out_dir else Path(tempfile.mkdtemp(prefix="cw_frames_"))
     out_dir.mkdir(parents=True, exist_ok=True)
-    seek = max(0.0, start_s - SEEK_PAD_S)
-    trim = start_s - seek
     paths: list[Path] = []
     for i in range(n):
-        t = trim + dur_s * (i + 0.5) / n
+        seek, t = _seek_for(start_s + dur_s * (i + 0.5) / n)
         out = out_dir / f"frame_{i:02d}.jpg"
         vf = f"trim=start={t:.3f},setpts=PTS-STARTPTS,scale=-2:{height}"
         cmd = [
@@ -38,6 +36,16 @@ def keyframes(
         if out.exists():
             paths.append(out)
     return paths
+
+
+def _seek_for(abs_s: float) -> tuple[float, float]:
+    """D9 per frame: coarse input seek to 6 s before this frame, exact trim in the graph.
+
+    Seeking once to the window start made every frame decode the whole window up to its own time
+    (8 frames of a 45 s 1080p60 clip = ~200 s of decoding); now each frame decodes at most ~6 s.
+    """
+    seek = max(0.0, abs_s - SEEK_PAD_S)
+    return seek, abs_s - seek
 
 
 def frame_times(dur_s: float, n: int = 8, peak_rel: float | None = None, n_peak: int = 2) -> list[float]:
@@ -74,13 +82,12 @@ def keyframes_lowres(
     out_dir = Path(out_dir) if out_dir else Path(tempfile.mkdtemp(prefix="cw_lowres_"))
     out_dir.mkdir(parents=True, exist_ok=True)
     w, h = size
-    seek = max(0.0, start_s - SEEK_PAD_S)
-    trim = start_s - seek
     res: list[tuple[float, Path]] = []
     for i, t in enumerate(frame_times(dur_s, n, peak_rel)):
+        seek, trim = _seek_for(start_s + t)
         png = out_dir / f"f{i:02d}.png"
         vf = (
-            f"trim=start={trim + t:.3f},setpts=PTS-STARTPTS,"
+            f"trim=start={trim:.3f},setpts=PTS-STARTPTS,"
             f"scale={w}:{h}:force_original_aspect_ratio=decrease:flags=area,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2"
         )
         cmd = [

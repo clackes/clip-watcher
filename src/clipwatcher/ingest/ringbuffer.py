@@ -74,25 +74,36 @@ class RingBuffer:
     def _pins(self) -> list[dict]:
         if not self.pins_path.exists():
             return []
-        return json.loads(self.pins_path.read_text())
+        try:
+            return json.loads(self.pins_path.read_text())
+        except json.JSONDecodeError:  # never crash pruning on a damaged file; pins are re-made per clip
+            return []
+
+    def _write_pins(self, pins: list[dict]) -> None:
+        """Atomic: prune (recorder) and pin/unpin (clip tasks) run concurrently in different threads."""
+        tmp = self.pins_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(pins))
+        tmp.replace(self.pins_path)
 
     def pin(self, start_ms: int, end_ms: int, ttl_s: float = 48 * 3600, now: float | None = None) -> None:
         now = time.time() if now is None else now
         pins = self._pins()
         pins.append({"start_ms": int(start_ms), "end_ms": int(end_ms), "expires": now + ttl_s})
-        self.pins_path.write_text(json.dumps(pins))
+        self._write_pins(pins)
 
     def unpin(self, start_ms: int, end_ms: int) -> None:
         keep = [p for p in self._pins() if (p["start_ms"], p["end_ms"]) != (int(start_ms), int(end_ms))]
-        self.pins_path.write_text(json.dumps(keep))
+        self._write_pins(keep)
 
     # -- prune ---------------------------------------------------------
     def prune(self, now_ms: int | None = None, now: float | None = None) -> PruneResult:
         now = time.time() if now is None else now
         now_ms = int(now * 1000) if now_ms is None else now_ms
         res = PruneResult(alert=self.low_disk())
-        pins = [p for p in self._pins() if p["expires"] > now]
-        self.pins_path.write_text(json.dumps(pins))
+        all_pins = self._pins()
+        pins = [p for p in all_pins if p["expires"] > now]
+        if len(pins) != len(all_pins):
+            self._write_pins(pins)
         rows = self.segments()
         if not rows:
             return res
