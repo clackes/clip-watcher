@@ -39,3 +39,14 @@ def test_resolve_new_scene_is_flagged(monkeypatch, tmp_path):
     assert lay.source == "auto-new" and lay.has_webcam and lay.cam
     lay = layout.resolve(tmp_path / "x.mp4", "x", detector=lambda p: [])
     assert lay.source == "no-face" and not lay.has_webcam
+
+
+def test_confirmed_no_webcam_streamer_skips_face_detection(monkeypatch, tmp_path):
+    """Regression: a GTA character's face was taken for a webcam on a no-cam Kick stream."""
+    monkeypatch.setattr(layout.config, "streamer", lambda n: {"has_webcam": False})
+
+    def boom(*a, **k):
+        raise AssertionError("must not run detection")
+
+    lay = layout.resolve(tmp_path / "x.mp4", "x", detector=boom)
+    assert not lay.has_webcam and lay.source == "fixed"

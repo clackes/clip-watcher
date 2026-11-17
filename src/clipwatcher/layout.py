@@ -74,6 +74,9 @@ def match_scene(
 def resolve(media: Path, streamer: str, *, n_frames: int = 4, detector=None) -> Layout:
     scfg = config.streamer(streamer)
     sc = scenes(scfg)
+    if scfg.get("has_webcam") is False and not scfg.get("layouts"):
+        # Confirmed no-webcam streamer: never trust face detection (GTA characters' faces look like a cam).
+        return Layout(False, None, scfg.get("gameplay_rect"), "fixed")
     if scfg.get("layout") == "fixed" and sc:
         s = sc[0]
         return Layout(bool(s.get("has_webcam", True)), s.get("facecam_rect"), s.get("gameplay_rect"), "fixed")

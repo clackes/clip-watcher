@@ -225,6 +225,7 @@ class KickHistoryChat:
             bots if bots is not None else set(config.global_config().get("detector", {}).get("bots", []))
         )
         self.gaps = 0
+        self.skip_backlog = True
         self._closed = False
 
     def close(self) -> None:
@@ -240,6 +241,7 @@ class KickHistoryChat:
         seen: dict[str, None] = {}
         prev: set[str] = set()
         attempt = 0
+        first = self.skip_backlog
         while not self._closed:
             try:
                 data = await asyncio.to_thread(self.fetch, url, {"Accept": "application/json"})
@@ -250,6 +252,12 @@ class KickHistoryChat:
                 await self.sleep(backoff_delay(attempt))
                 continue
             ids = {m["id"] for m in items}
+            if first:  # the first page is backlog from before we started: remember it, don't replay it
+                first = False
+                seen.update(dict.fromkeys(ids))
+                prev = ids
+                await self.sleep(self.poll_s)
+                continue
             if prev and ids and not (ids & prev):
                 self.gaps += 1
             prev = ids

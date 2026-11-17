@@ -225,6 +225,13 @@ class FastLane:
     # -- one candidate ------------------------------------------------------
     async def process(self, cand: Candidate) -> Outcome:
         cid = self._clip_id(cand)
+        first_seg = getattr(self.ring, "segments", lambda: [])()
+        if first_seg and cand.start_s * 1000 < first_seg[0]["start_ms"] - 2000:
+            # The moment happened before this recording started (e.g. chat backlog at startup): cutting
+            # would produce the wrong video, so skip it.
+            log.info("%s: skip %s, before recording start", self.streamer, cid)
+            self._unpin(cand)
+            return Outcome(cid, "rejected", {}, error="before recording start")
         scfg = config.streamer(self.streamer)
         timings: dict[str, float] = {}
         t_all = time.perf_counter()

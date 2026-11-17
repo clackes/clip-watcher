@@ -139,6 +139,7 @@ def test_history_chat_polls_dedupes_and_orders():
         return None
 
     chat = KickHistoryChat("x", channel_id=1, fetch=fetch, sleep=no_sleep, bots=set())
+    chat.skip_backlog = False
 
     async def collect():
         return [m async for m in chat]
@@ -157,3 +158,33 @@ def test_history_message_with_null_metadata():
     assert history_message_to_chat(m).ts_ms > 0
     m["metadata"] = None
     assert history_message_to_chat(m).user == "x"
+
+
+def test_history_chat_skips_startup_backlog():
+    """Regression: the first page is minutes-old backlog; firing on it clipped video we never recorded."""
+    import asyncio
+
+    from clipwatcher.chat.kick import KickHistoryChat
+
+    def item(i):
+        return {"id": f"m{i}", "type": "message", "content": "x", "metadata": None,
+                "created_at": f"2026-11-17T00:00:0{i}Z", "sender": {"slug": "u"}}  # fmt: skip
+
+    pages = iter([{"data": {"messages": [item(1), item(2)]}}, {"data": {"messages": [item(3), item(2)]}}])
+
+    def fetch(url, headers):
+        try:
+            return next(pages)
+        except StopIteration:
+            chat.close()
+            return {"data": {"messages": []}}
+
+    async def no_sleep(_):
+        return None
+
+    chat = KickHistoryChat("x", channel_id=1, fetch=fetch, sleep=no_sleep, bots=set())
+
+    async def collect():
+        return [m async for m in chat]
+
+    assert [m.text for m in asyncio.run(collect())] == ["x"]  # only m3
