@@ -4,11 +4,16 @@
 Styles:
 - classic: 1-3 words per page, current word #FFE600 at 110%.
 - bounce: 1-2 words (max ~14 chars) per page, page pops in 70% -> 118% -> 100%, current word in a
-  colour that rotates per page. Timings follow the reaction-clip presets popular clippers use.
+  colour that rotates per page.
+- pop (default): the "scale-up" look of MrBeast-style clippers. Anton, thick black stroke, up to 3 words
+  per page on one line; each word has its own colour, white until spoken, and the spoken word pops
+  100% -> 135% -> 125%. Every word is its own positioned event so a growing word scales around its own
+  centre instead of pushing the line around.
 """
 
 from __future__ import annotations
 
+import functools
 import hashlib
 from pathlib import Path
 
@@ -17,7 +22,15 @@ from clipwatcher.models import Word
 from clipwatcher.render.branding import FONTS_DIR
 
 HIGHLIGHT = "&H00E6FF&"  # #FFE600 in ASS BGR order
-CAPTION_STYLES = ("classic", "bounce")
+CAPTION_STYLES = ("classic", "bounce", "pop")
+POP_FONT = ("Anton", "Anton-Regular.ttf")
+POP_SIZE = 145  # ASS size: libass fits winAscent+winDescent (1.733 em for Anton) in it -> 72 px caps
+POP_EM = POP_SIZE / 1.733  # glyph em in PlayRes px, used to measure widths with PIL
+POP_MAX_W = 960  # px of a page line, with room left for the active word's growth
+POP_GROW = 0.13  # each side of a word gets this share of its width as room to grow (125% hold)
+# yellow, green, cyan, pink, orange, red (#FFE600 #3DFF5A #33E1FF #FF5CF0 #FF9F1C #FF4040) in BGR
+POP_COLOURS = ("&H00E6FF&", "&H5AFF3D&", "&HFFE133&", "&HF05CFF&", "&H1C9FFF&", "&H4040FF&")
+POP_ACTIVE = "\\fscx100\\fscy100\\t(0,70,\\fscx135\\fscy135)\\t(70,150,\\fscx125\\fscy125)"
 # #FFE600 yellow, #00F0FF cyan, #7CFF3A lime, #FF8A1E orange (BGR)
 BOUNCE_COLOURS = ("&H00E6FF&", "&HFFF000&", "&H3AFF7C&", "&H1E8AFF&")
 BOUNCE_POP = "\\fscx70\\fscy70\\t(0,90,\\fscx118\\fscy118)\\t(90,180,\\fscx100\\fscy100)"
@@ -25,11 +38,81 @@ DEMO_TEXT = "NO WAY DID YOU SEE THAT HE JUST WENT ALL IN AND IT ACTUALLY WORKED 
 
 
 def caption_style(clip_id: str) -> str:
-    """Caption style from render.captions: classic | bounce | ab (stable 50/50 split by clip_id)."""
-    mode = str(config.global_config().get("render", {}).get("captions", "classic"))
+    """Caption style from render.captions: classic | bounce | pop | ab (stable classic/pop split by clip_id)."""
+    mode = str(config.global_config().get("render", {}).get("captions", "pop"))
     if mode == "ab":
-        return CAPTION_STYLES[int(hashlib.sha256(f"cap:{clip_id}".encode()).hexdigest(), 16) % 2]
-    return mode if mode in CAPTION_STYLES else "classic"
+        return ("classic", "pop")[int(hashlib.sha256(f"cap:{clip_id}".encode()).hexdigest(), 16) % 2]
+    return mode if mode in CAPTION_STYLES else "pop"
+
+
+@functools.lru_cache(maxsize=1)
+def _pop_font():
+    from PIL import ImageFont
+
+    p = FONTS_DIR / POP_FONT[1]
+    return ImageFont.truetype(str(p), round(POP_EM)) if p.exists() else None
+
+
+def text_width(text: str) -> float:
+    """Rendered width of text in the pop style, in PlayRes pixels (estimate when the font is missing)."""
+    f = _pop_font()
+    return float(f.getlength(text)) if f else len(text) * POP_EM * 0.42
+
+
+def pop_text(w: Word) -> str:
+    """Upper-case word without trailing commas/full stops (kept: ? ! and apostrophes)."""
+    return w.text.strip().upper().rstrip(".,;:") or w.text.strip().upper()
+
+
+def pop_pages(words: list[Word], max_words: int = 3, max_gap: float = 0.6) -> list[list[Word]]:
+    """Pages that fit one line at POP_MAX_W, counting the spaces between words."""
+    space = text_width(" ")
+    pages: list[list[Word]] = []
+    for w in words:
+        t = pop_text(w)
+        if not t:
+            continue
+        if pages:
+            cur = pages[-1]
+            ws = [text_width(pop_text(x)) for x in cur] + [text_width(t)]
+            width = sum(ws) * (1 + 2 * POP_GROW) + space * len(cur)
+            if len(cur) < max_words and w.start - cur[-1].end <= max_gap and width <= POP_MAX_W:
+                cur.append(w)
+                continue
+        pages.append([w])
+    return pages
+
+
+def build_pop_events(words: list[Word], dur_s: float, y: int = 1495) -> list[str]:
+    pages = pop_pages(words)
+    space = text_width(" ")
+    lines, k = [], 0
+    for p, page in enumerate(pages):
+        texts = [esc(pop_text(w)) for w in page]
+        widths = [text_width(t) for t in texts]
+        gaps = [space + POP_GROW * (widths[i] + widths[i + 1]) for i in range(len(page) - 1)]
+        x = 540 - (sum(widths) + sum(gaps)) / 2
+        nxt = pages[p + 1][0].start if p + 1 < len(pages) else dur_s
+        page_end = min(max(page[-1].end + 0.25, page[-1].start + 0.3), nxt, dur_s)
+        p0 = page[0].start
+        for i, (w, t, wd) in enumerate(zip(page, texts, widths, strict=True)):
+            colour = POP_COLOURS[k % len(POP_COLOURS)]
+            k += 1
+            cx = round(x + wd / 2)
+            x += wd + (gaps[i] if i < len(gaps) else 0)
+            a0 = max(w.start, p0)
+            a1 = page[i + 1].start if i + 1 < len(page) else page_end
+            pos = f"\\an5\\pos({cx},{y})"
+            spans = [
+                (p0, a0, 0, f"{{{pos}}}{t}"),  # not said yet: white
+                (a0, a1, 2, f"{{{pos}\\c{colour}{POP_ACTIVE}}}{t}"),  # being said: pops, own colour
+                (a1, page_end, 1, f"{{{pos}\\c{colour}}}{t}"),  # said: own colour
+            ]
+            for s, e, layer, txt in spans:
+                e = min(e, dur_s)
+                if e - s >= 0.01:
+                    lines.append(f"Dialogue: {layer},{ts(s)},{ts(e)},Pop3,,0,0,0,,{txt}")
+    return lines
 
 
 def esc(text: str) -> str:
@@ -85,6 +168,7 @@ ScaledBorderAndShadow: yes
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Cap,Montserrat ExtraBold,80,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,{bold},0,0,0,100,100,0,0,1,8,0,5,100,160,0,1
 Style: Pop,Montserrat ExtraBold,92,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,{bold},0,0,0,100,100,0,0,1,10,3,5,100,160,0,1
+Style: Pop3,{POP_FONT[0]},{POP_SIZE},&H00FFFFFF,&H00FFFFFF,&H00000000,&H90000000,0,0,0,0,100,100,1,0,1,8,4,5,60,60,0,1
 Style: Credit,Montserrat ExtraBold,36,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,{bold},0,0,0,100,100,0,0,1,4,0,9,100,20,0,1
 
 [Events]
@@ -93,6 +177,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     lines = []
     if credit:
         lines.append(f"Dialogue: 1,{ts(0)},{ts(dur_s)},Credit,,0,0,0,,{{\\an9\\pos(1060,282)}}{esc(credit)}")
+    if style == "pop":
+        return head + "\n".join(lines + build_pop_events(words, dur_s)) + "\n"
     groups = group_words(words, max_words=2, max_chars=14) if bounce else group_words(words)
     for g, group in enumerate(groups):
         colour = BOUNCE_COLOURS[g % len(BOUNCE_COLOURS)] if bounce else HIGHLIGHT

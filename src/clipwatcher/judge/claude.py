@@ -10,7 +10,7 @@ from typing import Any
 
 from .. import config
 from ..models import Candidate, JudgeResult, Word
-from .snap import snap_trim
+from .snap import heuristic_trim, snap_trim
 
 log = logging.getLogger(__name__)
 PROMPTS = config.ROOT / "prompts"
@@ -141,12 +141,13 @@ def heuristic_judge(cand: Candidate, words: list[Word], *, game: str | None = No
     copy = compact.fallback_copy(
         cand.stream, scfg.get("platform", "twitch"), game if game is not None else scfg.get("game"), seed
     )
+    t0, t1 = heuristic_trim(cand.peak_s - cand.start_s, cand.duration)
     return JudgeResult(
         funny_score=score,
         hype_score=score,
         visual_context_summary="",
-        trim_start_s=0.0,
-        trim_end_s=cand.duration,
+        trim_start_s=t0,
+        trim_end_s=t1,
         hook_text=copy["hk"],
         title_options=[copy["tt"]],
         setup_line=copy["ds"].split("\n")[0],
@@ -231,6 +232,8 @@ def judge_clip(
         data, usage = call_v2(client, compact.build_request(mdl, frames, payload))
         out = compact.normalize_output(data, login=login, platform=plat, dur=cand.duration)
         out["t0"], out["t1"] = snap_trim(out["t0"], out["t1"], words, cand.duration)
+        if out["pk"] is not None and not out["t0"] <= out["pk"] <= out["t1"]:
+            out["pk"] = None
         log.info("judge %s %s sc=%s ok=%s usage=%s", task, login, out["sc"], out["ok"], usage)
         reasons = [k for k, v in out["fl"].items() if v]
         return JudgeResult(
@@ -239,6 +242,7 @@ def judge_clip(
             visual_context_summary="",
             trim_start_s=out["t0"],
             trim_end_s=out["t1"],
+            peak_rel_s=out["pk"],
             hook_text=out["hk"],
             title_options=[out["tt"]],
             setup_line=out["ds"].split("\n")[0],

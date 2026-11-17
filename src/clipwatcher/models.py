@@ -56,6 +56,7 @@ class JudgeResult:
     source: str = "claude"  # claude | heuristic
     description: str = ""  # ready-to-post description (teaser + credit, CTA, hashtags)
     flags: dict[str, bool] = field(default_factory=dict)  # sp spoiler, mu music risk, gb gambling
+    peak_rel_s: float | None = None  # strongest reaction, relative to the candidate window (cold open)
     ok: bool = True  # publishable per the judge
     why: str = ""  # one line for the Telegram approval card
     score: int = 0  # 1-10 viral score

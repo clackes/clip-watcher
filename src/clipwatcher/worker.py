@@ -106,6 +106,8 @@ def h_judge(p: dict[str, Any], w: Worker) -> list[dict[str, Any]]:
 
 
 def h_render(p: dict[str, Any], w: Worker) -> list[dict[str, Any]]:
+    from .judge.snap import reaction_s
+    from .render import cold_open
     from .render.template import render_clean, render_short
 
     c, scfg = _cand(p), config.streamer(p["streamer"])
@@ -115,16 +117,19 @@ def h_render(p: dict[str, Any], w: Worker) -> list[dict[str, Any]]:
     j = p.get("judge") or {}
     words = _words(p)
     ts, te = float(j.get("trim_start_s") or 0.0), float(j.get("trim_end_s") or dur)
-    if j.get("source") == "claude" and 0 <= ts < te <= dur and te - ts >= 12:  # judge trim, captions re-timed
+    if 0 <= ts < te <= dur and te - ts >= 12:  # judge (or late-start fallback) trim, captions re-timed
         words = [Word(w.start - ts, w.end - ts, w.text) for w in words if w.end > ts and w.start < te]
         start, dur = start + ts, te - ts
     hook = j.get("hook_text") or "WAIT FOR IT"
+    co = cold_open.window(
+        reaction_s(j.get("peak_rel_s"), c.peak_s - c.start_s), start - c.start_s, dur
+    )  # fmt: skip
     clip_id = f"{p['streamer']}-{int(c.start_s * 1000)}"
     if not short.exists():
         w.atomic(short, lambda tmp: render_short(
             Path(p["media"]), start, dur, tmp, clip_id=clip_id, streamer=p["streamer"], words=words,
             hook=hook, has_webcam=bool(scfg.get("has_webcam", True)), cam=scfg.get("facecam_rect"),
-            game=scfg.get("gameplay_rect"), profile=w.profile,
+            game=scfg.get("gameplay_rect"), profile=w.profile, cold_open=co,
         ))  # fmt: skip
     if not clean.exists():
         w.atomic(clean, lambda tmp: render_clean(Path(p["media"]), start, dur, tmp, profile=w.profile))

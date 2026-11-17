@@ -14,6 +14,7 @@ from clipwatcher.config import ffmpeg_bin, ffprobe_bin
 from clipwatcher.models import Word
 from clipwatcher.render.branding import ACCENTS, BRANDING_DIR, FONTS_DIR, ensure_branding, hook_pill
 from clipwatcher.render.captions import caption_style, write_ass
+from clipwatcher.render.cold_open import settings as co_settings
 from clipwatcher.render.encoders import video_args
 
 STYLES = ("ambient", "gradient")
@@ -92,22 +93,49 @@ def _run(cmd: list[str]) -> None:
         raise RuntimeError(f"ffmpeg failed ({r.returncode}): {r.stderr[-2000:]}")
 
 
-def _audio_chain(trim: float, dur: float) -> str:
+def _audio_chain(trim: float, dur: float, cold_open: tuple[float, float] | None = None) -> str:
+    norm = "loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000[a]"
+    if not cold_open:
+        return f"[0:a]atrim=start={trim:.3f}:duration={dur:.3f},asetpts=PTS-STARTPTS,{norm}"
+    cs, cd = cold_open
     return (
-        f"[0:a]atrim=start={trim:.3f}:duration={dur:.3f},asetpts=PTS-STARTPTS,"
-        "loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000[a]"
+        "[0:a]asplit=2[coa][mna];"
+        f"[coa]atrim=start={trim + cs:.3f}:duration={cd:.3f},asetpts=PTS-STARTPTS,"
+        f"afade=t=out:st={cd - 0.06:.3f}:d=0.06[coa1];"
+        f"[mna]atrim=start={trim:.3f}:duration={dur:.3f},asetpts=PTS-STARTPTS,afade=t=in:d=0.04[mna1];"
+        f"[coa1][mna1]concat=n=2:v=0:a=1,{norm}"
     )
+
+
+def _punch_in(w: int, h: int, cold_open: tuple[float, float] | None, zoom: float) -> str:
+    """Zoom ramp (0.35 s) held for the cold open, then back to 1x; empty without a cold open."""
+    if not cold_open or zoom <= 1.0:
+        return ""
+    cd = cold_open[1]
+    z = f"if(lt(t\\,{cd:.3f})\\,1+{zoom - 1:.3f}*min(t/0.35\\,1)\\,1)"
+    return f",scale=w='trunc({w}*{z}/2)*2':h=-2:eval=frame,crop={w}:{h}"
 
 
 def build_short_graph(
     *, trim: float, dur: float, style: str, has_webcam: bool, has_hook: bool, cam: Rect, game: Rect,
     gradient_idx: int, cta_idx: int, logo_idx: int, hook_idx: int, ass: Path, fontsdir: Path,
-    hook_s: float = 3.5,
+    hook_s: float = 3.5, cold_open: tuple[float, float] | None = None, zoom: float = 1.15,
 ) -> str:  # fmt: skip
-    trimmed = f"[0:v]trim=start={trim:.3f}:duration={dur:.3f},setpts=PTS-STARTPTS"
+    g: list[str] = []
+    if cold_open:  # reaction replay, then the clip from its start
+        cs, cd = cold_open
+        g.append(
+            "[0:v]split=2[cov][mnv];"
+            f"[cov]trim=start={trim + cs:.3f}:duration={cd:.3f},setpts=PTS-STARTPTS[cov1];"
+            f"[mnv]trim=start={trim:.3f}:duration={dur:.3f},setpts=PTS-STARTPTS[mnv1];"
+            "[cov1][mnv1]concat=n=2:v=1:a=0[srcv]"
+        )
+        trimmed = "[srcv]null"
+    else:
+        trimmed = f"[0:v]trim=start={trim:.3f}:duration={dur:.3f},setpts=PTS-STARTPTS"
     use_bg = style == "ambient"
     outs = (["bgs"] if use_bg else []) + (["cs", "gs"] if has_webcam else ["fs"])
-    g = [
+    g += [
         f"{trimmed},split={len(outs)}" + "".join(f"[{o}]" for o in outs)
         if len(outs) > 1
         else f"{trimmed}[{outs[0]}]"
@@ -124,13 +152,16 @@ def build_short_graph(
     if has_webcam:
         cx, cy, cw, ch = cam
         gx, gy, gw, gh = game
-        g.append(f"[cs]crop={cw}:{ch}:{cx}:{cy},scale=1080:480:flags=lanczos,setsar=1[cam]")
+        g.append(
+            f"[cs]crop={cw}:{ch}:{cx}:{cy},scale=1080:480:flags=lanczos"
+            f"{_punch_in(1080, 480, cold_open, zoom)},setsar=1[cam]"
+        )
         g.append(f"[gs]crop={gw}:{gh}:{gx}:{gy},scale=1080:540:flags=lanczos,setsar=1[game]")
         sh = ":shortest=1" if not use_bg else ""
         g.append(f"{last}[cam]overlay=0:270{sh}[v0]")
         g.append("[v0][game]overlay=0:750[v1]")
     else:
-        g.append("[fs]scale=1080:608:flags=lanczos,setsar=1[full]")
+        g.append(f"[fs]scale=1080:608:flags=lanczos{_punch_in(1080, 608, cold_open, zoom)},setsar=1[full]")
         sh = ":shortest=1" if not use_bg else ""
         g.append(f"{last}[full]overlay=0:{270 + (1020 - 608) // 2}{sh}[v1]")
     g.append(f"[v1][{logo_idx}:v]overlay=(W-w)/2:96[v2]")
@@ -142,7 +173,7 @@ def build_short_graph(
     g.append(
         f"[v4]ass=filename={esc_filter_path(ass)}:fontsdir={esc_filter_path(fontsdir)},format=yuv420p[v]"
     )
-    g.append(_audio_chain(trim, dur))
+    g.append(_audio_chain(trim, dur, cold_open))
     return ";".join(g)
 
 
@@ -151,7 +182,10 @@ def render_short(
     words: list[Word], hook: str | None, platform: str = "youtube", style: str | None = None,
     accent: str | None = None, cam: Rect | None = None, game: Rect | None = None,
     has_webcam: bool = True, profile: str = "cpu_batch", captions: str | None = None,
+    cold_open: tuple[float, float] | None = None,
 ) -> Path:  # fmt: skip
+    """cold_open=(start, duration) relative to start_s: that moment plays first, zoomed in, then the clip.
+    The output is duration + dur_s long; captions follow the clip part."""
     src, out = Path(src), Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
     auto_style, auto_accent = pick_style(clip_id)
@@ -166,11 +200,15 @@ def render_short(
     ensure_branding(BRANDING_DIR)
     cta = BRANDING_DIR / ("cta_youtube.png" if platform == "youtube" else "cta_social.png")
     fps = min(info.fps, 60.0)
+    co_d = cold_open[1] if cold_open else 0.0
+    total = dur_s + co_d
+    if co_d:
+        words = [Word(w.start + co_d, w.end + co_d, w.text) for w in words]
 
     with tempfile.TemporaryDirectory(prefix="clipwatcher_") as td:
         work = Path(td)
         ass = write_ass(
-            work / "subs.ass", words, dur_s, credit=config.credit(streamer),
+            work / "subs.ass", words, total, credit=config.credit(streamer),
             style=captions or caption_style(clip_id),
         )  # fmt: skip
         cmd = [ffmpeg_bin(), "-y", "-hide_banner", "-ss", f"{coarse:.3f}", "-i", str(src)]
@@ -202,11 +240,12 @@ def render_short(
         graph = build_short_graph(
             trim=trim, dur=dur_s, style=style, has_webcam=has_webcam, has_hook=bool(hook), cam=cam,
             game=game, gradient_idx=gradient_idx, cta_idx=cta_idx, logo_idx=logo_idx, hook_idx=hook_idx,
-            ass=ass, fontsdir=FONTS_DIR, hook_s=hook_seconds(),
+            ass=ass, fontsdir=FONTS_DIR, hook_s=hook_seconds(), cold_open=cold_open,
+            zoom=co_settings()[1],
         )  # fmt: skip
         cmd += ["-filter_complex", graph, "-map", "[v]", "-map", "[a]", *video_args(profile)]
         cmd += ["-fps_mode", "cfr", "-r", f"{fps:g}", "-c:a", "aac", "-b:a", "192k", "-ar", "48000"]
-        cmd += ["-t", f"{dur_s:.3f}", "-movflags", "+faststart", str(out)]
+        cmd += ["-t", f"{total:.3f}", "-movflags", "+faststart", str(out)]
         _run(cmd)
     return out
 

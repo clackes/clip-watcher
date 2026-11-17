@@ -40,8 +40,10 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   cpu_live, nvenc, mac_preview.
 - D5 One 9:16 template (1080x1920): bg | ClipVault top banner 1000x166 centred @y96 | webcam 1080x480 @y270 | hook pill
   y702 t<render.hook_s (3.5s) | gameplay 1080x540 @y750 | CTA banner 920x152 centred @y1300 | subs \pos(540,1495) 80px current word #FFE600
-  110% (owner's call 17 Nov; `render.captions: ab` A/Bs it against "bounce": 1-2 words, page pop 70->118->100%,
-  colour rotating per page, recorded in meta.captions; banners from assets/branding/src via
+  110% (owner's call 17 Nov; replaced the same day by `render.captions: pop`: Anton (assets/fonts, OFL), up to 3
+  words per line, every word its own colour, white until spoken, spoken word pops 100->135->125%; classic/bounce/ab
+  kept as options, choice in meta.captions. Cold open (owner, 17 Nov): the strongest reaction (judge pk, else chat
+  peak - 3 s) plays first for render.cold_open_s=2 with a facecam punch-in, then the clip from its start; banners from assets/branding/src via
   scripts/build_brand_assets.py) | dead zone 1536-1920. Credit {\an9\pos(1060,282)}. Background ambient blur or
   frame_gradient_<accent>.png (-loop 1); accent red/yellow/cyan from hash(clip_id). No webcam -> 16:9 frame
   1080x608 centred in y270-1290.
@@ -49,8 +51,8 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   labelled 480x270 JPEG q65 frames + compact JSON {meta,tr,ch,task}; short-key output {ok,sc,t0,t1,hk,tt,ds,
   fl{sp,mu,gb},why}, caps/credit enforced in code (judge/compact.py). Thinking off, effort low (judge.* in
   global.yaml). judge.mode single | two_stage | off. Owner asked for spoiler/music/gambling flags; flagged
-  clips are rejected (judge.reject_flags). Heuristic fallback on API errors (English fallback copy, same shape). Judge t0/t1 are snapped to word and
-  sentence boundaries (judge/snap.py).
+  clips are rejected (judge.reject_flags). Heuristic fallback on API errors (English fallback copy, same shape). Judge t0/t1 start late (<= 2 s before the
+  action; fallback 10 s before the reaction), never cut a word, end on a finished sentence (judge/snap.py).
 - D10 English only (owner, 17 Nov): `channel.language: en`. All copy (hook, title, description, fallbacks) is
   English; streamers whose `language` differs are skipped by live/vod. Description = 4 lines: teaser + credit,
   a clip-specific question ending in 👇, a reason to follow (no "like/comment/follow" begging, stripped in

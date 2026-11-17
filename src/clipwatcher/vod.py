@@ -16,7 +16,9 @@ from pathlib import Path
 from clipwatcher import config
 from clipwatcher.chat.convert import tdl_to_messages, write_jsonl
 from clipwatcher.detect.detector import detect
+from clipwatcher.judge.snap import reaction_s
 from clipwatcher.models import Candidate, ChatMessage
+from clipwatcher.render import cold_open
 
 
 def vod_id(vod: str) -> str:
@@ -129,6 +131,7 @@ def process_candidate(
 
     meta = heuristic_meta(streamer, platform, int(cand.start_s * 1000))
     words: list = []
+    trim0, judge_peak = 0.0, None
     if judge:
         transcribe = _mod("clipwatcher.judge.transcribe")
         frames_m = _mod("clipwatcher.judge.frames")
@@ -165,6 +168,8 @@ def process_candidate(
                 if w.end > jr.trim_start_s and w.start < jr.trim_end_s
             ]
             local_start, dur = local_start + jr.trim_start_s, jr.trim_end_s - jr.trim_start_s
+            trim0 = jr.trim_start_s
+        judge_peak = jr.peak_rel_s
 
     tpl = _mod("clipwatcher.render.template")
     clip_dir = work / clip_id
@@ -182,6 +187,7 @@ def process_candidate(
         words=words,
         hook=meta["hook"],
         **lay.as_render_kwargs(),
+        cold_open=cold_open.window(reaction_s(judge_peak, cand.peak_s - cand.start_s), trim0, dur),
     )
     clean = tpl.render_clean(src, local_start, dur, clip_dir / "clean_16x9.mp4")
     meta.update(

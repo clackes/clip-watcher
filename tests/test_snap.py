@@ -1,4 +1,4 @@
-from clipwatcher.judge.snap import snap_trim
+from clipwatcher.judge.snap import heuristic_trim, reaction_s, snap_trim
 from clipwatcher.models import Word
 
 
@@ -22,9 +22,18 @@ WORDS = [
 ]
 
 
-def test_start_moves_back_to_sentence_start_and_never_cuts_a_word():
+def test_start_never_cuts_a_word_and_never_rewinds_to_the_sentence_start():
     s, _ = snap_trim(2.45, 12.0, WORDS, 20)  # t0 lands inside "this"
-    assert s == 1.85  # "Watch" starts the sentence: 2.0 - 0.15 lead
+    assert s == 2.3  # back to "this" (2.35 - 0.15 lead, floored at the end of "Watch"), not to "Watch"
+    s, _ = snap_trim(5.0, 12.0, WORDS, 20)  # t0 in silence well before "No"
+    assert s == 5.0
+
+
+def test_heuristic_trim_starts_late():
+    assert heuristic_trim(20.0, 30.0) == (7.0, 30.0)  # reaction ~17 s, start 10 s before it
+    assert heuristic_trim(5.0, 30.0) == (0.0, 30.0)
+    assert heuristic_trim(29.0, 30.0) == (16.0, 30.0)  # 14 s left, >= 12 s kept
+    assert reaction_s(12.5, 20.0) == 12.5 and reaction_s(None, 20.0) == 17.0
 
 
 def test_end_finishes_the_sentence_and_keeps_a_tail():

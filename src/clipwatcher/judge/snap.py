@@ -1,4 +1,4 @@
-"""Snap judge trim points to word and sentence boundaries so clips never start or end mid-word.
+"""Snap judge trim points so clips never start or end mid-word, and end on a finished sentence.
 
 Words come from Whisper with punctuation attached, times relative to the candidate window.
 No extra audio pass: the live lane cannot afford one, and word gaps already mark the pauses.
@@ -10,7 +10,6 @@ from clipwatcher.models import Word
 
 LEAD_S = 0.15  # silence kept before the first word
 TAIL_S = 0.35  # silence kept after the last word
-START_BACK_S = 1.5  # move the start back to a sentence start at most this far
 END_FWD_S = 3.0  # extend the end to finish the sentence at most this far
 _STOPS = (".", "?", "!", "…")
 
@@ -26,19 +25,10 @@ def snap_trim(t0: float, t1: float, words: list[Word], dur: float) -> tuple[floa
         return t0, t1
     s, e = t0, t1
 
-    # Start: first word that is still being spoken at t0 or comes after it.
+    # Start: never inside a word, but never earlier than needed either. Viewers swipe in the first second,
+    # so the start is not pulled back to a sentence start (the judge already starts close to the action).
     i = next((k for k, w in enumerate(ws) if w.end > s), None)
     if i is not None:
-        # A sentence that begins shortly before t0 is a better entry point than its middle.
-        for k in range(i, 0, -1):
-            if s - ws[k].start > START_BACK_S:
-                break
-            if _ends_sentence(ws[k - 1]):
-                i = k
-                break
-        else:  # no sentence end in reach: the transcript's first word starts the sentence
-            if s - ws[0].start <= START_BACK_S:
-                i = 0
         first = ws[i]
         if first.start < s or first.start - s < LEAD_S:
             prev_end = ws[i - 1].end if i > 0 else 0.0
@@ -63,3 +53,19 @@ def snap_trim(t0: float, t1: float, words: list[Word], dur: float) -> tuple[floa
     if e - s < 1.0:
         return t0, t1
     return round(s, 2), round(e, 2)
+
+
+HEURISTIC_LEAD_S = 10.0  # fallback start: this far before the reaction
+CHAT_LAG_S = 3.0  # chat spikes this long after what viewers saw
+
+
+def reaction_s(judge_peak: float | None, chat_peak_rel: float) -> float:
+    """Strongest reaction relative to the candidate window: the judge's pk, else the chat peak minus lag."""
+    return float(judge_peak) if judge_peak is not None else max(0.0, chat_peak_rel - CHAT_LAG_S)
+
+
+def heuristic_trim(chat_peak_rel: float, dur: float) -> tuple[float, float]:
+    """Start late without the judge: HEURISTIC_LEAD_S before the reaction, keeping at least 12 s."""
+    t0 = max(0.0, reaction_s(None, chat_peak_rel) - HEURISTIC_LEAD_S)
+    t0 = min(t0, max(0.0, dur - 12.0))
+    return round(t0, 2), float(dur)

@@ -87,7 +87,7 @@ def test_caption_style_ab_is_stable_and_splits(monkeypatch):
 
     monkeypatch.setattr(config, "global_config", lambda: {"render": {"captions": "ab"}})
     picks = {caption_style(f"x-{i}") for i in range(40)}
-    assert picks == {"classic", "bounce"} and caption_style("x-1") == caption_style("x-1")
+    assert picks == {"classic", "pop"} and caption_style("x-1") == caption_style("x-1")
     monkeypatch.setattr(config, "global_config", lambda: {"render": {"captions": "bounce"}})
     assert caption_style("x-1") == "bounce"
 
@@ -151,3 +151,38 @@ def test_parse_rect_accepts_config_strings():
     assert parse_rect("520:231:0:500") == (0, 500, 520, 231)
     assert parse_rect((1, 2, 3, 4)) == (1, 2, 3, 4)
     assert parse_rect(None) is None
+
+
+def test_pop_captions_one_event_set_per_word():
+    words = demo_words(5, "NO WAY DID YOU SEE THAT")
+    ass = build_ass(words, 5, style="pop")
+    active = [ln for ln in ass.splitlines() if ln.startswith("Dialogue: 2")]
+    assert len(active) == len(words)  # each word pops exactly once, when spoken
+    assert all("\\t(0,70,\\fscx135" in ln for ln in active)
+    colours = {re.search(r"\\c(&H[0-9A-F]+&)", ln).group(1) for ln in active}
+    assert len(colours) == len(words)  # every word its own colour
+    assert "Style: Pop3,Anton," in ass
+
+
+def test_cold_open_window(monkeypatch):
+    from clipwatcher import config
+    from clipwatcher.render import cold_open
+
+    monkeypatch.setattr(config, "global_config", lambda: {"render": {"cold_open_s": 2.0}})
+    assert cold_open.window(17.0, 7.0, 23.0) == (9.4, 2.0)  # reaction 10 s into the clip
+    assert cold_open.window(8.0, 7.0, 23.0) is None  # already in the first 3 s
+    assert cold_open.window(None, 0.0, 30.0) is None
+    assert cold_open.window(29.9, 0.0, 30.0) == (28.0, 2.0)  # clamped inside the clip
+    monkeypatch.setattr(config, "global_config", lambda: {"render": {"cold_open_s": 0}})
+    assert cold_open.window(17.0, 7.0, 23.0) is None
+
+
+@pytest.mark.ffmpeg
+@pytest.mark.parametrize("webcam", [True, False])
+def test_short_with_cold_open(synth_src, tmp_path, webcam):
+    out = tmp_path / "co.mp4"
+    render_short(
+        synth_src, 4.0, 4.0, out, clip_id="co", streamer="tester", words=demo_words(4),
+        hook="WATCH HIS FACE", has_webcam=webcam, profile="cpu_live", captions="pop", cold_open=(2.5, 1.5),
+    )  # fmt: skip
+    check_short(out, 5.5)

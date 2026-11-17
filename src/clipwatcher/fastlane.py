@@ -322,9 +322,15 @@ class FastLane:
                 self._unpin(cand)
                 self._cleanup(cand)
                 return Outcome(cid, "rejected", timings, error=str(jr.reject_reason or jr.why))
-            if jr.source == "claude" and jr.trim_end_s - jr.trim_start_s >= 12:
-                words = trim_words(words, jr.trim_start_s, jr.trim_end_s)
-                t0_s, dur = t0_s + jr.trim_start_s, jr.trim_end_s - jr.trim_start_s
+        from .judge.snap import reaction_s
+        from .render import cold_open
+
+        trim0 = 0.0
+        if 0 <= jr.trim_start_s < jr.trim_end_s <= dur + 0.5 and jr.trim_end_s - jr.trim_start_s >= 12:
+            words = trim_words(words, jr.trim_start_s, jr.trim_end_s)
+            trim0 = jr.trim_start_s
+            t0_s, dur = t0_s + jr.trim_start_s, jr.trim_end_s - jr.trim_start_s
+        co = cold_open.window(reaction_s(jr.peak_rel_s, cand.peak_s - cand.start_s), trim0, dur)
 
         prof = self.cfg["profile"]
         from . import layout
@@ -334,7 +340,7 @@ class FastLane:
         short = await self._timed(
             "render_short", timings, self.steps.render_short, src, t0_s, dur, work / "short_9x16.mp4",
             clip_id=cid, streamer=self.streamer, words=words, hook=jr.hook_text,
-            **lay.as_render_kwargs(), profile=prof,
+            **lay.as_render_kwargs(), profile=prof, cold_open=co,
         )  # fmt: skip
         clean = await self._timed(
             "render_clean",

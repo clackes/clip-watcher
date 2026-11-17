@@ -31,6 +31,7 @@ OUTPUT_SCHEMA: dict[str, Any] = {
         "sc": {"type": "integer", "enum": list(range(1, 11))},
         "t0": {"type": "number"},
         "t1": {"type": "number"},
+        "pk": {"type": "number"},
         "hk": {"type": "string"},
         "tt": {"type": "string"},
         "ds": {"type": "string"},
@@ -42,7 +43,7 @@ OUTPUT_SCHEMA: dict[str, Any] = {
         },
         "why": {"type": "string"},
     },
-    "required": ["ok", "sc", "t0", "t1", "hk", "tt", "ds", "fl", "why"],
+    "required": ["ok", "sc", "t0", "t1", "pk", "hk", "tt", "ds", "fl", "why"],
     "additionalProperties": False,
 }
 
@@ -321,7 +322,7 @@ def normalize_output(data: dict[str, Any], *, login: str, platform: str, dur: fl
 
     Raises ValueError when a required key is missing or the hook/title is empty (caller falls back).
     """
-    missing = [k for k in OUTPUT_SCHEMA["required"] if k not in data]
+    missing = [k for k in OUTPUT_SCHEMA["required"] if k not in data and k != "pk"]  # pk is optional
     if missing:
         raise ValueError(f"missing keys {missing}")
     if not str(data["hk"]).strip() or not str(data["tt"]).strip():
@@ -332,6 +333,8 @@ def normalize_output(data: dict[str, Any], *, login: str, platform: str, dur: fl
     t1 = max(0.0, min(float(dur), float(data.get("t1", dur))))
     if t1 <= t0:
         t0, t1 = 0.0, float(dur)
+    pk = data.get("pk")
+    pk = round(min(max(float(pk), t0), t1), 1) if isinstance(pk, (int, float)) else None
     ds = build_description(str(data.get("ds", "")).split("\n"), login, platform)
     reject = config.global_config().get("judge", {}).get("reject_flags", ["sp", "mu", "gb"])
     ok = bool(data.get("ok", False)) and not any(fl[k] for k in reject if k in fl)
@@ -340,6 +343,7 @@ def normalize_output(data: dict[str, Any], *, login: str, platform: str, dur: fl
         "sc": sc,
         "t0": round(t0, 1),
         "t1": round(t1, 1),
+        "pk": pk,
         "hk": _cap(data.get("hk", ""), CAPS["hk"]),
         "tt": _cap(data.get("tt", ""), CAPS["tt"]),
         "ds": ds,
