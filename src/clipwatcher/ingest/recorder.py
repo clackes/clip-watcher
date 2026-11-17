@@ -6,6 +6,9 @@ import asyncio
 import json
 import os
 import re
+import shlex
+import shutil
+import signal
 import time
 from pathlib import Path
 
@@ -183,21 +186,19 @@ class Recorder:
         self._n_runs += 1
         run_id = f"r{int(time.time())}"
         self._run_start_ms = int(time.time() * 1000)
-        r, w = os.pipe()
+        # One shell pipeline in its own session = one process group holding streamlink and ffmpeg, so
+        # stop() and the startup sweep can kill the whole recorder. (Separate processes can't share a
+        # group across sessions on macOS, and killing only the Python parent left both recording.)
+        sl_cmd = shlex.join(build_streamlink_cmd(self.platform, self.login, self.quality))
+        ff_cmd = shlex.join(build_ffmpeg_cmd(self.dir, run_id, self.segment_s))
         sl = await asyncio.create_subprocess_exec(
-            *build_streamlink_cmd(self.platform, self.login, self.quality),
-            stdout=w,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        ff = await asyncio.create_subprocess_exec(
-            *build_ffmpeg_cmd(self.dir, run_id, self.segment_s),
-            stdin=r,
+            "/bin/sh", "-c", f"{sl_cmd} | {ff_cmd} 2>/dev/null",
             stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        os.close(r)
-        os.close(w)
-        self._procs = [sl, ff]
+            stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
+        )  # fmt: skip
+        (self.dir / "pids.json").write_text(json.dumps({"pgid": sl.pid}))
+        self._procs = [sl]
         self._tasks = [
             asyncio.create_task(self._read_stderr(sl)),
             asyncio.create_task(self._ingest_loop(run_id, self._run_start_ms)),
@@ -217,11 +218,42 @@ class Recorder:
     async def stop(self) -> None:
         for t in self._tasks:
             t.cancel()
+        if self._procs:
+            kill_group(self._procs[0].pid, signal.SIGTERM)
         for p in self._procs:
             if p.returncode is None:
-                p.terminate()
                 try:
                     await asyncio.wait_for(p.wait(), 10)
                 except TimeoutError:
-                    p.kill()
+                    kill_group(self._procs[0].pid, signal.SIGKILL)
         self._tasks, self._procs = [], []
+        (self.dir / "pids.json").unlink(missing_ok=True)
+
+
+def kill_group(pgid: int, sig: int) -> None:
+    try:
+        os.killpg(pgid, sig)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def sweep_stale(ring_root: Path, login: str, keep: Path | None = None) -> list[Path]:
+    """Kill recorders left by a previous run of this login and delete their ring folders.
+
+    Called before a new recording starts; a previous process that died without cleanup (crash, kill -9,
+    power loss) can otherwise keep recording into an orphaned folder until the disk is full.
+    """
+    removed = []
+    base = Path(ring_root) / login
+    for d in sorted(base.glob("*")) if base.exists() else []:
+        if not d.is_dir() or (keep and d.resolve() == Path(keep).resolve()):
+            continue
+        pf = d / "pids.json"
+        if pf.exists():
+            try:
+                kill_group(int(json.loads(pf.read_text())["pgid"]), signal.SIGKILL)
+            except (ValueError, KeyError):
+                pass
+        shutil.rmtree(d, ignore_errors=True)
+        removed.append(d)
+    return removed

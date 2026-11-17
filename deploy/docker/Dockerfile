@@ -2,7 +2,7 @@
 #   docker compose -f deploy/docker/compose.yaml up -d --build
 FROM python:3.12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ffmpeg fonts-dejavu-core libgl1 libglib2.0-0 ca-certificates \
+        ffmpeg fonts-dejavu-core libgl1 libegl1 libgles2 libglib2.0-0 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY pyproject.toml ./

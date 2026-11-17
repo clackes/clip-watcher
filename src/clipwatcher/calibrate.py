@@ -209,8 +209,8 @@ def make_detector(model_path: str | Path | None = None) -> FaceDetector | None:
 
             return mediapipe_detect
         log.warning("face model %s missing; trying OpenCV", model)
-    except ImportError:
-        log.info("mediapipe not installed; trying OpenCV")
+    except (ImportError, OSError, RuntimeError) as e:  # e.g. libEGL missing in a slim container
+        log.info("mediapipe unavailable (%s); trying OpenCV", e)
     try:
         import cv2
 

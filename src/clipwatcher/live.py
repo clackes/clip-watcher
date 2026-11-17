@@ -14,6 +14,7 @@ import argparse
 import asyncio
 import logging
 import os
+import signal
 import time
 from pathlib import Path
 
@@ -58,6 +59,10 @@ async def run_streamer(login: str, *, db, bot=None, staging_root: Path | None = 
         from clipwatcher.queue.telegram_bot import post_card
 
         steps.post_card = post_card
+    from clipwatcher.ingest.recorder import sweep_stale
+
+    for d in sweep_stale(data_root() / "ring", login, keep=rec.dir):
+        log.info("%s: removed stale ring %s", login, d)
     await rec.start()
     log.info("%s: recording to %s", login, rec.dir)
     try:
@@ -96,11 +101,19 @@ async def main_async(logins: list[str], minutes: float) -> None:
         bot = build_application(db)
         await bot.initialize()
     tasks = [asyncio.create_task(supervise(lg, db=db, bot=bot, staging_root=staging_root)) for lg in logins]
+    # SIGTERM (docker stop, launchd, kill) and Ctrl-C cancel the lanes so every recorder's finally-block
+    # stops its streamlink/ffmpeg group instead of leaving them recording.
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, stop.set)
     try:
+        waits = [asyncio.create_task(stop.wait())]
         if minutes > 0:
-            await asyncio.sleep(minutes * 60)
-        else:
-            await asyncio.gather(*tasks)
+            waits.append(asyncio.create_task(asyncio.sleep(minutes * 60)))
+        await asyncio.wait(waits, return_when=asyncio.FIRST_COMPLETED)
+        for w in waits:
+            w.cancel()
     finally:
         for t in tasks:
             t.cancel()
