@@ -43,3 +43,13 @@ def synth_src(tmp_path_factory):
     p = tmp_path_factory.mktemp("synth") / "source.ts"
     _build(p)
     return p
+
+
+@pytest.fixture(autouse=True)
+def _no_face_detection_in_pipeline_tests(request, monkeypatch):
+    """Pipeline tests use fake media: skip per-clip layout detection (tested in test_layout.py)."""
+    if request.module.__name__.endswith("test_layout"):
+        return
+    from clipwatcher import layout
+
+    monkeypatch.setattr(layout, "resolve", lambda *a, **k: layout.Layout(False, None, None, "test"))

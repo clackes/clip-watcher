@@ -34,6 +34,9 @@ DEFAULT_FACE_MODEL = config.ROOT / "models" / "blaze_face_short_range.tflite"
 
 
 # --------------------------------------------------------------------------- geometry (pure)
+FULL_CAM_FACE_H = 0.18  # face taller than this share of the frame = full-screen camera
+
+
 @dataclass
 class Rects:
     face: Rect | None
@@ -140,7 +143,7 @@ def compute_rects(boxes: list[Box], fw: int, fh: int, n_frames: int) -> Rects:
     face = dominant_face(boxes, n_frames)
     # A face taller than 18% of the frame is a full-screen camera (IRL / Just Chatting), not an overlay:
     # leave facecam unset so the template uses the no-webcam layout.
-    full_cam = bool(face) and face[3] > 0.18 * fh
+    full_cam = bool(face) and face[3] > FULL_CAM_FACE_H * fh
     cam = facecam_from_face(face, fw, fh) if face and not full_cam else None
     return Rects(
         face=tuple(int(v) for v in face) if face else None,  # type: ignore[arg-type]

@@ -71,3 +71,6 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   `detect/live.py` `LiveDetector(streamer, viewers=None).feed(msg) -> Candidate | None` (epoch seconds).
   `detect/viewer_clips.py` Helix Get Clips poller.
 - `fastlane.py` live lane orchestrator; `calibrate.py` facecam/gameplay rect suggestion + Telegram still.
+- `layout.py` `resolve(media, streamer) -> Layout`: per-clip scene detection. Streamers use different layouts and
+  switch scenes mid-stream, so each clip matches its face position against confirmed `layouts:` in
+  streamers.yaml; unknown scenes render with an auto rect and meta.layout="auto-new" for operator review.

@@ -152,6 +152,8 @@ def process_candidate(
     tpl = _mod("clipwatcher.render.template")
     clip_dir = work / clip_id
     clip_dir.mkdir(parents=True, exist_ok=True)
+    lay = _mod("clipwatcher.layout").resolve(src, streamer)
+    meta["layout"] = lay.source
     short = tpl.render_short(
         src,
         local_start,
@@ -161,9 +163,7 @@ def process_candidate(
         streamer=streamer,
         words=words,
         hook=meta["hook"],
-        has_webcam=bool(scfg.get("has_webcam", True)),
-        cam=scfg.get("facecam_rect"),
-        game=scfg.get("gameplay_rect"),
+        **lay.as_render_kwargs(),
     )
     clean = tpl.render_clean(src, local_start, dur, clip_dir / "clean_16x9.mp4")
     meta.update(
