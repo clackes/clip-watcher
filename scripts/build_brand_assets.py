@@ -12,7 +12,7 @@ TOP_W = 1000  # top banner: 1000 wide, centred, ends above the webcam at y270
 CTA_W = 920  # CTA banner under the gameplay
 
 
-def rounded(src: Path, width: int, radius: int = 22) -> Image.Image:
+def rounded(src: Path, width: int, radius: int = 50) -> Image.Image:
     im = Image.open(src).convert("RGBA")
     h = round(im.height * width / im.width)
     im = im.resize((width, h), Image.LANCZOS)
