@@ -38,9 +38,10 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   viewer clips + audio loudness (final >= 4.5).
 - D4 Dual export: clean_16x9.mp4 (trimmed, no overlays, -14 LUFS) + short_9x16.mp4. Profiles cpu_batch,
   cpu_live, nvenc, mac_preview.
-- D5 One 9:16 template (1080x1920): bg 0-140 | logo 800x110 @140,150 | webcam 1080x480 @y270 | hook pill
-  y702 t<2.5s | gameplay 1080x540 @y750 | CTA 840x120 @120,1300 | subs \pos(540,1480) 80px current word #FFE600
-  110% (CTA above subs, owner's call 17 Nov) | dead zone 1536-1920. Credit {\an9\pos(1060,282)}. Background ambient blur or
+- D5 One 9:16 template (1080x1920): bg | ClipVault top banner 1000x166 centred @y96 | webcam 1080x480 @y270 | hook pill
+  y702 t<2.5s | gameplay 1080x540 @y750 | CTA banner 920x152 centred @y1300 | subs \pos(540,1495) 80px current word #FFE600
+  110% (owner's call 17 Nov; banners from assets/branding/src via
+  scripts/build_brand_assets.py) | dead zone 1536-1920. Credit {\an9\pos(1060,282)}. Background ambient blur or
   frame_gradient_<accent>.png (-loop 1); accent red/yellow/cyan from hash(clip_id). No webcam -> 16:9 frame
   1080x608 centred in y270-1290.
 - D6 Judge: faster-whisper int8 word timestamps on candidate windows + 6 keyframes at 480p. anthropic SDK,
