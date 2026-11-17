@@ -1,5 +1,7 @@
 """Cold open: replay the strongest reaction, zoomed in, before the clip starts (stops the scroll).
 
+It starts render.cold_open_lead_s (2.5 s) before the peak so the viewer hears what leads to it.
+
 The reaction instant comes from the judge (pk): only it sees the frames, so only it knows when something
 happens on screen. The audio then moves pk onto the loudest instant within +/-REFINE_S. Without the judge
 there is no cold open (owner, 17 Nov: chat timing and loudness alone picked moments where nothing happens);
@@ -19,7 +21,8 @@ from typing import Any
 from clipwatcher import config
 from clipwatcher.models import Word
 
-PRE_S = 0.3  # cold open starts this long before the reaction onset
+LEAD_S = 2.5  # default render.cold_open_lead_s: start this long before the peak (owner, 17 Nov: the build-up,
+# not the middle of the shout, which alone is unintelligible)
 MIN_INTO_CLIP_S = 3.0  # a reaction already in the first 3 s needs no cold open
 MAX_WORD_TAIL_S = 0.8  # extend the cold open to finish the word in progress at most this far
 EXCESS_DB = 8.0  # shout = this much louder than the streamer's usual talking level
@@ -38,6 +41,11 @@ def settings() -> tuple[float, float]:
     """(duration s, zoom factor) from render.cold_open_s / render.cold_open_zoom; duration 0 disables."""
     r = config.global_config().get("render", {})
     return float(r.get("cold_open_s", 2.0)), float(r.get("cold_open_zoom", 1.15))
+
+
+def lead() -> float:
+    """Seconds of build-up before the peak (render.cold_open_lead_s)."""
+    return float(config.global_config().get("render", {}).get("cold_open_lead_s", LEAD_S))
 
 
 def loudness(media: Path, start: float, dur: float) -> list[tuple[float, float]]:
@@ -117,7 +125,7 @@ def window(
     p = reaction_rel - trim_start
     if p < MIN_INTO_CLIP_S or p > dur:
         return None
-    s0 = reaction_rel - PRE_S
+    s0 = reaction_rel - lead()
     e0 = s0 + co_s
     s, e = s0, e0
     for w in words or []:

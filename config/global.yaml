@@ -72,7 +72,8 @@ render:
   default_cam: "480:213:1400:743"
   default_game: "1920:960:0:60"
   captions: pop             # pop | classic | bounce | ab (classic vs pop by clip_id); stored in meta.captions
-  cold_open_s: 2.0          # replay the strongest reaction first (0 = off)
+  cold_open_s: 3.5          # replay the strongest reaction first (0 = off)
+  cold_open_lead_s: 2.5     # cold open starts this long before the peak (build-up, not mid-shout)
   cold_open_zoom: 1.15      # punch-in on the facecam during the cold open
   cold_open_audio_fallback: false  # true = without the judge, cold open on a detected shout (unreliable)
   hook_s: 3.5               # hook pill on screen for the first N seconds

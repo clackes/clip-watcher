@@ -12,6 +12,10 @@ clip from its own frames and matched against the streamer's confirmed scenes in 
         - {name: fullcam, has_webcam: false}
 
 A single facecam_rect / gameplay_rect at the streamer level counts as one confirmed scene.
+
+Several webcams on screen (duo streams, co-streamers, guests): the cam that goes in the layout is the one of
+the person who makes the moment. With peak_s given, frames around the peak decide: the face that moves most
+there (laughing, shouting, jumping) wins (owner, 17 Nov).
 """
 
 from __future__ import annotations
@@ -31,10 +35,11 @@ class Layout:
     has_webcam: bool
     cam: str | None
     game: str | None
-    source: str  # fixed | scene:<name> | auto-new | no-face | default-noface | fullcam | default
+    source: str  # fixed | scene:<name> | auto-new | multi-cam | no-face | default-noface | fullcam | default
+    face: str | None = None  # "w:h:x:y" of the detected face (cold open centres on it)
 
     def as_render_kwargs(self) -> dict:
-        return {"has_webcam": self.has_webcam, "cam": self.cam, "game": self.game}
+        return {"has_webcam": self.has_webcam, "cam": self.cam, "game": self.game, "face": self.face}
 
 
 def _parse(r: str) -> tuple[int, int, int, int]:
@@ -71,7 +76,22 @@ def match_scene(
     return None
 
 
-def resolve(media: Path, streamer: str, *, n_frames: int = 4, detector=None) -> Layout:
+PEAK_OFFSETS = (-1.5, -1.0, -0.5, 0.0, 0.5, 1.0)
+
+
+def reacting_face(media: Path, faces: list, fw: int, peak_s: float, detector, td: Path):
+    """Of several webcam faces, the one moving most around peak_s (media seconds)."""
+    peak = calibrate.frames_at(Path(media), td / "peak", [peak_s + o for o in PEAK_OFFSETS])
+    if len(peak) < 3:
+        return faces[0]
+    scores = [calibrate.face_motion([p for _, p in peak], f, fw) for f in faces]
+    log.info("multi-cam: %d faces, motion %s", len(faces), [round(v, 1) for v in scores])
+    return faces[max(range(len(faces)), key=scores.__getitem__)]
+
+
+def resolve(
+    media: Path, streamer: str, *, n_frames: int = 4, detector=None, peak_s: float | None = None
+) -> Layout:
     scfg = config.streamer(streamer)
     sc = scenes(scfg)
     if scfg.get("has_webcam") is False and not scfg.get("layouts"):
@@ -98,8 +118,17 @@ def resolve(media: Path, streamer: str, *, n_frames: int = 4, detector=None) -> 
 
         with Image.open(frames[0][1]) as im:
             fw, fh = im.size
-    face = calibrate.dominant_face(boxes, len(frames))
+        face = calibrate.dominant_face(boxes, len(frames))
+        cams = [
+            f
+            for f in calibrate.stable_faces(boxes, len(frames), fw, fh)
+            if f[3] <= calibrate.FULL_CAM_FACE_H * fh
+        ]
+        multi = len(cams) >= 2 and peak_s is not None
+        if multi:
+            face = reacting_face(media, cams, fw, float(peak_s), detector, Path(td))
     full_cam = bool(face) and face[3] > calibrate.FULL_CAM_FACE_H * fh
+    fstr = calibrate.rect_str(tuple(int(v) for v in face)) if face and not full_cam else None  # type: ignore[arg-type]
     hit = match_scene(face, full_cam, sc)
     if hit:
         return Layout(
@@ -107,6 +136,7 @@ def resolve(media: Path, streamer: str, *, n_frames: int = 4, detector=None) -> 
             hit.get("facecam_rect"),
             hit.get("gameplay_rect"),
             f"scene:{hit.get('name', '?')}",
+            fstr,
         )
     if face is None and not full_cam:
         # A missed face (looking down, small cam, headset) is far likelier than the cam vanishing: keep the
@@ -118,6 +148,17 @@ def resolve(media: Path, streamer: str, *, n_frames: int = 4, detector=None) -> 
             )
     if face is None or full_cam:
         return Layout(False, None, None, "fullcam" if full_cam else "no-face")
+    if multi:  # the reacting cam is not a confirmed scene: crop it from its face
+        cam = calibrate.facecam_from_face(face, fw, fh)
+        return Layout(
+            True,
+            calibrate.rect_str(cam),
+            calibrate.rect_str(calibrate.gameplay_avoiding(cam, fw, fh)),
+            "multi-cam",
+            fstr,
+        )
     rects = calibrate.compute_rects(boxes, fw, fh, len(frames))
     # New, unconfirmed scene: still rendered, but flagged in meta so an operator checks the crop.
-    return Layout(True, calibrate.rect_str(rects.facecam), calibrate.rect_str(rects.gameplay), "auto-new")
+    return Layout(
+        True, calibrate.rect_str(rects.facecam), calibrate.rect_str(rects.gameplay), "auto-new", fstr
+    )

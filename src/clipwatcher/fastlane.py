@@ -325,6 +325,7 @@ class FastLane:
         from .render import cold_open
 
         pl = cold_open.plan(src, t0_s, dur, cand.peak_s - cand.start_s, jr, words)
+        peak_media = t0_s + (pl.reaction if pl.reaction is not None else cand.peak_s - cand.start_s)
         words = trim_words(words, pl.t0, pl.t1)
         t0_s, dur, co = t0_s + pl.t0, pl.t1 - pl.t0, pl.cold_open
 
@@ -332,7 +333,7 @@ class FastLane:
         from . import layout
         from .render.captions import caption_style
 
-        lay = await self._timed("layout", timings, layout.resolve, src, self.streamer)
+        lay = await self._timed("layout", timings, layout.resolve, src, self.streamer, peak_s=peak_media)
         short = await self._timed(
             "render_short", timings, self.steps.render_short, src, t0_s, dur, work / "short_9x16.mp4",
             clip_id=cid, streamer=self.streamer, words=words, hook=jr.hook_text,

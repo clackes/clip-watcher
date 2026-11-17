@@ -161,6 +161,8 @@ def process_candidate(
         if jr.source == "claude":
             meta.update(why=jr.why, flags=jr.flags, judge_score=jr.score, score=jr.score, ok=jr.ok)
     pl = cold_open.plan(src, local_start, dur, cand.peak_s - cand.start_s, jr or {}, words)
+    # media time of the moment: picks the webcam of whoever makes it when several are on screen
+    peak_media = local_start + (pl.reaction if pl.reaction is not None else cand.peak_s - cand.start_s)
     words = [
         type(w)(w.start - pl.t0, w.end - pl.t0, w.text) for w in words if w.end > pl.t0 and w.start < pl.t1
     ]
@@ -169,7 +171,7 @@ def process_candidate(
     tpl = _mod("clipwatcher.render.template")
     clip_dir = work / clip_id
     clip_dir.mkdir(parents=True, exist_ok=True)
-    lay = _mod("clipwatcher.layout").resolve(src, streamer)
+    lay = _mod("clipwatcher.layout").resolve(src, streamer, peak_s=peak_media)
     meta["layout"] = lay.source
     meta["captions"] = _mod("clipwatcher.render.captions").caption_style(clip_id)
     short = tpl.render_short(

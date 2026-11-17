@@ -35,6 +35,7 @@ DEFAULT_FACE_MODEL = config.ROOT / "models" / "blaze_face_short_range.tflite"
 
 # --------------------------------------------------------------------------- geometry (pure)
 FULL_CAM_FACE_H = 0.18  # face taller than this share of the frame = full-screen camera
+SAME_CAM_FACES = 3.0  # two faces closer than this many face widths are in the same webcam
 
 
 @dataclass
@@ -251,6 +252,72 @@ def sample_frames(media: Path, out_dir: Path, n: int = 10) -> list[tuple[float, 
         if p.exists():
             res.append((t, p))
     return res
+
+
+def frames_at(media: Path, out_dir: Path, times: list[float], height: int = 360) -> list[tuple[float, Path]]:
+    """Downscaled PNG frames at the given times (s), for motion checks around the peak."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    res = []
+    for i, t in enumerate(times):
+        p = out_dir / f"peak_{i:02d}.png"
+        r = subprocess.run(
+            [config.ffmpeg_bin(), "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{max(0.0, t):.3f}",
+             "-i", str(media), "-frames:v", "1", "-vf", f"scale=-2:{height}", str(p)],
+            capture_output=True,
+        )  # fmt: skip
+        if r.returncode == 0 and p.exists():
+            res.append((t, p))
+    return res
+
+
+def stable_faces(
+    boxes: list[Box], n_frames: int, fw: int, fh: int, min_share: float = 0.3, min_h: float = 0.04
+) -> list[Box]:
+    """One face per distinct webcam on screen, most-seen first.
+
+    A face cluster counts when it is seen in >= min_share of the frames and is at least min_h of the frame
+    tall (ID-card photos and HUD portraits are smaller). A face closer than SAME_CAM_FACES face widths to a
+    more-seen face is in the same webcam (a poster, a shelf object, a second detection) and is dropped.
+    """
+    need = max(1, math.ceil(min_share * n_frames))
+    out: list[Box] = []
+    for c in cluster_boxes(boxes):
+        if len(c) < need:
+            continue
+        f: Box = tuple(statistics.median(b[i] for b in c) for i in range(4))  # type: ignore[assignment]
+        if f[3] < min_h * fh:
+            continue
+        cx, cy = f[0] + f[2] / 2, f[1] + f[3] / 2
+        if all(
+            math.hypot(cx - o[0] - o[2] / 2, cy - o[1] - o[3] / 2) > SAME_CAM_FACES * max(f[2], o[2])
+            for o in out
+        ):
+            out.append(f)
+    return out
+
+
+def face_motion(frames: list[Path], face: Box, fw: int) -> float:
+    """Mean frame-to-frame pixel change around a face (source px box; frames may be downscaled).
+
+    The streamer who reacts (laughs, shouts, jumps) moves; a co-streamer watching does not.
+    """
+    from PIL import Image, ImageChops, ImageStat
+
+    diffs, prev = [], None
+    for f in frames:
+        with Image.open(f) as im:
+            k = im.width / fw
+            x, y, w, h = face
+            pad_w, pad_h = w * 0.5, h * 0.5
+            box = (
+                int(max(0, (x - pad_w) * k)), int(max(0, (y - pad_h) * k)),
+                int(min(im.width, (x + w + pad_w) * k)), int(min(im.height, (y + h + pad_h) * k)),
+            )  # fmt: skip
+            crop = im.convert("L").crop(box).resize((64, 64))
+        if prev is not None:
+            diffs.append(ImageStat.Stat(ImageChops.difference(crop, prev)).mean[0])
+        prev = crop
+    return statistics.fmean(diffs) if diffs else 0.0
 
 
 def draw_still(frame: Path, rects: Rects, out: Path) -> Path:

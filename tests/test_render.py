@@ -170,14 +170,15 @@ def test_cold_open_window(monkeypatch):
     from clipwatcher import config
     from clipwatcher.render import cold_open
 
-    monkeypatch.setattr(config, "global_config", lambda: {"render": {"cold_open_s": 2.0}})
-    assert cold_open.window(17.0, 7.0, 23.0) == (9.7, 2.0)  # reaction 10 s into the clip
+    monkeypatch.setattr(config, "global_config", lambda: {"render": {"cold_open_s": 3.5}})
+    assert cold_open.window(17.0, 7.0, 23.0) == (7.5, 3.5)  # 2.5 s of build-up before the peak
     assert cold_open.window(8.0, 7.0, 23.0) is None  # already in the first 3 s
     assert cold_open.window(None, 0.0, 30.0) is None
-    assert cold_open.window(29.0, 0.0, 30.0) == (28.7, 1.3)  # clipped at the clip end
+    assert cold_open.window(29.0, 0.0, 30.0) == (26.5, 3.5)
+    assert cold_open.window(29.5, 0.0, 30.0) == (27.0, 3.0)  # clipped at the clip end
     # word-safe: start moves to the start of the word in progress, end finishes a short word
-    ws = [Word(16.5, 16.9, "OH"), Word(18.6, 19.0, "NO")]
-    assert cold_open.window(17.0, 7.0, 23.0, ws) == (9.42, 2.66)
+    ws = [Word(14.3, 14.7, "OH"), Word(17.8, 18.2, "NO")]
+    assert cold_open.window(17.0, 7.0, 23.0, ws) == (7.22, 4.06)
     monkeypatch.setattr(config, "global_config", lambda: {"render": {"cold_open_s": 0}})
     assert cold_open.window(17.0, 7.0, 23.0) is None
 
@@ -191,6 +192,25 @@ def test_short_with_cold_open(synth_src, tmp_path, webcam):
         hook="WATCH HIS FACE", has_webcam=webcam, profile="cpu_live", captions="pop", cold_open=(2.5, 1.5),
     )  # fmt: skip
     check_short(out, 5.5)
+
+
+def test_short_graph_cold_open_hides_hook_and_uses_measured_loudnorm(tmp_path):
+    from clipwatcher.render.template import build_short_graph
+
+    m = {
+        "input_i": "-20.1",
+        "input_tp": "-3.0",
+        "input_lra": "6.0",
+        "input_thresh": "-30.5",
+        "target_offset": "0.2",
+    }
+    g = build_short_graph(
+        trim=6.0, dur=20.0, style="gradient", has_webcam=True, has_hook=True, cam=(0, 0, 480, 270),
+        game=(0, 0, 1920, 960), gradient_idx=4, cta_idx=2, logo_idx=1, hook_idx=3, ass=tmp_path / "s.ass",
+        fontsdir=tmp_path, hook_s=3.5, cold_open=(9.0, 3.5), measured=m,
+    )  # fmt: skip
+    assert "enable='between(t,3.500,7.000)'" in g  # hook pill only after the cold open
+    assert "volume=6.10dB,alimiter" in g and "loudnorm" not in g
 
 
 def test_audio_reaction_needs_a_shout_with_an_exclamation():
@@ -224,4 +244,4 @@ def test_plan_cold_open_only_with_the_judge(monkeypatch, tmp_path):
     pl = cold_open.plan(tmp_path / "x.mp4", 0.0, 30.0, 20.0, judged, [])
     assert (pl.t0, pl.t1) == (5.0, 28.0)
     assert 15.0 <= pl.reaction <= 15.5  # pk 14.0 moved onto the burst
-    assert pl.cold_open is not None and abs(pl.cold_open[0] - (pl.reaction - 0.3 - 5.0)) < 0.01
+    assert pl.cold_open is not None and abs(pl.cold_open[0] - (pl.reaction - 2.5 - 5.0)) < 0.01
