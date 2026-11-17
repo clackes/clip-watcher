@@ -124,10 +124,17 @@ def build_application(db: ClipDB, token: str | None = None) -> Any:
         await q.answer(text)
         if row is None:
             return
+        from telegram.error import BadRequest
+
         try:
-            await q.edit_message_caption(card_text(row), reply_markup=markup(row))
-        except Exception:  # noqa: BLE001
-            await q.edit_message_text(card_text(row), reply_markup=markup(row))
+            # Video cards carry the text as a caption; text-only cards as message text.
+            if q.message is not None and q.message.text is None:
+                await q.edit_message_caption(card_text(row), reply_markup=markup(row))
+            else:
+                await q.edit_message_text(card_text(row), reply_markup=markup(row))
+        except BadRequest as e:
+            if "not modified" not in str(e):  # pressing a button that changes nothing is fine
+                raise
         if q.data.startswith("edit:") and text.startswith("Reply"):
             await q.message.reply_text(f"Edit {row['id']}: send the new title.", reply_markup=ForceReply())
             context.user_data["editing"] = row["id"]
