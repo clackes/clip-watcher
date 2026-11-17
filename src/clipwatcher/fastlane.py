@@ -82,6 +82,42 @@ def _default_screen(
     return claude.screen(" ".join(w.text for w in words), chat_lines, title, game)
 
 
+def _default_judge(
+    cand: Candidate,
+    words: list[Word],
+    src: Path,
+    t0_s: float,
+    dur: float,
+    chat_lines: list[str],
+    game: str,
+    language: str | None,
+) -> JudgeResult | None:
+    """Standardised multimodal judge (low-res frames + compact JSON). None = no key or judge.mode off,
+    and the lane keeps its old screen + heuristic path."""
+    jcfg = config.global_config().get("judge", {})
+    mode = jcfg.get("mode", "single")
+    if mode == "off" or not os.environ.get("ANTHROPIC_API_KEY"):
+        return None
+    from .judge import claude
+    from .judge import frames as fr
+
+    if mode == "two_stage":
+        s = claude.judge_clip(cand, words, chat_lines, [], game=game, language=language, task="screen")
+        if s.source == "claude" and (not s.ok and s.score < int(jcfg.get("screen_min", 5))):
+            return s
+    size = tuple(jcfg.get("frame_size", [480, 270]))
+    frames = fr.keyframes_lowres(
+        src, t0_s, dur, n=int(jcfg.get("frames", 8)), peak_rel=cand.peak_s - cand.start_s,
+        size=(int(size[0]), int(size[1])), quality=int(jcfg.get("frame_quality", 65)),
+    )  # fmt: skip
+    return claude.judge_clip(cand, words, chat_lines, frames, game=game, language=language)
+
+
+def trim_words(words: list[Word], start: float, end: float) -> list[Word]:
+    """Words inside [start, end], re-timed to the trimmed clip."""
+    return [Word(w.start - start, w.end - start, w.text) for w in words if w.end > start and w.start < end]
+
+
 def _default_heuristic(cand: Candidate, words: list[Word]) -> JudgeResult:
     from .judge import claude
 
@@ -115,6 +151,7 @@ class Steps:
     render_clean: Callable[..., Path] = _default_render_clean
     stage: Callable[..., Path] = _default_stage
     post_card: Callable[..., Any] | None = None  # async (app, db, clip_id, video)
+    judge: Callable[..., JudgeResult | None] = _default_judge  # None -> screen + heuristic path
 
 
 @dataclass
@@ -256,15 +293,31 @@ class FastLane:
         )
         chat_lines = self._chat_lines(cand)
         title, game = scfg.get("title", f"{self.streamer} live"), scfg.get("game", "")
-        screen = await self._timed("screen", timings, self.steps.screen, cand, words, chat_lines, title, game)
-        min_funny = config.global_config().get("judge", {}).get("min_funny", 5)
-        if (
-            screen.get("reject_reason")
-            and max(screen.get("funny_score", 0), screen.get("hype_score", 0)) < min_funny
-        ):
-            self._unpin(cand)
-            return Outcome(cid, "rejected", timings, error=str(screen["reject_reason"]))
-        jr = self.steps.heuristic(cand, words)
+        jr = await self._timed(
+            "judge", timings, self.steps.judge, cand, words, src, t0_s, dur, chat_lines, game,
+            scfg.get("language"),
+        )  # fmt: skip
+        if jr is None:
+            screen = await self._timed(
+                "screen", timings, self.steps.screen, cand, words, chat_lines, title, game
+            )
+            min_funny = config.global_config().get("judge", {}).get("min_funny", 5)
+            if (
+                screen.get("reject_reason")
+                and max(screen.get("funny_score", 0), screen.get("hype_score", 0)) < min_funny
+            ):
+                self._unpin(cand)
+                return Outcome(cid, "rejected", timings, error=str(screen["reject_reason"]))
+            jr = self.steps.heuristic(cand, words)
+        else:
+            screen = {"funny_score": jr.funny_score, "hype_score": jr.hype_score}
+            if jr.source == "claude" and not jr.ok:
+                log.info("%s: judge rejected %s (sc=%s): %s", self.streamer, cid, jr.score, jr.reject_reason)
+                self._unpin(cand)
+                return Outcome(cid, "rejected", timings, error=str(jr.reject_reason or jr.why))
+            if jr.source == "claude" and jr.trim_end_s - jr.trim_start_s >= 12:
+                words = trim_words(words, jr.trim_start_s, jr.trim_end_s)
+                t0_s, dur = t0_s + jr.trim_start_s, jr.trim_end_s - jr.trim_start_s
 
         prof = self.cfg["profile"]
         from . import layout
@@ -293,6 +346,9 @@ class FastLane:
             "start_s": cand.start_s, "end_s": cand.end_s, "funny_score": screen.get("funny_score"),
             "hype_score": screen.get("hype_score"), "layout": lay.source,
         }  # fmt: skip
+        if jr.source == "claude":
+            meta.update(title=jr.title_options[0], description=jr.description, why=jr.why,
+                        flags=jr.flags, judge_score=jr.score)  # fmt: skip
         kw: dict[str, Any] = {"db": self.db}
         if self.staging_root:
             kw["root"] = self.staging_root

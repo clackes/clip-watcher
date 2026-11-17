@@ -32,9 +32,16 @@ def card_text(row: dict[str, Any]) -> str:
     lines = [f"Clip {row['id']} - {row['streamer']}", f"State: {row['state']}"]
     if row.get("claimed_by"):
         lines.append(f"Held by: {row['claimed_by']}")
-    for k in ("title", "hook", "setup_line"):
+    for k in ("title", "hook", "why"):
         if meta.get(k):
             lines.append(f"{k}: {meta[k]}")
+    if meta.get("judge_score"):
+        lines.append(f"score: {meta['judge_score']}/10")
+    flagged = [k for k, v in (meta.get("flags") or {}).items() if v]
+    if flagged:
+        lines.append("⚠️ flags: " + ", ".join(flagged))
+    if meta.get("description"):
+        lines.append("\n" + str(meta["description"]))
     return "\n".join(lines)
 
 

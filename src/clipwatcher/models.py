@@ -54,6 +54,11 @@ class JudgeResult:
     setup_line: str
     reject_reason: str | None = None
     source: str = "claude"  # claude | heuristic
+    description: str = ""  # ready-to-post description (teaser + credit, CTA, hashtags)
+    flags: dict[str, bool] = field(default_factory=dict)  # sp spoiler, mu music risk, gb gambling
+    ok: bool = True  # publishable per the judge
+    why: str = ""  # one line for the Telegram approval card
+    score: int = 0  # 1-10 viral score
 
 
 @dataclass

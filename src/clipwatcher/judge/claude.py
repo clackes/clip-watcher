@@ -184,6 +184,77 @@ def _validate(data: dict, cand: Candidate) -> JudgeResult:
     )
 
 
+def _usage(resp: Any) -> dict[str, int]:
+    u = getattr(resp, "usage", None)
+    keys = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+    return {k: int(getattr(u, k, 0) or 0) for k in keys}
+
+
+def call_v2(client: Any, req: dict[str, Any]) -> tuple[dict[str, Any], dict[str, int]]:
+    """One standardised judge request -> (raw JSON object, usage). Raises JudgeError on refusal/truncation."""
+    resp = client.messages.create(**req)
+    stop = getattr(resp, "stop_reason", None)
+    if stop in ("refusal", "max_tokens"):
+        raise JudgeError(f"stop_reason={stop}")
+    text = "".join(getattr(b, "text", "") for b in resp.content if getattr(b, "type", "") == "text")
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        raise JudgeError("response is not an object")
+    return data, _usage(resp)
+
+
+def judge_clip(
+    cand: Candidate,
+    words: list[Word],
+    chat_lines: list[Any],
+    frames: list[tuple[float, Path]],
+    *,
+    game: str = "",
+    platform: str | None = None,
+    language: str | None = None,
+    task: str = "judge",
+    client: Any = None,
+    model: str | None = None,
+) -> JudgeResult:
+    """Standardised multimodal judge (prompts/judge_v2.md + compact JSON). Heuristic fallback on any error."""
+    from . import compact
+
+    login = cand.stream
+    plat = platform or config.streamer(login).get("platform", "twitch")
+    try:
+        client = client or _client()
+        payload = compact.build_payload(
+            streamer=login, platform=plat, game=game, language=language, dur=cand.duration,
+            peak_s=cand.peak_s - cand.start_s, transcript=words, chat=chat_lines, task=task,
+        )  # fmt: skip
+        jcfg = _jcfg()
+        mdl = model or (jcfg.get("screen_model") if task == "screen" else jcfg.get("judge_model", ""))
+        data, usage = call_v2(client, compact.build_request(mdl, frames, payload))
+        out = compact.normalize_output(data, login=login, platform=plat, dur=cand.duration)
+        log.info("judge %s %s sc=%s ok=%s usage=%s", task, login, out["sc"], out["ok"], usage)
+        reasons = [k for k, v in out["fl"].items() if v]
+        return JudgeResult(
+            funny_score=float(out["sc"]),
+            hype_score=float(out["sc"]),
+            visual_context_summary="",
+            trim_start_s=out["t0"],
+            trim_end_s=out["t1"],
+            hook_text=out["hk"],
+            title_options=[out["tt"]],
+            setup_line=out["ds"].split("\n")[0],
+            reject_reason=None if out["ok"] else (f"flags: {','.join(reasons)}" if reasons else out["why"]),
+            source="claude",
+            description=out["ds"],
+            flags=out["fl"],
+            ok=out["ok"],
+            why=out["why"],
+            score=out["sc"],
+        )
+    except Exception as e:  # noqa: BLE001
+        log.warning("judge failed (%s); using heuristic", e)
+        return heuristic_judge(cand, words)
+
+
 def judge_candidate(
     cand: Candidate,
     words: list[Word],
@@ -195,30 +266,9 @@ def judge_candidate(
     client: Any = None,
     model: str | None = None,
 ) -> JudgeResult:
-    try:
-        client = client or _client()
-        content: list[dict] = [_image_block(p) for p in frames]
-        content.append(
-            {
-                "type": "text",
-                "text": (
-                    f"Streamer: {_streamer_name(cand.stream)}\nStream title: {title}\nGame: {game}\n"
-                    f"Window length: {cand.duration:.1f}s (peak at {cand.peak_s - cand.start_s:.1f}s)\n\n"
-                    f"Transcript with times:\n"
-                    + " ".join(f"[{w.start:.1f}]{w.text}" for w in words)
-                    + f"\n\nChat:\n{_chat_block(chat_lines)}"
-                ),
-            }
-        )
-        data = _call(
-            client,
-            model or _jcfg().get("judge_model", ""),
-            _prompt("judge_rubric.md"),
-            content,
-            JUDGE_SCHEMA,
-            1200,
-        )
-        return _validate(data, cand)
-    except Exception as e:  # noqa: BLE001
-        log.warning("judge failed (%s); using heuristic", e)
-        return heuristic_judge(cand, words)
+    """Backward-compatible entry point; now runs the standardised v2 judge."""
+    timed = [
+        (f if isinstance(f, tuple) else (i * cand.duration / max(1, len(frames)), f))
+        for i, f in enumerate(frames)
+    ]
+    return judge_clip(cand, words, chat_lines, timed, game=game, client=client, model=model)

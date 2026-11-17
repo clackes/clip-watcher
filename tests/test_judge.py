@@ -26,9 +26,9 @@ class FakeClient:
 
 
 GOOD = {
-    "funny_score": 8.5, "hype_score": 7, "visual_context_summary": "x", "trim_start_s": -3,
-    "trim_end_s": 99, "hook_text": "NON CI CREDO", "title_options": ["A" * 80, "B"],
-    "setup_line": "He loses.", "reject_reason": None,
+    "ok": True, "sc": 8, "t0": -3, "t1": 99, "hk": "NON CI CREDO 💀", "tt": "A" * 80,
+    "ds": "Non doveva succedere...\nIscriviti per non perdere le migliori clip ogni giorno 🔔\n#Gioco #Clip",
+    "fl": {"sp": False, "mu": False, "gb": False}, "why": "big reaction",
 }  # fmt: skip
 WORDS = [Word(0, 1, "incredibile"), Word(1, 2, "no")]
 
@@ -36,9 +36,10 @@ WORDS = [Word(0, 1, "incredibile"), Word(1, 2, "no")]
 def test_judge_ok_validates_and_clamps():
     c = FakeClient(resp(GOOD))
     r = claude.judge_candidate(cand(), WORDS, ["KEKW"], [], client=c)
-    assert r.source == "claude" and r.funny_score == 8.5
+    assert r.source == "claude" and r.funny_score == 8 and r.ok
     assert r.trim_start_s == 0 and r.trim_end_s == 40
     assert all(len(t) <= 60 for t in r.title_options)
+    assert "twitch.tv/gioco" in r.description  # credit enforced even when the model forgets it
     assert c.kwargs["output_config"]["format"]["type"] == "json_schema"
     assert c.kwargs["system"][0]["cache_control"] == {"type": "ephemeral"}
 
@@ -49,12 +50,19 @@ def test_refusal_and_max_tokens_fall_back():
         assert r.source == "heuristic" and r.funny_score == 7.5
 
 
-def test_exception_and_bad_hook_fall_back():
+def test_exception_and_bad_output_fall_back():
     r = claude.judge_candidate(cand(), WORDS, [], [], client=FakeClient(exc=RuntimeError("boom")))
     assert r.source == "heuristic"
-    bad = dict(GOOD, hook_text="ONE")
-    r = claude.judge_candidate(cand(), [], [], [], client=FakeClient(resp(bad)))
-    assert r.source == "heuristic" and r.hook_text == "WAIT FOR IT"
+    for bad in (dict(GOOD, hk=""), {k: v for k, v in GOOD.items() if k != "fl"}):
+        r = claude.judge_candidate(cand(), [], [], [], client=FakeClient(resp(bad)))
+        assert r.source == "heuristic" and r.hook_text == "WAIT FOR IT"
+
+
+def test_flags_reject_even_if_model_says_ok():
+    r = claude.judge_candidate(
+        cand(), WORDS, [], [], client=FakeClient(resp(dict(GOOD, fl={"sp": False, "mu": True, "gb": False})))
+    )
+    assert r.source == "claude" and not r.ok and r.flags["mu"] and "mu" in r.reject_reason
 
 
 def test_screen():

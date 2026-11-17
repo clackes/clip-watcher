@@ -31,10 +31,25 @@ def build_metadata(meta: dict[str, Any]) -> dict[str, Any]:
     streamer = str(meta.get("streamer", ""))
     name = streamer.lower()
     title = str(meta.get("title") or f"{streamer} reacts").strip()[:60].rstrip()
+    campaign = meta.get("campaign_link")
+    if meta.get("description"):  # judge copy: teaser + credit, CTA, hashtags
+        lines = str(meta["description"]).split("\n")
+        if config.credit(name) not in meta["description"]:
+            lines.insert(0, f"🎥 {streamer}: {config.credit(name)}")
+        if campaign:
+            lines.insert(len(lines) - 1, str(campaign))
+        tags = [t for t in lines[-1].split() if t.startswith("#")] + [
+            str(t) for t in meta.get("campaign_tags", [])
+        ]
+        return {
+            "title": title,
+            "description": "\n".join(lines),
+            "tags": [t.lstrip("#") for t in tags],
+            "paid_promotion": bool(campaign or meta.get("campaign_tags")),
+        }
     lines = [f"🎥 {streamer}: {config.credit(name)}"]
     if meta.get("setup_line"):
         lines.append(str(meta["setup_line"]))
-    campaign = meta.get("campaign_link")
     if campaign:
         lines.append(str(campaign))
     tags = _hashtags(meta) + [str(t) for t in meta.get("campaign_tags", [])]
