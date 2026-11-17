@@ -253,6 +253,7 @@ def judge_clip(
             ok=out["ok"],
             why=out["why"],
             score=out["sc"],
+            cam_xy=out.get("cm"),
         )
     except Exception as e:  # noqa: BLE001
         log.warning("judge failed (%s); using heuristic", e)

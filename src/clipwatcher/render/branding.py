@@ -46,9 +46,22 @@ def _draw_centered(draw: ImageDraw.ImageDraw, box: tuple[int, int], text: str, f
     draw.text((w / 2, h / 2), text, font=font, fill=fill, anchor="mm")
 
 
+def _strip_emoji(text: str) -> str:
+    import unicodedata
+
+    return "".join(
+        c
+        for c in text
+        if unicodedata.category(c) != "So" and c not in "\u200d\ufe0f\ufe0e" and not 0x1F000 <= ord(c)
+    )
+
+
 def hook_pill(text: str, out: Path | None = None) -> Image.Image:
-    """Rounded black pill, 96 px high, at most 1000 px wide. Saved to ``out`` when given."""
-    text = text.strip().upper()
+    """Rounded black pill, 96 px high, at most 1000 px wide. Saved to ``out`` when given.
+
+    Emoji are dropped: the pill font has no emoji glyphs and drew an empty box (they stay in the title).
+    """
+    text = " ".join(_strip_emoji(text).split()).upper()
     size = 60
     font = load_font(size)
     while size > 20 and _text_w(font, text) > 1000 - 64:

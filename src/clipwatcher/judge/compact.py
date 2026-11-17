@@ -41,9 +41,10 @@ OUTPUT_SCHEMA: dict[str, Any] = {
             "required": ["sp", "mu", "gb"],
             "additionalProperties": False,
         },
+        "cm": {"type": "array", "items": {"type": "number"}},
         "why": {"type": "string"},
     },
-    "required": ["ok", "sc", "t0", "t1", "pk", "hk", "tt", "ds", "fl", "why"],
+    "required": ["ok", "sc", "t0", "t1", "pk", "hk", "tt", "ds", "fl", "cm", "why"],
     "additionalProperties": False,
 }
 
@@ -322,7 +323,7 @@ def normalize_output(data: dict[str, Any], *, login: str, platform: str, dur: fl
 
     Raises ValueError when a required key is missing or the hook/title is empty (caller falls back).
     """
-    missing = [k for k in OUTPUT_SCHEMA["required"] if k not in data and k != "pk"]  # pk is optional
+    missing = [k for k in OUTPUT_SCHEMA["required"] if k not in data and k not in ("pk", "cm")]  # optional
     if missing:
         raise ValueError(f"missing keys {missing}")
     if not str(data["hk"]).strip() or not str(data["tt"]).strip():
@@ -336,6 +337,14 @@ def normalize_output(data: dict[str, Any], *, login: str, platform: str, dur: fl
     pk = data.get("pk")
     pk = round(min(max(float(pk), t0), t1), 1) if isinstance(pk, (int, float)) else None
     ds = build_description(str(data.get("ds", "")).split("\n"), login, platform)
+    cm = data.get("cm")
+    cm = (
+        (round(float(cm[0]), 3), round(float(cm[1]), 3))
+        if isinstance(cm, list)
+        and len(cm) == 2
+        and all(isinstance(v, (int, float)) and 0 <= v <= 1 for v in cm)
+        else None
+    )
     reject = config.global_config().get("judge", {}).get("reject_flags", ["sp", "mu"])
     ok = bool(data.get("ok", False)) and not any(fl[k] for k in reject if k in fl)
     return {
@@ -348,5 +357,6 @@ def normalize_output(data: dict[str, Any], *, login: str, platform: str, dur: fl
         "tt": _cap(data.get("tt", ""), CAPS["tt"]),
         "ds": ds,
         "fl": fl,
+        "cm": cm,
         "why": _cap(data.get("why", ""), CAPS["why"]),
     }

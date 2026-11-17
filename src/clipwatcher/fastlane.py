@@ -333,7 +333,15 @@ class FastLane:
         from . import layout
         from .render.captions import caption_style
 
-        lay = await self._timed("layout", timings, layout.resolve, src, self.streamer, peak_s=peak_media)
+        lay = await self._timed(
+            "layout",
+            timings,
+            layout.resolve,
+            src,
+            self.streamer,
+            peak_s=peak_media,
+            cam_hint=getattr(jr, "cam_xy", None),
+        )
         short = await self._timed(
             "render_short", timings, self.steps.render_short, src, t0_s, dur, work / "short_9x16.mp4",
             clip_id=cid, streamer=self.streamer, words=words, hook=jr.hook_text,

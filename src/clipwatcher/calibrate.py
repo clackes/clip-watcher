@@ -35,7 +35,7 @@ DEFAULT_FACE_MODEL = config.ROOT / "models" / "blaze_face_short_range.tflite"
 
 # --------------------------------------------------------------------------- geometry (pure)
 FULL_CAM_FACE_H = 0.18  # face taller than this share of the frame = full-screen camera
-SAME_CAM_FACES = 3.0  # two faces closer than this many face widths are in the same webcam
+SAME_CAM_FACES = 1.0  # two face clusters closer than this many face widths are one face
 
 
 @dataclass
@@ -138,6 +138,44 @@ def gameplay_avoiding(cam: Rect | None, fw: int, fh: int) -> Rect:
         h = _even(w / GAME_RATIO)
         return 0, _even((fh - h) / 2), w, h
     return best
+
+
+def face_near(
+    frames: list[Path], detector: FaceDetector, hint: tuple[float, float], fw: int, fh: int
+) -> Box | None:
+    """Face inside the webcam the judge pointed at, searched on a 2x zoom of that area (small, dark cams
+    the full-frame pass misses). None when nothing is found there either."""
+    from PIL import Image
+
+    cw, ch = int(0.3 * fw), int(0.45 * fh)
+    x0 = int(min(max(0, hint[0] * fw - cw / 2), fw - cw))
+    y0 = int(min(max(0, hint[1] * fh - ch / 2), fh - ch))
+    boxes: list[Box] = []
+    for i, f in enumerate(frames):
+        with Image.open(f) as im:
+            k = im.width / fw
+            crop = im.crop((int(x0 * k), int(y0 * k), int((x0 + cw) * k), int((y0 + ch) * k)))
+            crop = crop.resize((crop.width * 2, crop.height * 2))
+            q = f.with_name(f"near_{i:02d}.png")
+            crop.save(q)
+        boxes += [
+            (x0 + bx / (2 * k), y0 + by / (2 * k), bw / (2 * k), bh / (2 * k))
+            for bx, by, bw, bh in detector(q)
+        ]
+    return dominant_face(boxes, len(frames))
+
+
+def gameplay_between(cams: list[Rect], fw: int, fh: int) -> Rect | None:
+    """2:1 gameplay between the webcam columns on the left and right edges (multi-cam streams: the other
+    people's cams stay out of the Short). None when that leaves less than 40% of the width."""
+    left = max([x + w for x, _, w, _ in cams if x + w / 2 < fw / 2], default=0)
+    right = min([x for x, _, w, _ in cams if x + w / 2 >= fw / 2], default=fw)
+    w = _even(right - left)
+    if w < 0.4 * fw:
+        return None
+    h = _even(min(w / GAME_RATIO, fh))
+    w = _even(h * GAME_RATIO)
+    return _even(left + (right - left - w) / 2), _even((fh - h) / 2), w, h
 
 
 def compute_rects(boxes: list[Box], fw: int, fh: int, n_frames: int) -> Rects:
@@ -254,7 +292,9 @@ def sample_frames(media: Path, out_dir: Path, n: int = 10) -> list[tuple[float, 
     return res
 
 
-def frames_at(media: Path, out_dir: Path, times: list[float], height: int = 360) -> list[tuple[float, Path]]:
+def frames_at(
+    media: Path, out_dir: Path, times: list[float], height: int | None = 360
+) -> list[tuple[float, Path]]:
     """Downscaled PNG frames at the given times (s), for motion checks around the peak."""
     out_dir.mkdir(parents=True, exist_ok=True)
     res = []
@@ -262,7 +302,7 @@ def frames_at(media: Path, out_dir: Path, times: list[float], height: int = 360)
         p = out_dir / f"peak_{i:02d}.png"
         r = subprocess.run(
             [config.ffmpeg_bin(), "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{max(0.0, t):.3f}",
-             "-i", str(media), "-frames:v", "1", "-vf", f"scale=-2:{height}", str(p)],
+             "-i", str(media), "-frames:v", "1", *(["-vf", f"scale=-2:{height}"] if height else []), str(p)],
             capture_output=True,
         )  # fmt: skip
         if r.returncode == 0 and p.exists():
@@ -276,8 +316,9 @@ def stable_faces(
     """One face per distinct webcam on screen, most-seen first.
 
     A face cluster counts when it is seen in >= min_share of the frames and is at least min_h of the frame
-    tall (ID-card photos and HUD portraits are smaller). A face closer than SAME_CAM_FACES face widths to a
-    more-seen face is in the same webcam (a poster, a shelf object, a second detection) and is dropped.
+    tall (ID-card photos and HUD portraits are smaller). Clusters closer than SAME_CAM_FACES face widths are
+    one face. Stacked cams sit close together, so objects detected as faces inside one cam are not dropped
+    here: layout.reacting_face drops faces that are not detected steadily around the peak.
     """
     need = max(1, math.ceil(min_share * n_frames))
     out: list[Box] = []
@@ -296,7 +337,7 @@ def stable_faces(
     return out
 
 
-def face_motion(frames: list[Path], face: Box, fw: int) -> float:
+def face_motion(frames: list[Path], face: Box, fw: int, pad: float = 0.5) -> float:
     """Mean frame-to-frame pixel change around a face (source px box; frames may be downscaled).
 
     The streamer who reacts (laughs, shouts, jumps) moves; a co-streamer watching does not.
@@ -308,7 +349,7 @@ def face_motion(frames: list[Path], face: Box, fw: int) -> float:
         with Image.open(f) as im:
             k = im.width / fw
             x, y, w, h = face
-            pad_w, pad_h = w * 0.5, h * 0.5
+            pad_w, pad_h = w * pad, h * pad
             box = (
                 int(max(0, (x - pad_w) * k)), int(max(0, (y - pad_h) * k)),
                 int(min(im.width, (x + w + pad_w) * k)), int(min(im.height, (y + h + pad_h) * k)),

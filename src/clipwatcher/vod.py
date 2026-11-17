@@ -171,7 +171,9 @@ def process_candidate(
     tpl = _mod("clipwatcher.render.template")
     clip_dir = work / clip_id
     clip_dir.mkdir(parents=True, exist_ok=True)
-    lay = _mod("clipwatcher.layout").resolve(src, streamer, peak_s=peak_media)
+    lay = _mod("clipwatcher.layout").resolve(
+        src, streamer, peak_s=peak_media, cam_hint=getattr(jr, "cam_xy", None)
+    )
     meta["layout"] = lay.source
     meta["captions"] = _mod("clipwatcher.render.captions").caption_style(clip_id)
     short = tpl.render_short(

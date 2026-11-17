@@ -259,3 +259,11 @@ def test_cold_open_starts_with_the_sentence():
     assert sentence_start(23.5, ws) == 23.5  # pause after a finished sentence: unchanged
     long = [Word(10.0 + i * 0.3, 10.25 + i * 0.3, "word") for i in range(30)]  # one 9 s run-on sentence
     assert sentence_start(17.0, long) == 16.82  # too far back: only the word in progress
+
+
+def test_hook_pill_drops_emoji():
+    """Regression: the pill font has no emoji, "HE ACTUALLY SCORED 💀" showed an empty box."""
+    from clipwatcher.render.branding import _strip_emoji
+
+    assert " ".join(_strip_emoji("He didn't see it 💀").split()) == "He didn't see it"
+    assert _strip_emoji("WAIT… 😳🔥").strip() == "WAIT…"

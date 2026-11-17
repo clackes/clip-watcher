@@ -79,19 +79,39 @@ def match_scene(
 PEAK_OFFSETS = (-1.5, -1.0, -0.5, 0.0, 0.5, 1.0)
 
 
-def reacting_face(media: Path, faces: list, fw: int, peak_s: float, detector, td: Path):
-    """Of several webcam faces, the one moving most around peak_s (media seconds)."""
-    peak = calibrate.frames_at(Path(media), td / "peak", [peak_s + o for o in PEAK_OFFSETS])
+STATIC_MOTION = 3.0  # in-box change below this = a still object taken for a face (posters, vests on a wall)
+HINT_RADIUS = 0.25  # the judge's cam point must be this close (share of frame width) to a face
+
+
+def reacting_face(media: Path, faces: list, fw: int, fh: int, peak_s: float | None, hint, td: Path):
+    """Of several webcam faces, the one of whoever makes the moment.
+
+    hint: the judge's (x, y) 0-1 centre of that webcam (it sees the frames and knows who reacts); the nearest
+    face wins. Otherwise the face changing most inside its own box around peak_s (laughing, shouting),
+    after dropping still objects the detector took for faces.
+    """
+    if hint:
+        hx, hy = hint[0] * fw, hint[1] * fh
+        d = [((f[0] + f[2] / 2 - hx) ** 2 + (f[1] + f[3] / 2 - hy) ** 2) ** 0.5 for f in faces]
+        i = min(range(len(faces)), key=d.__getitem__)
+        if d[i] <= HINT_RADIUS * fw:
+            log.info("multi-cam: %d faces, judge picked %s", len(faces), faces[i][:2])
+            return faces[i]
+    if peak_s is None:
+        return faces[0]
+    peak = calibrate.frames_at(Path(media), td / "peak", [peak_s + o for o in PEAK_OFFSETS], height=None)
     if len(peak) < 3:
         return faces[0]
-    scores = [calibrate.face_motion([p for _, p in peak], f, fw) for f in faces]
+    scores = [calibrate.face_motion([p for _, p in peak], f, fw, pad=0.1) for f in faces]
+    live = [i for i, v in enumerate(scores) if v >= STATIC_MOTION] or list(range(len(faces)))
     log.info("multi-cam: %d faces, motion %s", len(faces), [round(v, 1) for v in scores])
-    return faces[max(range(len(faces)), key=scores.__getitem__)]
+    return faces[max(live, key=scores.__getitem__)]
 
 
 def resolve(
-    media: Path, streamer: str, *, n_frames: int = 4, detector=None, peak_s: float | None = None
-) -> Layout:
+    media: Path, streamer: str, *, n_frames: int = 4, detector=None, peak_s: float | None = None,
+    cam_hint: tuple[float, float] | None = None,
+) -> Layout:  # fmt: skip
     scfg = config.streamer(streamer)
     sc = scenes(scfg)
     if scfg.get("has_webcam") is False and not scfg.get("layouts"):
@@ -124,9 +144,15 @@ def resolve(
             for f in calibrate.stable_faces(boxes, len(frames), fw, fh)
             if f[3] <= calibrate.FULL_CAM_FACE_H * fh
         ]
-        multi = len(cams) >= 2 and peak_s is not None
+        multi = len(cams) >= 2 and (peak_s is not None or cam_hint is not None)
         if multi:
-            face = reacting_face(media, cams, fw, float(peak_s), detector, Path(td))
+            face = reacting_face(media, cams, fw, fh, peak_s, cam_hint, Path(td))
+        judge_cam = False
+        if face is None and cam_hint:  # the judge sees a webcam the detector missed: look closer there
+            face = calibrate.face_near([p for _, p in frames], detector, cam_hint, fw, fh)
+            if face is None:  # still nothing: a typical webcam face at the judge's point
+                fs = 0.09 * fh
+                face, judge_cam = (cam_hint[0] * fw - fs / 2, cam_hint[1] * fh - fs / 2, fs, fs), True
     full_cam = bool(face) and face[3] > calibrate.FULL_CAM_FACE_H * fh
     fstr = calibrate.rect_str(tuple(int(v) for v in face)) if face and not full_cam else None  # type: ignore[arg-type]
     hit = match_scene(face, full_cam, sc)
@@ -148,17 +174,32 @@ def resolve(
             )
     if face is None or full_cam:
         return Layout(False, None, None, "fullcam" if full_cam else "no-face")
-    if multi:  # the reacting cam is not a confirmed scene: crop it from its face
+    if judge_cam and not hit:
         cam = calibrate.facecam_from_face(face, fw, fh)
         return Layout(
             True,
             calibrate.rect_str(cam),
             calibrate.rect_str(calibrate.gameplay_avoiding(cam, fw, fh)),
+            "judge-cam",
+            None,
+        )
+    if multi:  # the reacting cam is not a confirmed scene: crop it from its face
+        cam = calibrate.facecam_from_face(face, fw, fh)
+        others = [calibrate.facecam_from_face(f, fw, fh) for f in cams]
+        game = calibrate.gameplay_between(others, fw, fh) or calibrate.gameplay_avoiding(cam, fw, fh)
+        return Layout(
+            True,
+            calibrate.rect_str(cam),
+            calibrate.rect_str(game),
             "multi-cam",
             fstr,
         )
-    rects = calibrate.compute_rects(boxes, fw, fh, len(frames))
     # New, unconfirmed scene: still rendered, but flagged in meta so an operator checks the crop.
+    cam = calibrate.facecam_from_face(face, fw, fh)
     return Layout(
-        True, calibrate.rect_str(rects.facecam), calibrate.rect_str(rects.gameplay), "auto-new", fstr
+        True,
+        calibrate.rect_str(cam),
+        calibrate.rect_str(calibrate.gameplay_avoiding(cam, fw, fh)),
+        "auto-new",
+        fstr,
     )

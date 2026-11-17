@@ -76,7 +76,7 @@ def test_two_webcams_pick_the_one_reacting_at_the_peak(monkeypatch, tmp_path):
     monkeypatch.setattr(
         layout.calibrate, "sample_frames", lambda m, d, n: [(float(i), still) for i in range(n)]
     )
-    monkeypatch.setattr(layout.calibrate, "frames_at", lambda m, d, ts, height=360: peak)
+    monkeypatch.setattr(layout.calibrate, "frames_at", lambda m, d, ts, height=None: peak)
     faces = [(100.0, 600.0, 90.0, 100.0), (1700.0, 100.0, 90.0, 100.0)]
     lay = layout.resolve(tmp_path / "x.mp4", "x", detector=lambda p: faces, peak_s=10.0)
     assert lay.source == "multi-cam"
@@ -86,13 +86,70 @@ def test_two_webcams_pick_the_one_reacting_at_the_peak(monkeypatch, tmp_path):
     assert layout.resolve(tmp_path / "x.mp4", "x", detector=lambda p: faces).source == "auto-new"
 
 
-def test_second_face_inside_the_same_webcam_is_not_another_cam():
-    """Regression (officermesser): a shelf object next to the streamer's face was taken for a second cam."""
+def test_still_object_next_to_the_face_is_not_the_cam(monkeypatch, tmp_path):
+    """Regression (officermesser): vests on the wall next to the face were taken for a second cam."""
+    from PIL import Image, ImageDraw
+
+    real, vests = (241.0, 145.0, 88.0, 88.0), (408.0, 102.0, 116.0, 116.0)
+    peak = []
+    for i in range(6):  # the face changes every frame, the vests never do
+        q = tmp_path / f"p{i}.png"
+        im = Image.new("RGB", (1920, 1080), (90, 90, 90))
+        ImageDraw.Draw(im).rectangle([250, 150, 320, 220], fill=(255, 255, 255) if i % 2 else (0, 0, 0))
+        im.save(q)
+        peak.append((float(i), q))
+    monkeypatch.setattr(layout.calibrate, "frames_at", lambda m, d, ts, height=None: peak)
+    assert layout.reacting_face(tmp_path / "x.mp4", [vests, real], 1920, 1080, 10.0, None, tmp_path) == real
+
+
+def test_judge_hint_picks_the_cam(tmp_path):
+    """The judge sees who makes the moment: its cam point beats motion (ishowspeed, stacked cams)."""
+    speed, guest = (122.0, 428.0, 105.0, 105.0), (120.0, 592.0, 100.0, 100.0)
+    right = (1667.0, 624.0, 110.0, 110.0)
+    hint = (0.08, 0.44)  # centre of the top-left cam
+    assert (
+        layout.reacting_face(tmp_path / "x", [right, guest, speed], 1920, 1080, None, hint, tmp_path) == speed
+    )
+    far = (0.5, 0.5)  # nowhere near a face: falls back (no peak -> first face)
+    assert layout.reacting_face(tmp_path / "x", [right, guest], 1920, 1080, None, far, tmp_path) == right
+
+
+def test_stacked_small_cams_are_separate():
+    """Regression (ishowspeed Rocket League): two cams stacked 160 px apart were merged into one."""
     from clipwatcher import calibrate
 
-    boxes = [(233, 144, 91, 91), (399, 85, 131, 131), (241, 141, 94, 94), (416, 119, 101, 101)]
-    boxes += [(241, 146, 84, 84), (249, 151, 84, 84)]
-    faces = calibrate.stable_faces(boxes, 4, 1920, 1080)
-    assert len(faces) == 1 and faces[0][0] < 300
-    tiny = [(1500, 900, 30, 30)] * 4  # ID-card photo in the HUD
-    assert len(calibrate.stable_faces(boxes + tiny, 4, 1920, 1080)) == 1
+    boxes = [(122, 428, 107, 107), (129, 594, 101, 101), (122, 425, 103, 103), (124, 591, 98, 98)]
+    assert len(calibrate.stable_faces(boxes, 4, 1920, 1080)) == 2
+
+
+def test_gameplay_leaves_out_every_cam():
+    """Multi-cam: the gameplay crop sits between the cam columns (owner: other cams need not be shown)."""
+    from clipwatcher import calibrate
+
+    cams = [(0, 380, 330, 146), (0, 540, 330, 146), (1600, 560, 320, 142), (1640, 400, 280, 124)]
+    x, y, w, h = calibrate.gameplay_between(cams, 1920, 1080)
+    assert x >= 330 and x + w <= 1600 and w == 2 * h
+    assert calibrate.gameplay_between([(0, 0, 900, 400), (1000, 0, 900, 400)], 1920, 1080) is None
+
+
+def test_judge_point_finds_a_small_cam_the_full_pass_missed(monkeypatch, tmp_path):
+    """Regression (myth, kaicenat): small dark cams gave no-face and a Short without the streamer."""
+    from PIL import Image
+
+    frame = tmp_path / "f.png"
+    Image.new("RGB", (1920, 1080)).save(frame)
+    monkeypatch.setattr(layout.config, "streamer", lambda n: {})
+    monkeypatch.setattr(
+        layout.calibrate, "sample_frames", lambda m, d, n: [(float(i), frame) for i in range(n)]
+    )
+
+    def det(p):  # only the 2x zoom around the judge's point finds the face
+        return [(200.0, 180.0, 80.0, 80.0)] if p.name.startswith("near_") else []
+
+    lay = layout.resolve(tmp_path / "x.mp4", "x", detector=det, cam_hint=(0.8, 0.5))
+    assert lay.has_webcam and lay.source == "auto-new"
+    w, h, x, y = (int(v) for v in lay.cam.split(":"))
+    assert x < 1368 < x + w  # 2x-zoom box mapped back: 1248 + (200 + 40) / 2
+    lay = layout.resolve(tmp_path / "x.mp4", "x", detector=lambda p: [], cam_hint=(0.8, 0.5))
+    assert lay.source == "judge-cam" and lay.has_webcam
+    assert layout.resolve(tmp_path / "x.mp4", "x", detector=lambda p: []).source == "no-face"
