@@ -61,7 +61,7 @@ detector:                   # D3
     raga: 1
     "ma che": 1
     madonna: 1
-  laughter_regex: '(?i)\b(a?h+a+){2,}h?\b'
+  laughter_regex: '(?i)\b((a?h+a+){2,}h?|(j+a+){2,}j?|(k){4,}|x+d+|(rs){2,})\b'   # ahah, jajaja, kkkk, xdd, rsrs
   other_weight: 0.5
 
 vod:                        # Day-0 VOD lane defaults (21A)

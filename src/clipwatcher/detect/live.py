@@ -13,7 +13,16 @@ import re
 from collections import Counter, deque
 
 from clipwatcher import config
-from clipwatcher.detect.detector import _FLOORS, _kw_patterns, _median, _norm, _Rec, _Robust, prompted_share
+from clipwatcher.detect.detector import (
+    _FLOORS,
+    CLIP_LINK,
+    _kw_patterns,
+    _median,
+    _norm,
+    _Rec,
+    _Robust,
+    prompted_share,
+)
 from clipwatcher.models import Candidate, ChatMessage
 
 _SUB_BOMB_MIN = 5
@@ -114,6 +123,8 @@ class LiveDetector:
             cands.append(self._wmap[k] / rarity)
         if self._laugh and self._laugh.search(text):
             cands.append(2.0)
+        if CLIP_LINK.search(text):
+            cands.append(3.0)
         return max(cands) if cands else self.other_weight
 
     def _ingest(self, m: ChatMessage, sec: int) -> None:

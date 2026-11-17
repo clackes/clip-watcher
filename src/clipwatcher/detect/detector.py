@@ -26,6 +26,9 @@ class _Rec:
     norm: str
 
 
+CLIP_LINK = re.compile(r"(?i)(clips\.twitch\.tv/|twitch\.tv/\w+/clip/|kick\.com/\w+/clips?/)")
+
+
 def prompted_share(window: Sequence[_Rec], other_weight: float) -> float:
     """Share of chatters repeating keyword-less messages that 3+ chatters typed (copy-paste).
 
@@ -79,6 +82,8 @@ def _build_records(
             cands = [wmap[k] / rarity[k] for k in cache[m.text]]
             if laugh and laugh.search(m.text):
                 cands.append(2.0)
+            if CLIP_LINK.search(m.text):  # a viewer pasting a clip of it: strongest chat signal
+                cands.append(3.0)
             wcache[m.text] = max(cands) if cands else other_weight
         toks = m.text.split()
         out.append((m.ts_ms // 1000, _Rec(m.user, wcache[m.text], len(toks) <= 3, _norm(m.text))))
