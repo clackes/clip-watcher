@@ -28,13 +28,17 @@ def test_transcript_compact_groups_phrases_and_drops_bloat():
         [5.0, 6.0, "there"],
     ]
     assert compact.serialize_transcript_compact([]) == []
+    phrases = [[0.0, 4.0, "[music]"], [4.0, 9.0, "baila conmigo"], [9.0, 13.0, "[music]"]]
+    assert len(compact.serialize_transcript_compact(phrases)) == 3
 
 
 def test_chat_compact_counts_without_usernames():
     lines = ["a: KEKW", "b: kekw", "c: NO WAY", "a: KEKW", "d: " + "x" * 80]
     ch = compact.compact_chat(lines)
     assert ch["n"] == 5 and ch["u"] == 4
-    assert ch["top"][0] == ["KEKW", 3] and len(ch["top"][-1][0]) <= 40
+    assert ch["top"][0] == ["KEKW", 3] and len(ch["top"][-1][0]) <= 32
+    noisy = compact.compact_chat(["a: !time", "b: @c lol", "c: lol"] + [f"u{i}: one {i}" for i in range(9)])
+    assert noisy["top"][0] == ["lol", 2] and len(noisy["top"]) == 5 and noisy["n"] == 11
     msgs = [ChatMessage(1, "u1", "LUL"), ChatMessage(2, "u2", "LUL")]
     assert compact.compact_chat(msgs) == {"n": 2, "u": 2, "top": [["LUL", 2]]}
 

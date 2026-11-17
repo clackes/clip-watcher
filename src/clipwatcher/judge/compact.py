@@ -90,6 +90,11 @@ def serialize_transcript_compact(transcript: Any) -> list[list[Any]]:
             cur.clear()
 
     for s, e, t in _words_from(transcript):
+        if " " in t:  # already a phrase (segment-level input): keep it as its own entry
+            flush()
+            cur.append((s, e, t))
+            flush()
+            continue
         if cur and (s - cur[-1][1] > PHRASE_GAP_S or len(cur) >= PHRASE_MAX_WORDS):
             flush()
         cur.append((s, e, t))
@@ -105,10 +110,14 @@ def _norm_msg(text: str, max_len: int) -> str:
     return t if len(t) <= max_len else t[: max_len - 1] + "…"
 
 
-def compact_chat(chat: Iterable[Any], top: int = 12, max_len: int = 40) -> dict[str, Any]:
+_MENTION = re.compile(r"^(@\S+[\s,:]*)+")
+
+
+def compact_chat(chat: Iterable[Any], top: int = 12, max_len: int = 32, singles: int = 4) -> dict[str, Any]:
     """{"n": messages, "u": unique chatters, "top": [[message, count], ...]}; no usernames, no repeats.
 
-    Accepts "user: text" lines (what the lanes build) or ChatMessage objects.
+    Repeated messages (the reaction signal) come first; at most `singles` one-off messages fill in.
+    Commands (!time) are dropped and leading @mentions stripped. Accepts "user: text" lines or ChatMessages.
     """
     users: set[str] = set()
     counts: Counter[str] = Counter()
@@ -119,15 +128,17 @@ def compact_chat(chat: Iterable[Any], top: int = 12, max_len: int = 40) -> dict[
             user, text = getattr(m, "user", ""), m.text
         else:
             user, _, text = str(m).partition(": ") if ": " in str(m) else ("", "", str(m))
-        text = text.strip()
-        if not text:
+        text = _MENTION.sub("", text.strip())
+        if not text or text.startswith("!"):
             continue
         n += 1
         users.add(user)
         key = " ".join(text.casefold().split())
         counts[key] += 1
         first.setdefault(key, text)
-    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:top]
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    rep = [kv for kv in ranked if kv[1] > 1]
+    ranked = (rep + [kv for kv in ranked if kv[1] == 1][:singles])[:top]
     return {"n": n, "u": len(users), "top": [[_norm_msg(first[k], max_len), c] for k, c in ranked]}
 
 

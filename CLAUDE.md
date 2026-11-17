@@ -44,8 +44,11 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   scripts/build_brand_assets.py) | dead zone 1536-1920. Credit {\an9\pos(1060,282)}. Background ambient blur or
   frame_gradient_<accent>.png (-loop 1); accent red/yellow/cyan from hash(clip_id). No webcam -> 16:9 frame
   1080x608 centred in y270-1290.
-- D6 Judge: faster-whisper int8 word timestamps on candidate windows + 6 keyframes at 480p. anthropic SDK,
-  prompt caching + structured outputs. Screen -> judge -> borderline. Heuristic fallback on API errors.
+- D6 Judge (v2, 17 Nov): one static cached system prompt (prompts/judge_v2.md, no per-clip variables) + 8
+  labelled 480x270 JPEG q65 frames + compact JSON {meta,tr,ch,task}; short-key output {ok,sc,t0,t1,hk,tt,ds,
+  fl{sp,mu,gb},why}, caps/credit enforced in code (judge/compact.py). Thinking off, effort low (judge.* in
+  global.yaml). judge.mode single | two_stage | off. Owner asked for spoiler/music/gambling flags; flagged
+  clips are rejected (judge.reject_flags). Heuristic fallback on API errors. Cost: scripts/judge_cost_benchmark.py.
 - D7 Telegram queue with atomic SQLite claim lock (15 min TTL), audit log, staging/<clip_id>/, staging/approved/,
   staging/published_clips.json.
 - D8 Publishing: YouTube Data API + Instagram Graph API from server, APPROVED only. TikTok/campaign forms by a
@@ -64,8 +67,9 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   CLI `python -m clipwatcher.render`.
 - `judge/transcribe.py` `transcribe(media, start_s, dur_s, language) -> list[Word]` (faster-whisper optional).
   `judge/frames.py` `keyframes(media, start_s, dur_s, n=6, height=480) -> list[Path]`.
-  `judge/claude.py` `screen(...)`, `judge_candidate(cand, words, chat_lines, frames, *, title, game, client=None)
-  -> JudgeResult` (heuristic fallback). Prompts in prompts/.
+  `judge/claude.py` `screen(...)` (legacy), `judge_candidate(cand, words, chat_lines, frames, *, title, game,
+  client=None) -> JudgeResult` (now runs v2) and `judge_clip(cand, words, chat_lines, [(t, jpg)], *, game,
+  platform, language, task)`. `judge/compact.py` serializers + schema; `judge/frames.py keyframes_lowres`.
 - `queue/db.py` ClipDB (SQLite: clips, jobs, audit; atomic claim). `queue/staging.py`
   `stage_package(clip_id, short, clean, meta) -> Path`, `mark_approved(...)`. `queue/telegram_bot.py`.
 - `publish/youtube.py` behind DRY_RUN.

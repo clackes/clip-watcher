@@ -92,7 +92,7 @@ streamers:
   kenetgr:
     platform: kick
     url: https://kick.com/kenetgr
-    language: en
+    language: es  # whisper detected Spanish on a real clip (17 Nov)
     campaign_link: null
     delay_s: 8
     keywords: {}
