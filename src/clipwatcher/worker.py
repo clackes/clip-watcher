@@ -119,13 +119,14 @@ def h_render(p: dict[str, Any], w: Worker) -> list[dict[str, Any]]:
     ts, te, co = pl.t0, pl.t1, pl.cold_open  # late start + cold open; captions re-timed
     words = [Word(w.start - ts, w.end - ts, w.text) for w in words if w.end > ts and w.start < te]
     start, dur = start + ts, te - ts
-    hook = j.get("hook_text") or "WAIT FOR IT"
+    hook = j.get("hook_text") or "Chat was NOT ready for this 💀"
+    beats = cold_open.clip_beats(j, pl)
     clip_id = f"{p['streamer']}-{int(c.start_s * 1000)}"
     if not short.exists():
         w.atomic(short, lambda tmp: render_short(
             Path(p["media"]), start, dur, tmp, clip_id=clip_id, streamer=p["streamer"], words=words,
             hook=hook, has_webcam=bool(scfg.get("has_webcam", True)), cam=scfg.get("facecam_rect"),
-            game=scfg.get("gameplay_rect"), profile=w.profile, cold_open=co,
+            game=scfg.get("gameplay_rect"), profile=w.profile, cold_open=co, beats=beats,
         ))  # fmt: skip
     if not clean.exists():
         w.atomic(clean, lambda tmp: render_clean(Path(p["media"]), start, dur, tmp, profile=w.profile))

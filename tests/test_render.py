@@ -103,9 +103,43 @@ def test_short(synth_src, tmp_path, style, webcam, captions):
     render_short(
         synth_src, 8.0, 3.0, out, clip_id="t", streamer="tester", words=demo_words(3),
         hook="HE DID NOT SEE THAT", style=style, accent="cyan", has_webcam=webcam, profile="cpu_live",
-        captions=captions,
+        captions=captions, layout="stack",
     )  # fmt: skip
     check_short(out, 3.0)
+
+
+@pytest.mark.ffmpeg
+@pytest.mark.parametrize("webcam", [True, False])
+def test_split_short_with_beats_and_cold_open(synth_src, tmp_path, webcam):
+    out = tmp_path / "split.mp4"
+    beats = [(1.0, "hype", "*SUCCESS*"), (2.5, "fail", "*FAIL*"), (3.5, "shock", "")]
+    render_short(
+        synth_src, 4.0, 4.0, out, clip_id="sp", streamer="tester", words=demo_words(4), hook="unused",
+        has_webcam=webcam, profile="cpu_live", captions="word", cold_open=(2.5, 1.5), beats=beats,
+        layout="split",
+    )  # fmt: skip
+    check_short(out, 5.5)
+
+
+def test_split_helpers():
+    from clipwatcher.render.template import fit_crop, zoom_expr
+
+    assert fit_crop((0, 304, 494, 220), 1080 / 960) == (124, 304, 246, 220)  # wide cam -> centre strip
+    x, y, w, h = fit_crop((0, 304, 494, 220), 1080 / 960, centre=(10, 400))
+    assert x == 0 and w == 246  # clamped inside the cam
+    assert zoom_expr(0, 1.15, []) is None
+    z = zoom_expr(2.0, 1.15, [5.0])
+    assert "lt(it,2.000)" in z and "between(it,5.000,5.450)" in z
+
+
+def test_word_captions_one_word_and_labels_replace_words():
+    words = [Word(0.0, 0.3, "no"), Word(0.35, 0.6, "way"), Word(1.0, 1.3, "bro"), Word(3.0, 3.2, "ok")]
+    ass = build_ass(words, 4.0, style="word", y=960, beats=[(0.9, "fail", "*FAIL*"), (2.0, "shock", "")])
+    events = [ln for ln in ass.splitlines() if ln.startswith("Dialogue")]
+    assert any("*FAIL*" in e and "&H2A2AFF&" in e for e in events)
+    assert not any(e.endswith("BRO") for e in events)  # hidden under the label
+    assert any(e.endswith("NO") and "&H00E6FF&" in e for e in events)  # emphasis word in yellow
+    assert all("pos(540,960)" in e for e in events)
 
 
 @pytest.mark.ffmpeg

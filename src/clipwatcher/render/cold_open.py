@@ -213,3 +213,14 @@ def plan(
     if not (0 <= t0 < t1 <= win_dur + 0.5 and t1 - t0 >= 12):
         t0, t1 = 0.0, win_dur
     return Plan(t0, t1, react, window(react, t0, t1 - t0, words))
+
+
+def clip_beats(jr: Any, pl: Plan) -> list[tuple[float, str, str]]:
+    """Judge beats (window-relative) re-timed to the trimmed clip; [] without a judge."""
+    get = jr.get if isinstance(jr, dict) else lambda k, d=None: getattr(jr, k, d)
+    out = []
+    for b in get("beats") or []:
+        t, k, lb = float(b[0]), str(b[1]), str(b[2])
+        if pl.t0 <= t <= pl.t1:
+            out.append((round(t - pl.t0, 2), k, lb))
+    return out

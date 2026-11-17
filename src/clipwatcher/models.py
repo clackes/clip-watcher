@@ -49,7 +49,7 @@ class JudgeResult:
     visual_context_summary: str
     trim_start_s: float  # relative to the candidate window start
     trim_end_s: float
-    hook_text: str  # 2-6 words
+    hook_text: str  # meme caption for the post, not drawn on the video (judge v2: sentence + emoji)
     title_options: list[str]
     setup_line: str
     reject_reason: str | None = None
@@ -61,6 +61,8 @@ class JudgeResult:
     why: str = ""  # one line for the Telegram approval card
     score: int = 0  # 1-10 viral score
     cam_xy: tuple[float, float] | None = None  # judge: centre (0-1) of the cam of whoever makes the moment
+    # editor beats (t relative to the candidate window, kind hype|fail|shock|funny, label like *FAIL*)
+    beats: list[tuple[float, str, str]] = field(default_factory=list)
 
 
 @dataclass

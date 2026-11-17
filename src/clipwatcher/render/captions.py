@@ -8,6 +8,10 @@ Styles:
 - pop (default): the "scale-up" look of MrBeast-style clippers. Anton, thick black stroke, up to 3 words
   per page on one line, white; the spoken word turns yellow and pops 100% -> 135% -> 125%. Every word is its own positioned event so a growing word scales around its own
   centre instead of pushing the line around.
+- word (default since 17 Nov evening): the split-screen clipper look. One word at a time on the seam between
+  webcam and gameplay, Anton, white with a black stroke; each word pops in 80% -> 110% -> 100%. Shouted
+  words (exclamations, "no", "what", "bro", numbers...) turn yellow. Judge beats show as coloured
+  sound-effect labels (*FAIL* red, *SUCCESS* green) in place of the words.
 """
 
 from __future__ import annotations
@@ -22,7 +26,7 @@ from clipwatcher.render.branding import FONTS_DIR
 
 HIGHLIGHT = "&H00E6FF&"  # #FFE600 in ASS BGR order
 CREDIT_Y = 407  # streamer credit, top-right of the panel (template.PANEL_Y + 12)
-CAPTION_STYLES = ("classic", "bounce", "pop")
+CAPTION_STYLES = ("classic", "bounce", "pop", "word")
 POP_FONT = ("Anton", "Anton-Regular.ttf")
 POP_SIZE = 145  # ASS size: libass fits winAscent+winDescent (1.733 em for Anton) in it -> 72 px caps
 POP_EM = POP_SIZE / 1.733  # glyph em in PlayRes px, used to measure widths with PIL
@@ -34,15 +38,25 @@ POP_ACTIVE = "\\fscx100\\fscy100\\t(0,70,\\fscx135\\fscy135)\\t(70,150,\\fscx125
 # #FFE600 yellow, #00F0FF cyan, #7CFF3A lime, #FF8A1E orange (BGR)
 BOUNCE_COLOURS = ("&H00E6FF&", "&HFFF000&", "&H3AFF7C&", "&H1E8AFF&")
 BOUNCE_POP = "\\fscx70\\fscy70\\t(0,90,\\fscx118\\fscy118)\\t(90,180,\\fscx100\\fscy100)"
+WORD_SIZE = 175  # ~87 px caps
+WORD_POP = "\\fscx80\\fscy80\\t(0,60,\\fscx110\\fscy110)\\t(60,130,\\fscx100\\fscy100)"
+LABEL_POP = "\\fscx60\\fscy60\\t(0,80,\\fscx120\\fscy120)\\t(80,180,\\fscx105\\fscy105)"
+LABEL_S = 0.9
+# label colours per beat kind (BGR): fail red, hype green, shock white, funny yellow
+LABEL_COLOURS = {"fail": "&H2A2AFF&", "hype": "&H3CFF3C&", "shock": "&HFFFFFF&", "funny": "&H00E6FF&"}
+EMPHASIS = frozenset(
+    "no nah what wait bro yes yeah oh omg god why how never insane crazy stop run go dude bruh huh hello "
+    "help please lets let's what's yo wow".split()
+)
 DEMO_TEXT = "NO WAY DID YOU SEE THAT HE JUST WENT ALL IN AND IT ACTUALLY WORKED CHAT GO CRAZY"
 
 
 def caption_style(clip_id: str) -> str:
     """Caption style from render.captions: classic | bounce | pop | ab (stable classic/pop split by clip_id)."""
-    mode = str(config.global_config().get("render", {}).get("captions", "pop"))
+    mode = str(config.global_config().get("render", {}).get("captions", "word"))
     if mode == "ab":
         return ("classic", "pop")[int(hashlib.sha256(f"cap:{clip_id}".encode()).hexdigest(), 16) % 2]
-    return mode if mode in CAPTION_STYLES else "pop"
+    return mode if mode in CAPTION_STYLES else "word"
 
 
 @functools.lru_cache(maxsize=1)
@@ -115,6 +129,38 @@ def build_pop_events(words: list[Word], dur_s: float, y: int = 1495) -> list[str
     return lines
 
 
+def _emphasis(w: Word) -> bool:
+    raw = w.text.strip()
+    t = raw.lower().strip(".,;:?!\"'")
+    return raw.endswith("!") or t in EMPHASIS or any(ch.isdigit() for ch in t)
+
+
+def build_word_events(
+    words: list[Word], dur_s: float, y: int, beats: list[tuple[float, str, str]] | None = None
+) -> list[str]:
+    """One word per event at (540, y); labelled beats replace the words for LABEL_S seconds."""
+    labels = [(t, k, lb) for t, k, lb in beats or [] if lb]
+    busy = [(t, min(t + LABEL_S, dur_s)) for t, _, _ in labels]
+    ws = [w for w in words if any(ch.isalnum() for ch in pop_text(w))]  # no bare '!?' or '[...]'
+    lines = []
+    for i, w in enumerate(ws):
+        s0 = w.start
+        nxt = ws[i + 1].start if i + 1 < len(ws) else dur_s
+        e0 = nxt if nxt - w.end <= 0.6 else w.end + 0.2
+        e0 = min(max(e0, s0 + 0.12), dur_s)
+        if any(a < e0 and s0 < b for a, b in busy):
+            continue
+        colour = "\\c&H00E6FF&" if _emphasis(w) else ""
+        txt = f"{{\\an5\\pos(540,{y}){colour}{WORD_POP}}}{esc(pop_text(w))}"
+        if e0 - s0 >= 0.01:
+            lines.append(f"Dialogue: 0,{ts(s0)},{ts(e0)},Word,,0,0,0,,{txt}")
+    for t, k, lb in labels:
+        c = LABEL_COLOURS.get(k, "&HFFFFFF&")
+        txt = f"{{\\an5\\pos(540,{y})\\c{c}{LABEL_POP}}}{esc(lb)}"
+        lines.append(f"Dialogue: 2,{ts(t)},{ts(min(t + LABEL_S, dur_s))},Word,,0,0,0,,{txt}")
+    return lines
+
+
 def esc(text: str) -> str:
     """Escape ASS override-block delimiters and backslashes."""
     return text.replace("\\", "／").replace("{", "(").replace("}", ")").replace("\n", " ")
@@ -151,7 +197,11 @@ def group_words(
     return groups
 
 
-def build_ass(words: list[Word], dur_s: float, credit: str | None = None, style: str = "classic") -> str:
+def build_ass(
+    words: list[Word], dur_s: float, credit: str | None = None, style: str = "classic", *, y: int = 1495,
+    beats: list[tuple[float, str, str]] | None = None, credit_pos: tuple[int, int, int] | None = None,
+) -> str:  # fmt: skip
+    """credit_pos = (alignment, x, y) of the streamer credit; default top-right of the stack panel."""
     if style not in CAPTION_STYLES:
         raise ValueError(f"bad caption style: {style}")
     bounce = style == "bounce"
@@ -169,6 +219,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 Style: Cap,Montserrat ExtraBold,80,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,{bold},0,0,0,100,100,0,0,1,8,0,5,100,160,0,1
 Style: Pop,Montserrat ExtraBold,92,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,{bold},0,0,0,100,100,0,0,1,10,3,5,100,160,0,1
 Style: Pop3,{POP_FONT[0]},{POP_SIZE},&H00FFFFFF,&H00FFFFFF,&H00000000,&H90000000,0,0,0,0,100,100,1,0,1,8,4,5,60,60,0,1
+Style: Word,{POP_FONT[0]},{WORD_SIZE},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,0,0,0,0,100,100,1,0,1,9,4,5,40,40,0,1
 Style: Credit,Montserrat ExtraBold,36,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,{bold},0,0,0,100,100,0,0,1,4,0,9,100,20,0,1
 
 [Events]
@@ -176,11 +227,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     lines = []
     if credit:
+        an, cx, cy = credit_pos or (9, 1060, CREDIT_Y)
         lines.append(
-            f"Dialogue: 1,{ts(0)},{ts(dur_s)},Credit,,0,0,0,,{{\\an9\\pos(1060,{CREDIT_Y})}}{esc(credit)}"
+            f"Dialogue: 1,{ts(0)},{ts(dur_s)},Credit,,0,0,0,,{{\\an{an}\\pos({cx},{cy})}}{esc(credit)}"
         )
     if style == "pop":
-        return head + "\n".join(lines + build_pop_events(words, dur_s)) + "\n"
+        return head + "\n".join(lines + build_pop_events(words, dur_s, y)) + "\n"
+    if style == "word":
+        return head + "\n".join(lines + build_word_events(words, dur_s, y, beats)) + "\n"
     groups = group_words(words, max_words=2, max_chars=14) if bounce else group_words(words)
     for g, group in enumerate(groups):
         colour = BOUNCE_COLOURS[g % len(BOUNCE_COLOURS)] if bounce else HIGHLIGHT
@@ -200,14 +254,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 else:
                     parts.append(t)
             # Bounce pops the page in once, on its first word; the per-word events after it stay still.
-            pos = "\\an5\\pos(540,1495)" + (BOUNCE_POP if bounce and i == 0 else "")
+            pos = f"\\an5\\pos(540,{y})" + (BOUNCE_POP if bounce and i == 0 else "")
             name = "Pop" if bounce else "Cap"
             lines.append(f"Dialogue: 0,{ts(start)},{ts(end)},{name},,0,0,0,,{{{pos}}}{' '.join(parts)}")
     return head + "\n".join(lines) + "\n"
 
 
 def write_ass(
-    path: Path, words: list[Word], dur_s: float, credit: str | None = None, style: str = "classic"
+    path: Path, words: list[Word], dur_s: float, credit: str | None = None, style: str = "classic", **kw
 ) -> Path:
-    path.write_text(build_ass(words, dur_s, credit, style), encoding="utf-8")
+    path.write_text(build_ass(words, dur_s, credit, style, **kw), encoding="utf-8")
     return path

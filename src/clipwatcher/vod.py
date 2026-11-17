@@ -187,6 +187,7 @@ def process_candidate(
         hook=meta["hook"],
         **lay.as_render_kwargs(),
         cold_open=pl.cold_open,
+        beats=cold_open.clip_beats(jr or {}, pl),
     )
     clean = tpl.render_clean(src, local_start, dur, clip_dir / "clean_16x9.mp4")
     meta.update(

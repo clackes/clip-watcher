@@ -21,7 +21,9 @@ from ..models import Word
 SYSTEM_PROMPT_FILE = config.ROOT / "prompts" / "judge_v2.md"
 PHRASE_GAP_S = 0.6
 PHRASE_MAX_WORDS = 10
-CAPS = {"hk": 35, "tt": 60, "ds": 300, "why": 80}
+CAPS = {"hk": 70, "tt": 60, "ds": 300, "why": 80, "lb": 16}
+FX_KINDS = ("hype", "fail", "shock", "funny")  # beat kinds -> label colour + screen effect
+FX_MAX = 3
 _SENT_END = re.compile(r"[.!?…]$")
 
 OUTPUT_SCHEMA: dict[str, Any] = {
@@ -42,9 +44,22 @@ OUTPUT_SCHEMA: dict[str, Any] = {
             "additionalProperties": False,
         },
         "cm": {"type": "array", "items": {"type": "number"}},
+        "fx": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "t": {"type": "number"},
+                    "k": {"type": "string", "enum": list(FX_KINDS)},
+                    "lb": {"type": "string"},
+                },
+                "required": ["t", "k", "lb"],
+                "additionalProperties": False,
+            },
+        },
         "why": {"type": "string"},
     },
-    "required": ["ok", "sc", "t0", "t1", "pk", "hk", "tt", "ds", "fl", "cm", "why"],
+    "required": ["ok", "sc", "t0", "t1", "pk", "hk", "tt", "ds", "fl", "cm", "fx", "why"],
     "additionalProperties": False,
 }
 
@@ -282,7 +297,12 @@ def build_description(lines: list[str], login: str, platform: str) -> str:
     return _fit_description(lines, want)
 
 
-_FB_HOOKS = ("WAIT FOR IT 💀", "WATCH HIS FACE", "CHAT LOST IT", "DIDN'T SEE THAT COMING")
+_FB_HOOKS = (
+    "Chat was NOT ready for this 💀",
+    "Bro did not see that coming 😭",
+    "Watch his face at the end 💀",
+    "This went wrong so fast 😭🙏",
+)
 _FB_TITLES = (
     "{n} did NOT expect this... 💀",
     "Chat saw it before {n} did 😭",
@@ -300,6 +320,25 @@ def hashtag(text: str) -> str:
     if len(words) > 1 and words[-1].upper() in roman:
         words[-1] = roman[words[-1].upper()]
     return "".join(ch for ch in "".join(words) if ch.isalnum())
+
+
+def normalize_fx(fx: Any, t0: float, t1: float) -> list[tuple[float, str, str]]:
+    """Beats inside [t0, t1], known kinds only, at most FX_MAX, >= 1.5 s apart, labels capped."""
+    out: list[tuple[float, str, str]] = []
+    for b in fx if isinstance(fx, list) else []:
+        try:
+            t, k, lb = float(b["t"]), str(b["k"]), str(b.get("lb", ""))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if k not in FX_KINDS or not t0 <= t <= t1 or any(abs(t - o[0]) < 1.5 for o in out):
+            continue
+        lb = _cap(lb.strip().upper(), CAPS["lb"])
+        if lb and not lb.startswith("*"):
+            lb = f"*{lb.strip('*')}*"
+        out.append((round(t, 2), k, lb))
+        if len(out) >= FX_MAX:
+            break
+    return sorted(out)
 
 
 def fallback_copy(login: str, platform: str, game: str | None, seed: int) -> dict[str, str]:
@@ -323,7 +362,7 @@ def normalize_output(data: dict[str, Any], *, login: str, platform: str, dur: fl
 
     Raises ValueError when a required key is missing or the hook/title is empty (caller falls back).
     """
-    missing = [k for k in OUTPUT_SCHEMA["required"] if k not in data and k not in ("pk", "cm")]  # optional
+    missing = [k for k in OUTPUT_SCHEMA["required"] if k not in data and k not in ("pk", "cm", "fx")]
     if missing:
         raise ValueError(f"missing keys {missing}")
     if not str(data["hk"]).strip() or not str(data["tt"]).strip():
@@ -345,6 +384,7 @@ def normalize_output(data: dict[str, Any], *, login: str, platform: str, dur: fl
         and all(isinstance(v, (int, float)) and 0 <= v <= 1 for v in cm)
         else None
     )
+    fx = normalize_fx(data.get("fx"), t0, t1)
     reject = config.global_config().get("judge", {}).get("reject_flags", ["sp", "mu"])
     ok = bool(data.get("ok", False)) and not any(fl[k] for k in reject if k in fl)
     return {
@@ -358,5 +398,6 @@ def normalize_output(data: dict[str, Any], *, login: str, platform: str, dur: fl
         "ds": ds,
         "fl": fl,
         "cm": cm,
+        "fx": fx,
         "why": _cap(data.get("why", ""), CAPS["why"]),
     }

@@ -325,6 +325,7 @@ class FastLane:
         from .render import cold_open
 
         pl = cold_open.plan(src, t0_s, dur, cand.peak_s - cand.start_s, jr, words)
+        beats = cold_open.clip_beats(jr, pl)
         peak_media = t0_s + (pl.reaction if pl.reaction is not None else cand.peak_s - cand.start_s)
         words = trim_words(words, pl.t0, pl.t1)
         t0_s, dur, co = t0_s + pl.t0, pl.t1 - pl.t0, pl.cold_open
@@ -345,7 +346,7 @@ class FastLane:
         short = await self._timed(
             "render_short", timings, self.steps.render_short, src, t0_s, dur, work / "short_9x16.mp4",
             clip_id=cid, streamer=self.streamer, words=words, hook=jr.hook_text,
-            **lay.as_render_kwargs(), profile=prof, cold_open=co,
+            **lay.as_render_kwargs(), profile=prof, cold_open=co, beats=beats,
         )  # fmt: skip
         clean = await self._timed(
             "render_clean",

@@ -110,12 +110,12 @@ def test_request_system_prompt_is_static_and_cached(tmp_path):
 
 
 def test_normalize_output_caps_credit_and_flags():
-    raw = {"ok": True, "sc": 14, "t0": 5, "t1": 3, "hk": "H" * 50, "tt": "T" * 90,
+    raw = {"ok": True, "sc": 14, "t0": 5, "t1": 3, "hk": "H" * 90, "tt": "T" * 90,
            "ds": "teaser " * 60 + "\nDoes he make it? 👇\nGTA chaos daily 🔔\n#X #GTA6 #Clip #Shorts",
            "fl": {"sp": True, "mu": False, "gb": False}, "why": "w" * 200}  # fmt: skip
     out = compact.normalize_output(raw, login="Kenetgr", platform="kick", dur=28)
     assert out["sc"] == 10 and (out["t0"], out["t1"]) == (0.0, 28.0)
-    assert len(out["hk"]) <= 35 and len(out["tt"]) <= 60 and len(out["why"]) <= 80
+    assert len(out["hk"]) <= 70 and len(out["tt"]) <= 60 and len(out["why"]) <= 80
     assert len(out["ds"]) <= 300 and "kick.com/kenetgr" in out["ds"] and out["ds"].endswith("#Shorts")
     assert "Does he make it? 👇" in out["ds"]
     assert out["ok"] is False  # spoiler flag overrides the model's ok
@@ -171,3 +171,15 @@ def test_judge_clip_uses_screen_model_for_screen_task():
     r = claude.judge_clip(Candidate("a", 15, 0, 30, 5, 5), [], [], [], task="screen", client=client)
     assert seen["model"] == config.global_config()["judge"]["screen_model"]
     assert r.source == "claude" and not r.ok and r.reject_reason == "dead air"
+
+
+def test_normalize_fx_filters_and_labels():
+    fx = [
+        {"t": 5.0, "k": "fail", "lb": "fail"},
+        {"t": 5.5, "k": "hype", "lb": "too close"},
+        {"t": 40.0, "k": "hype", "lb": "out of range"},
+        {"t": 8.0, "k": "dance", "lb": "bad kind"},
+        {"t": 9.0, "k": "shock", "lb": ""},
+    ]
+    assert compact.normalize_fx(fx, 2.0, 20.0) == [(5.0, "fail", "*FAIL*"), (9.0, "shock", "")]
+    assert compact.normalize_fx(None, 0, 10) == []
