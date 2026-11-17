@@ -36,8 +36,8 @@ Clip ready -> Telegram card with video at once -> owner approves ASAP -> publish
    quota; apply for the YouTube API audit for public uploads + more quota.
 3. ANTHROPIC_API_KEY into .env, then: exact token counts with
    `.venv/bin/python scripts/judge_cost_benchmark.py <bench dir> --exact`, and real judge calls on a few
-   staged clips to check copy quality (watch that titles tease without giving away the payoff). Clips in
-   languages other than it/en get Italian copy (`judge.default_copy_language`).
+   staged clips to check copy quality (watch that titles tease without giving away the payoff). The channel
+   is English only (`channel.language: en`): all copy is English and non-English streamers are skipped.
 4. Launch-night streamer list from the owner -> config/streamers.yaml (platform, has_webcam, layouts).
 5. NAS deploy: need brand/model, CPU arch, Docker support, free disk. Then
    `docker compose -f deploy/docker/compose.yaml up -d --build` with .env, operators.yaml, streamers.yaml and

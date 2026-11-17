@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
+import threading
 import time
 from collections import deque
 from collections.abc import AsyncIterator, Callable
@@ -62,12 +64,14 @@ def _live_transcribe(media: Path, start_s: float, dur_s: float, language: str | 
 
 
 _MODELS: dict[str, Any] = {}
+_MODELS_LOCK = threading.Lock()
 
 
 def _whisper(name: str, cls: Any) -> Any:
-    if name not in _MODELS:
-        _MODELS[name] = cls(name, compute_type="int8")
-    return _MODELS[name]
+    with _MODELS_LOCK:  # two clips transcribing at once must not both load the model
+        if name not in _MODELS:
+            _MODELS[name] = cls(name, compute_type="int8")
+        return _MODELS[name]
 
 
 def _default_screen(
@@ -109,6 +113,7 @@ def _default_judge(
     frames = fr.keyframes_lowres(
         src, t0_s, dur, n=int(jcfg.get("frames", 8)), peak_rel=cand.peak_s - cand.start_s,
         size=(int(size[0]), int(size[1])), quality=int(jcfg.get("frame_quality", 65)),
+        out_dir=Path(src).parent / "frames",  # inside the clip's work dir, removed with it
     )  # fmt: skip
     return claude.judge_clip(cand, words, chat_lines, frames, game=game, language=language)
 
@@ -121,7 +126,7 @@ def trim_words(words: list[Word], start: float, end: float) -> list[Word]:
 def _default_heuristic(cand: Candidate, words: list[Word]) -> JudgeResult:
     from .judge import claude
 
-    return claude.heuristic_judge(cand, words)
+    return claude.heuristic_judge(cand, words, game=config.streamer(cand.stream).get("game"))
 
 
 def _default_render_short(*a: Any, **k: Any) -> Path:
@@ -224,6 +229,8 @@ class FastLane:
                 self.outcomes.append(await self.process(cand))
             except Exception as e:  # noqa: BLE001
                 log.exception("fastlane candidate failed")
+                self._unpin(cand)  # a failed clip must not hold its segments for 48 h
+                self._cleanup(cand)
                 self.outcomes.append(Outcome(self._clip_id(cand), "failed", error=str(e)))
 
     # -- helpers ------------------------------------------------------------
@@ -269,6 +276,7 @@ class FastLane:
             log.info("%s: skip %s, before recording start", self.streamer, cid)
             self._unpin(cand)
             return Outcome(cid, "rejected", {}, error="before recording start")
+        lang = config.stream_language(self.streamer)
         scfg = config.streamer(self.streamer)
         timings: dict[str, float] = {}
         t_all = time.perf_counter()
@@ -288,14 +296,11 @@ class FastLane:
         # segments. Treating it as a bare path would start every clip at the segment boundary instead.
         src, t0_s = cut if isinstance(cut, tuple) else (cut, 0.0)
 
-        words = await self._timed(
-            "transcribe", timings, self.steps.transcribe, src, t0_s, dur, scfg.get("language")
-        )
+        words = await self._timed("transcribe", timings, self.steps.transcribe, src, t0_s, dur, lang)
         chat_lines = self._chat_lines(cand)
         title, game = scfg.get("title", f"{self.streamer} live"), scfg.get("game", "")
         jr = await self._timed(
-            "judge", timings, self.steps.judge, cand, words, src, t0_s, dur, chat_lines, game,
-            scfg.get("language"),
+            "judge", timings, self.steps.judge, cand, words, src, t0_s, dur, chat_lines, game, lang,
         )  # fmt: skip
         if jr is None:
             screen = await self._timed(
@@ -307,6 +312,7 @@ class FastLane:
                 and max(screen.get("funny_score", 0), screen.get("hype_score", 0)) < min_funny
             ):
                 self._unpin(cand)
+                self._cleanup(cand)
                 return Outcome(cid, "rejected", timings, error=str(screen["reject_reason"]))
             jr = self.steps.heuristic(cand, words)
         else:
@@ -314,6 +320,7 @@ class FastLane:
             if jr.source == "claude" and not jr.ok:
                 log.info("%s: judge rejected %s (sc=%s): %s", self.streamer, cid, jr.score, jr.reject_reason)
                 self._unpin(cand)
+                self._cleanup(cand)
                 return Outcome(cid, "rejected", timings, error=str(jr.reject_reason or jr.why))
             if jr.source == "claude" and jr.trim_end_s - jr.trim_start_s >= 12:
                 words = trim_words(words, jr.trim_start_s, jr.trim_end_s)
@@ -341,14 +348,16 @@ class FastLane:
         meta = {
             "streamer": self.streamer, "credit": config.credit(self.streamer), "lane": "live",
             "campaign_link": scfg.get("campaign_link"), "hook": jr.hook_text, "titles": jr.title_options,
-            "setup_line": jr.setup_line, "judge_source": jr.source, "score": cand.final_score,
+            "setup_line": jr.setup_line, "judge_source": jr.source,
+            # queue score (auto_approve_min is on the judge's 1-10 scale); detector score otherwise
+            "score": jr.score if jr.source == "claude" else cand.final_score,
             "chat_score": cand.chat_score, "final_score": cand.final_score, "peak_s": cand.peak_s,
             "start_s": cand.start_s, "end_s": cand.end_s, "funny_score": screen.get("funny_score"),
             "hype_score": screen.get("hype_score"), "layout": lay.source,
         }  # fmt: skip
+        meta.update(title=jr.title_options[0], description=jr.description)  # heuristic copy too
         if jr.source == "claude":
-            meta.update(title=jr.title_options[0], description=jr.description, why=jr.why,
-                        flags=jr.flags, judge_score=jr.score)  # fmt: skip
+            meta.update(why=jr.why, flags=jr.flags, judge_score=jr.score)
         kw: dict[str, Any] = {"db": self.db}
         if self.staging_root:
             kw["root"] = self.staging_root
@@ -358,9 +367,15 @@ class FastLane:
             await self.steps.post_card(self.bot, self.db, cid, short)
             timings["post"] = round(time.perf_counter() - t1, 2)
         self._unpin(cand)
+        self._cleanup(cand)  # staging holds copies; the cut .ts and renders would fill the disk 24/7
         timings["total"] = round(time.perf_counter() - t_all, 2)
         log.info("fastlane %s staged %s timings=%s", self.streamer, cid, timings)
         return Outcome(cid, "staged", timings, path=pkg)
+
+    def _cleanup(self, cand: Candidate) -> None:
+        if self.cfg.get("keep_work"):
+            return
+        shutil.rmtree(Path(self.cfg["work_dir"]) / self._clip_id(cand), ignore_errors=True)
 
     def _unpin(self, cand: Candidate) -> None:
         unpin = getattr(self.ring, "unpin", None)

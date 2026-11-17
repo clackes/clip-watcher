@@ -3,7 +3,7 @@ streamers:
   examplestreamer:
     platform: twitch            # twitch | kick
     url: https://www.twitch.tv/examplestreamer
-    language: it                # it | en
+    language: en                # the channel is English only (channel.language)
     campaign_link: null
     has_webcam: true
     facecam_rect: "480:213:1400:743"   # w:h:x:y on 1920x1080, 2.25:1, human-confirmed

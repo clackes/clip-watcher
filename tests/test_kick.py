@@ -14,7 +14,7 @@ from clipwatcher.chat.kick import (
 DATA = {
     "id": "abc",
     "chatroom_id": 77,
-    "content": "[emote:37226:KEKW] ahah [emote:1:Pog]",
+    "content": "[emote:37226:KEKW] haha [emote:1:Pog]",
     "created_at": "2024-01-01T00:00:01.500+00:00",
     "sender": {"id": 1, "username": "Foo_Bar", "slug": "foo-bar"},
 }
@@ -26,7 +26,7 @@ FRAME = json.dumps(
 def test_conversion():
     assert strip_emotes("[emote:1:KEKW] x [emote:22:Pog]") == "KEKW x Pog"
     m = parse_pusher_frame(FRAME, {"foo_bar"})
-    assert m.text == "KEKW ahah Pog" and m.platform == "kick" and m.is_bot
+    assert m.text == "KEKW haha Pog" and m.platform == "kick" and m.is_bot
     assert m.user == "foo_bar" and m.ts_ms == 1704067201500
     assert parse_pusher_frame('{"event":"pusher:pong","data":"{}"}') is None
     assert parse_pusher_frame("not json") is None
@@ -71,7 +71,7 @@ def test_kickchat_with_fake_socket():
             return m
 
     m = asyncio.run(asyncio.wait_for(go(), 5))
-    assert m.text == "KEKW ahah Pog"
+    assert m.text == "KEKW haha Pog"
     assert sent[0]["event"] == "pusher:subscribe" and sent[0]["data"]["channel"] == "chatrooms.77.v2"
     assert sent[1]["event"] == "pusher:pong"
 

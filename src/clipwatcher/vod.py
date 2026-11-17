@@ -59,11 +59,17 @@ def window_with_pad(cand: Candidate, pad_s: float) -> tuple[float, float, float]
     return dl_start, cand.end_s + pad_s, cand.start_s - dl_start
 
 
-def heuristic_meta(streamer: str) -> dict:
+def heuristic_meta(streamer: str, platform: str = "twitch", seed: int = 0) -> dict:
+    """English fallback copy (--no-judge): same hook/title/description shape as the judge."""
+    from clipwatcher.judge.compact import fallback_copy
+
+    copy = fallback_copy(streamer, platform, config.streamer(streamer).get("game"), seed)
     return {
-        "hook": "CHAT LOST IT",
-        "titles": [f"{streamer} chat loses it", f"{streamer}: this moment broke chat"],
-        "setup_line": "",
+        "hook": copy["hk"],
+        "titles": [copy["tt"]],
+        "title": copy["tt"],
+        "description": copy["ds"],
+        "setup_line": copy["ds"].split("\n")[0],
         "judge_source": "none",
     }
 
@@ -121,32 +127,43 @@ def process_candidate(
                     )
                 )
 
-    meta = heuristic_meta(streamer)
+    meta = heuristic_meta(streamer, platform, int(cand.start_s * 1000))
     words: list = []
     if judge:
         transcribe = _mod("clipwatcher.judge.transcribe")
         frames_m = _mod("clipwatcher.judge.frames")
         claude = _mod("clipwatcher.judge.claude")
+        jcfg = config.global_config().get("judge", {})
         words = transcribe.transcribe(src, local_start, dur, language)
-        frames = frames_m.keyframes(src, local_start, dur)
-        jr = claude.judge_candidate(
-            cand,
-            words,
-            _chat_lines(messages, cand.start_s, cand.end_s),
-            frames,
-            title=f"{streamer} VOD {vid}",
-            game=scfg.get("game"),
-        )
+        size = jcfg.get("frame_size", [480, 270])
+        frames = frames_m.keyframes_lowres(
+            src, local_start, dur, n=int(jcfg.get("frames", 8)), peak_rel=cand.peak_s - cand.start_s,
+            size=(int(size[0]), int(size[1])), quality=int(jcfg.get("frame_quality", 65)),
+            out_dir=work / f"frames_{n}",
+        )  # fmt: skip
+        jr = claude.judge_clip(
+            cand, words, _chat_lines(messages, cand.start_s, cand.end_s), frames,
+            game=scfg.get("game") or "", platform=platform, language=language,
+        )  # fmt: skip
         meta.update(
             hook=jr.hook_text,
             titles=jr.title_options,
+            title=jr.title_options[0],
+            description=jr.description,
             setup_line=jr.setup_line,
             judge_source=jr.source,
             funny_score=jr.funny_score,
             hype_score=jr.hype_score,
             reject_reason=jr.reject_reason,
         )
+        if jr.source == "claude":
+            meta.update(why=jr.why, flags=jr.flags, judge_score=jr.score, score=jr.score, ok=jr.ok)
         if 0 <= jr.trim_start_s < jr.trim_end_s <= dur + 0.5:
+            words = [
+                type(w)(w.start - jr.trim_start_s, w.end - jr.trim_start_s, w.text)
+                for w in words
+                if w.end > jr.trim_start_s and w.start < jr.trim_end_s
+            ]
             local_start, dur = local_start + jr.trim_start_s, jr.trim_end_s - jr.trim_start_s
 
     tpl = _mod("clipwatcher.render.template")
@@ -170,7 +187,7 @@ def process_candidate(
         clip_id=clip_id,
         streamer=streamer,
         vod_id=vid,
-        credit=f"{platform}.{'tv' if platform == 'twitch' else 'com'}/{streamer}",
+        credit=f"{'twitch.tv' if platform == 'twitch' else 'kick.com'}/{streamer}",
         campaign_link=scfg.get("campaign_link"),
         chat_score=cand.chat_score,
         final_score=cand.final_score,
@@ -182,6 +199,7 @@ def process_candidate(
         state="READY",
         out_dir=str(out_dir),
     )
+    meta.setdefault("score", cand.final_score)
     staging = _mod("clipwatcher.queue.staging")
     Path(out_dir).mkdir(parents=True, exist_ok=True)
     db = _mod("clipwatcher.queue.db").ClipDB(Path(out_dir) / "clips.db")
@@ -207,14 +225,18 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", type=Path, default=Path("staging"))
     ap.add_argument("--work", type=Path, default=Path("work"))
     ap.add_argument("--no-judge", action="store_true")
-    ap.add_argument("--language", choices=["it", "en"])
+    ap.add_argument("--language", help="spoken language (default: streamers.yaml, then en)")
     a = ap.parse_args(argv)
 
     streamer = a.streamer.lower()
     vid = vod_id(a.vod)
     work = a.work / vid
     work.mkdir(parents=True, exist_ok=True)
-    language = a.language or config.streamer(streamer).get("language", "it")
+    language = (a.language or config.stream_language(streamer)).lower()
+    if language != config.channel_language():
+        msg = f"{streamer} speaks {language!r}; the channel is {config.channel_language()!r} only."
+        print(msg, file=sys.stderr)
+        return 2
 
     chat_path = a.chat
     if chat_path is None:

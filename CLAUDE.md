@@ -48,7 +48,11 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   labelled 480x270 JPEG q65 frames + compact JSON {meta,tr,ch,task}; short-key output {ok,sc,t0,t1,hk,tt,ds,
   fl{sp,mu,gb},why}, caps/credit enforced in code (judge/compact.py). Thinking off, effort low (judge.* in
   global.yaml). judge.mode single | two_stage | off. Owner asked for spoiler/music/gambling flags; flagged
-  clips are rejected (judge.reject_flags). Heuristic fallback on API errors. Cost: scripts/judge_cost_benchmark.py.
+  clips are rejected (judge.reject_flags). Heuristic fallback on API errors (English fallback copy, same shape).
+- D10 English only (owner, 17 Nov): `channel.language: en`. All copy (hook, title, description, fallbacks) is
+  English; streamers whose `language` differs are skipped by live/vod. Description = 4 lines: teaser + credit,
+  a clip-specific question ending in 👇, a reason to follow (no "like/comment/follow" begging, stripped in
+  code by `compact.is_bait`), hashtags. Cost: scripts/judge_cost_benchmark.py.
 - D7 Telegram queue with atomic SQLite claim lock (15 min TTL), audit log, staging/<clip_id>/, staging/approved/,
   staging/published_clips.json.
 - D8 Publishing: YouTube Data API + Instagram Graph API from server, APPROVED only. TikTok/campaign forms by a

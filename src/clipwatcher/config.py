@@ -45,6 +45,21 @@ def streamer(name: str) -> dict[str, Any]:
     return streamers().get(name.lower(), {})
 
 
+def channel_language() -> str:
+    """The one language the channel publishes in (channel.language, default en)."""
+    return str(global_config().get("channel", {}).get("language", "en")).lower()
+
+
+def stream_language(name: str) -> str:
+    """Spoken language of a streamer (streamers.yaml language, default: the channel language)."""
+    return str(streamer(name).get("language") or channel_language()).lower()
+
+
+def allowed_streamer(name: str) -> bool:
+    """Only streamers who speak the channel language are watched and clipped."""
+    return stream_language(name) == channel_language()
+
+
 def keywords_for(name: str | None) -> dict[str, float]:
     """D3: global reaction keyword weights merged with per-streamer extras."""
     kw = dict(global_config().get("detector", {}).get("keywords", {}))

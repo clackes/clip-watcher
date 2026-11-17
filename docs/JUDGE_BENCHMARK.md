@@ -1,5 +1,9 @@
 # Judge v2 benchmark (17 Nov 2026, before the API key)
 
+> Superseded for copy: since 17 Nov the channel is English only (`channel.language: en`); the judge writes
+> English copy and a 4-line engagement description, and non-English streamers are skipped. Costs below
+> still hold (the prompt grew by ~350 tokens, all cached). Rerun the benchmark for new copy samples.
+
 How it was run: the 5 cases below went through the real v2 serializers (`judge/compact.py`, 8 frames from
 `keyframes_lowres`). Two Claude Code subagents (Haiku-class and Sonnet-class) acted as the API: each read
 `prompts/judge_v2.md` as its system prompt and every case's labelled frames + compact JSON, and answered in
@@ -11,9 +15,9 @@ Token counts are **estimates** (text: chars/3.5; images: w*h/750). Run
 | case | source | what it tests |
 |---|---|---|
 | R1_kaicenat_real | real VOD clip, real whisper (empty), real chat | big chat spike, nothing on screen |
-| R2_kenetgr_kick_real | real Kick live clip, real Spanish transcript + chat | normal GTA RP moment, es -> it copy |
+| R2_kenetgr_kick_real | real Kick live clip, real Spanish transcript + chat | normal GTA RP moment, non-English speech |
 | A_silent_visual | real officermesser GTA frames, no transcript | judging from frames only |
-| B_italian_hype | real matteu frames, synthetic Italian transcript + 48-msg chat burst | Italian copy |
+| B_hype | real matteu frames, synthetic non-English transcript + 48-msg chat burst | copy language |
 | C_music_spoiler | real illojuan frames, synthetic transcript: invented lyrics + [music] + invented story spoiler | flags + reject |
 
 ## Tokens per clip (estimated)
@@ -47,19 +51,19 @@ Sonnet-class:
 | case | ok | sc | hk | tt | fl |
 |---|---|---|---|---|---|
 | A | no | 3 | WAIT FOR IT... | He bailed out of the car for THIS... 😭 | - |
-| B | yes | 6 | MA COSA HA FATTO?! 💀 | Giurava di non averlo toccato... 💀 | - |
-| C | no | 3 | SPOILER 💀 | Ha detto la fine della storia in live... | sp, mu |
+| B | yes | 6 | (non-English copy, retired) | - | - |
+| C | no | 3 | (non-English copy, retired) | - | sp, mu |
 | R1 | no | 3 | WAKE UP 😳 | 21K people watching him sleep... | - |
-| R2 | yes | 7 | ERA QUASI IN TESTA 😳 | Gli ha sparato a un soffio dalla testa... | - |
+| R2 | yes | 7 | (non-English copy, retired) | - | - |
 
 Haiku-class:
 | case | ok | sc | hk | tt | fl |
 |---|---|---|---|---|---|
 | A | no | 4 | WAIT FOR IT 💀 | Officermesser thought he was safe... 💀 | - |
-| B | yes | 7 | NON DOVEVA ANDARE COSÌ 😳 | Matteu doveva solo passare di lì... 💀 | - |
-| C | no | 2 | NON DIRLO IN LIVE 💀 | Illojuan non doveva dirlo in live... 😭 | sp, mu |
+| B | yes | 7 | (non-English copy, retired) | - | - |
+| C | no | 2 | (non-English copy, retired) | - | sp, mu |
 | R1 | no | 4 | CHAT WON'T STOP 💀 | Chat refused to let Kaicenat sleep... 💀 | - |
-| R2 | yes | 6 | TROPPO VICINO, GUARDATE 😳 | Kenetgr pensava di essere al sicuro... 😭 | - |
+| R2 | yes | 6 | (non-English copy, retired) | - | - |
 
 Every answer was valid JSON within the caps. Both caught music + spoiler in C and rejected the two dead
 moments (R1, A). Sonnet's copy is more specific to what happens; Haiku reuses the template phrases

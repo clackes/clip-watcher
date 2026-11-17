@@ -1,4 +1,6 @@
 # Global settings. Per-streamer overrides live in streamers.yaml.
+channel:
+  language: en              # English-only channel: all copy is English; only streamers with this language run
 tools:
   ffmpeg: null              # null = auto (ffmpeg-full on macOS, then PATH)
   twitch_downloader: bin/TwitchDownloaderCLI
@@ -52,16 +54,7 @@ detector:                   # D3
     bro: 1
     jajaja: 2                # Spanish / Portuguese laughter
     kkkk: 2
-    # Italian laughter / surprise
-    "morto": 2
-    "sono morto": 2
-    "muoio": 2
-    "sto morendo": 2
-    "piango": 2
     XD: 2
-    raga: 1
-    "ma che": 1
-    madonna: 1
   laughter_regex: '(?i)\b((a?h+a+){2,}h?|(j+a+){2,}j?|(k){4,}|x+d+|(rs){2,})\b'   # ahah, jajaja, kkkk, xdd, rsrs
   other_weight: 0.5
 
@@ -92,8 +85,6 @@ judge:
   frames: 8                 # 6 evenly spaced + 2 right after the chat peak
   frame_size: [480, 270]    # ~173 vision tokens/frame (w*h/750)
   frame_quality: 65
-  copy_language: auto       # auto = stream language if it/en, else default_copy_language
-  default_copy_language: it
   reject_flags: [sp, mu, gb]  # judge flags that drop a clip (spoiler, music risk, gambling)
   screen_min: 5
   keyframes: 6              # legacy VOD keyframes()

@@ -136,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", type=Path, default=Path("staging"))
     ap.add_argument("--work", type=Path, default=Path("work"))
     ap.add_argument("--no-judge", action="store_true")
-    ap.add_argument("--language", choices=["it", "en"])
+    ap.add_argument("--language", help="spoken language (default: streamers.yaml, then en)")
     a = ap.parse_args(argv)
 
     streamer = a.streamer.lower()
@@ -144,7 +144,11 @@ def main(argv: list[str] | None = None) -> int:
     url = vod_url(streamer, a.vod if a.vod.startswith("http") else vid)
     work = a.work / vid
     work.mkdir(parents=True, exist_ok=True)
-    language = a.language or config.streamer(streamer).get("language", "it")
+    language = (a.language or config.stream_language(streamer)).lower()
+    if language != config.channel_language():
+        msg = f"{streamer} speaks {language!r}; the channel is {config.channel_language()!r} only."
+        print(msg, file=sys.stderr)
+        return 2
 
     if a.chat:
         messages = read_jsonl(a.chat)

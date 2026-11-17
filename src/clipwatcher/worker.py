@@ -91,10 +91,17 @@ def h_judge(p: dict[str, Any], w: Worker) -> list[dict[str, Any]]:
 
     c, words = _cand(p), _words(p)
     try:
-        jr: JudgeResult = claude.judge_candidate(c, words, p.get("chat_lines", []), [], title="", game="")
+        scfg = config.streamer(p["streamer"])
+        jr: JudgeResult = claude.judge_clip(
+            c, words, p.get("chat_lines", []), [], game=scfg.get("game") or "",
+            platform=scfg.get("platform"), language=p.get("language"),
+        )  # fmt: skip
     except Exception as e:  # noqa: BLE001
         log.warning("judge failed (%s); heuristic fallback", e)
         jr = claude.heuristic_judge(c, words)
+    if jr.source == "claude" and not jr.ok:  # rejected or flagged, like the live lane
+        log.info("judge rejected %s at %.0fs: %s", p["streamer"], c.start_s, jr.reject_reason or jr.why)
+        return []
     return [{**p, "judge": asdict(jr)}]
 
 
@@ -105,11 +112,17 @@ def h_render(p: dict[str, Any], w: Worker) -> list[dict[str, Any]]:
     base = clip_base(p["streamer"], p["cand"], w.clips_root)
     short, clean = base.with_suffix(".mp4"), base.with_name(base.name + ".clean.mp4")
     start, dur = c.start_s, c.end_s - c.start_s
-    hook = (p.get("judge") or {}).get("hook_text") or "WAIT FOR IT"
+    j = p.get("judge") or {}
+    words = _words(p)
+    ts, te = float(j.get("trim_start_s") or 0.0), float(j.get("trim_end_s") or dur)
+    if j.get("source") == "claude" and 0 <= ts < te <= dur and te - ts >= 12:  # judge trim, captions re-timed
+        words = [Word(w.start - ts, w.end - ts, w.text) for w in words if w.end > ts and w.start < te]
+        start, dur = start + ts, te - ts
+    hook = j.get("hook_text") or "WAIT FOR IT"
     clip_id = f"{p['streamer']}-{int(c.start_s * 1000)}"
     if not short.exists():
         w.atomic(short, lambda tmp: render_short(
-            Path(p["media"]), start, dur, tmp, clip_id=clip_id, streamer=p["streamer"], words=_words(p),
+            Path(p["media"]), start, dur, tmp, clip_id=clip_id, streamer=p["streamer"], words=words,
             hook=hook, has_webcam=bool(scfg.get("has_webcam", True)), cam=scfg.get("facecam_rect"),
             game=scfg.get("gameplay_rect"), profile=w.profile,
         ))  # fmt: skip
@@ -123,10 +136,14 @@ def h_stage(p: dict[str, Any], w: Worker) -> list[dict[str, Any]]:
 
     c, j = _cand(p), p.get("judge") or {}
     meta = {
-        "streamer": p["streamer"], "credit": f"twitch.tv/{p['streamer']}", "lane": "batch",
+        "streamer": p["streamer"], "credit": config.credit(p["streamer"]), "lane": "batch",
         "hook": j.get("hook_text"), "titles": j.get("title_options", []), "setup_line": j.get("setup_line"),
-        "judge_source": j.get("source"), "score": c.final_score, "start_s": c.start_s, "end_s": c.end_s,
+        "title": (j.get("title_options") or [None])[0], "description": j.get("description"),
+        "judge_source": j.get("source"), "start_s": c.start_s, "end_s": c.end_s,
+        "score": j.get("score") if j.get("source") == "claude" else c.final_score,
     }  # fmt: skip
+    if j.get("source") == "claude":
+        meta.update(why=j.get("why"), flags=j.get("flags"), judge_score=j.get("score"))
     stage_package(p["clip_id"], Path(p["short"]), Path(p["clean"]), meta, root=w.staging_root, db=w.db)
     return []
 
@@ -224,7 +241,7 @@ def main(argv: list[str] | None = None) -> int:
             ap.error("--enqueue-media needs --chat and --streamer")
         w.enqueue("detect", {
             "media": str(a.enqueue_media), "chat": str(a.chat), "streamer": a.streamer.lower(),
-            "language": a.language or config.streamer(a.streamer).get("language"),
+            "language": a.language or config.stream_language(a.streamer),
         })  # fmt: skip
     if a.once:
         print(f"processed {w.run_once()} jobs")

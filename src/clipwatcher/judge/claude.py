@@ -130,30 +130,28 @@ def _image_block(p: Path) -> dict:
     return {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": data}}
 
 
-def _streamer_name(login: str) -> str:
-    return login[:1].upper() + login[1:]
+def heuristic_judge(cand: Candidate, words: list[Word], *, game: str | None = None) -> JudgeResult:
+    """English fallback copy when the judge cannot run; the detector score stands in for the judge."""
+    from . import compact
 
-
-def heuristic_judge(cand: Candidate, words: list[Word]) -> JudgeResult:
     score = max(0.0, min(10.0, float(cand.final_score)))
-    hook = "WAIT FOR IT"
-    if words:
-        long_words = sorted((w.text.strip(".,!?") for w in words), key=len, reverse=True)[:2]
-        long_words = [w for w in long_words if w]
-        if long_words:
-            hook = " ".join(long_words).upper()
-    name = _streamer_name(cand.stream)
+    scfg = config.streamer(cand.stream)
+    seed = int(cand.start_s * 1000) ^ sum(map(ord, cand.stream))
+    copy = compact.fallback_copy(
+        cand.stream, scfg.get("platform", "twitch"), game if game is not None else scfg.get("game"), seed
+    )
     return JudgeResult(
         funny_score=score,
         hype_score=score,
         visual_context_summary="",
         trim_start_s=0.0,
         trim_end_s=cand.duration,
-        hook_text=hook,
-        title_options=[f"{name} reacts", f"{name} didn't expect this", f"Chat made {name} lose it"],
-        setup_line=f"{name} reacts to a big moment in chat.",
+        hook_text=copy["hk"],
+        title_options=[copy["tt"]],
+        setup_line=copy["ds"].split("\n")[0],
         reject_reason=None,
         source="heuristic",
+        description=copy["ds"],
     )
 
 
@@ -252,7 +250,7 @@ def judge_clip(
         )
     except Exception as e:  # noqa: BLE001
         log.warning("judge failed (%s); using heuristic", e)
-        return heuristic_judge(cand, words)
+        return heuristic_judge(cand, words, game=game or None)
 
 
 def judge_candidate(
@@ -265,10 +263,15 @@ def judge_candidate(
     game: str = "",
     client: Any = None,
     model: str | None = None,
+    platform: str | None = None,
+    language: str | None = None,
 ) -> JudgeResult:
     """Backward-compatible entry point; now runs the standardised v2 judge."""
     timed = [
-        (f if isinstance(f, tuple) else (i * cand.duration / max(1, len(frames)), f))
+        (f if isinstance(f, tuple) else ((i + 0.5) * cand.duration / max(1, len(frames)), f))
         for i, f in enumerate(frames)
     ]
-    return judge_clip(cand, words, chat_lines, timed, game=game, client=client, model=model)
+    return judge_clip(
+        cand, words, chat_lines, timed, game=game, platform=platform, language=language, client=client,
+        model=model,
+    )  # fmt: skip

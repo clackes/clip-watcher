@@ -15,9 +15,9 @@ DURATION = 2400
 REACTION_DELAY = 8
 
 _BG = [
-    "nice", "ok", "gg", "hello", "che gioco", "wow", "ciao a tutti", "si", "no way",
-    "bella", "dai", "come stai", "sto guardando", "ottimo", "interessante", "boh",
-    "play the other route", "good stream", "bravo", "uff", "dove sei arrivato",
+    "nice", "ok", "gg", "hello", "what game", "wow", "hi everyone", "yes", "no way",
+    "nice one", "come on", "how are you", "just watching", "great", "interesting", "idk",
+    "play the other route", "good stream", "well played", "ugh", "where are you at",
 ]  # fmt: skip
 
 

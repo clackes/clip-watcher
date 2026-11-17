@@ -142,6 +142,11 @@ def main(argv: list[str] | None = None) -> int:
     logins = [
         s.strip().lower() for s in (a.streamers or ",".join(config.streamers())).split(",") if s.strip()
     ]
+    skipped = [lg for lg in logins if not config.allowed_streamer(lg)]
+    for lg in skipped:
+        log.warning("%s: skipped, speaks %r but the channel is %r only", lg, config.stream_language(lg),
+                    config.channel_language())  # fmt: skip
+    logins = [lg for lg in logins if lg not in skipped]
     if not logins:
         ap.error("no streamers")
     asyncio.run(main_async(logins, a.minutes))

@@ -30,17 +30,25 @@ def _hashtags(meta: dict[str, Any]) -> list[str]:
 def build_metadata(meta: dict[str, Any]) -> dict[str, Any]:
     streamer = str(meta.get("streamer", ""))
     name = streamer.lower()
-    title = str(meta.get("title") or f"{streamer} reacts").strip()[:60].rstrip()
+    from ..judge.compact import fallback_copy, is_bait
+
+    seed = int(float(meta.get("start_s") or 0) * 1000)
+    if not meta.get("description"):  # older packages: build the same English 4-line copy the judge writes
+        plat = config.streamer(name).get("platform", "twitch")
+        meta = {**meta, "description": fallback_copy(name, plat, meta.get("game"), seed)["ds"]}
+    title = meta.get("title") or (meta.get("titles") or [None])[0]
+    title = str(title or fallback_copy(name, "twitch", None, seed)["tt"]).strip()[:60].rstrip()
     campaign = meta.get("campaign_link")
-    if meta.get("description"):  # judge copy: teaser + credit, CTA, hashtags
-        lines = str(meta["description"]).split("\n")
+    if meta.get("description"):  # judge copy: teaser + credit, question, reason to follow, hashtags
+        lines = [ln for ln in str(meta["description"]).split("\n") if ln.strip() and not is_bait(ln)]
         if config.credit(name) not in meta["description"]:
             lines.insert(0, f"🎥 {streamer}: {config.credit(name)}")
         if campaign:
             lines.insert(len(lines) - 1, str(campaign))
-        tags = [t for t in lines[-1].split() if t.startswith("#")] + [
-            str(t) for t in meta.get("campaign_tags", [])
-        ]
+        extra = [str(t) for t in meta.get("campaign_tags", []) if str(t) not in lines[-1].split()]
+        if extra:  # paid-promotion tags (#ad) must be visible in the description, not only in tags
+            lines[-1] = " ".join([lines[-1], *extra])
+        tags = [t for t in lines[-1].split() if t.startswith("#")]
         return {
             "title": title,
             "description": "\n".join(lines),
@@ -91,6 +99,9 @@ def upload(clip_id: str, meta: dict[str, Any], db: ClipDB, video: Path) -> str:
             "description": md["description"],
             "tags": md["tags"],
             "categoryId": "20",
+            # English-only channel: tells YouTube which audience to test the Short with
+            "defaultLanguage": config.channel_language(),
+            "defaultAudioLanguage": config.channel_language(),
         },
         "status": {
             "privacyStatus": privacy,

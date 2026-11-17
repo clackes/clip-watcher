@@ -21,7 +21,7 @@ from ..models import Word
 SYSTEM_PROMPT_FILE = config.ROOT / "prompts" / "judge_v2.md"
 PHRASE_GAP_S = 0.6
 PHRASE_MAX_WORDS = 10
-CAPS = {"hk": 35, "tt": 60, "ds": 220, "why": 80}
+CAPS = {"hk": 35, "tt": 60, "ds": 300, "why": 80}
 _SENT_END = re.compile(r"[.!?…]$")
 
 OUTPUT_SCHEMA: dict[str, Any] = {
@@ -143,13 +143,9 @@ def compact_chat(chat: Iterable[Any], top: int = 12, max_len: int = 32, singles:
 
 
 # -- payload -----------------------------------------------------------------------------------------
-def copy_language(spoken: str | None) -> str:
-    jcfg = config.global_config().get("judge", {})
-    forced = str(jcfg.get("copy_language", "auto"))
-    if forced in ("it", "en"):
-        return forced
-    lang = (spoken or "").lower()[:2]
-    return lang if lang in ("it", "en") else str(jcfg.get("default_copy_language", "it"))
+def copy_language(spoken: str | None = None) -> str:
+    """Copy is always English: ClipVault is an English-only channel."""
+    return "en"
 
 
 def build_payload(
@@ -169,7 +165,6 @@ def build_payload(
         "p": platform,
         "g": game,
         "l": (language or "?")[:2],
-        "cl": copy_language(language),
         "dur": round(float(dur), 1),
     }
     if peak_s is not None:
@@ -239,6 +234,88 @@ def credit(login: str, platform: str) -> str:
     return f"{'kick.com' if platform == 'kick' else 'twitch.tv'}/{login.lower()}"
 
 
+# Generic engagement begging ("like, comment and subscribe", "follow for more"): viewers skip it and
+# platforms down-rank it, so such lines are dropped from every description.
+_ASK = re.compile(r"\b(likes?|comments?|subscribe|follow|share)\b", re.I)
+_BAIT = re.compile(
+    r"\b(follow|subscribe) (us )?for (more|daily)|smash (that|the) like|drop a like|leave a like"
+    r"|don'?t forget to (like|subscribe|follow|comment)|comment below|like (and|&) subscribe",
+    re.I,
+)
+
+
+def is_bait(line: str) -> bool:
+    """True for a generic like/comment/follow request (two or more asks in one line, or a stock phrase)."""
+    if line.lstrip().startswith("#"):
+        return False
+    asks = {m.group(1).lower().rstrip("s") for m in _ASK.finditer(line)}
+    return len(asks) >= 2 or bool(_BAIT.search(line))
+
+
+def _fit_description(lines: list[str], want: str) -> str:
+    """Join lines within CAPS["ds"]: shorten the line-1 teaser first, keep credit, question and hashtags."""
+    ds = "\n".join(lines)
+    if len(ds) <= CAPS["ds"]:
+        return ds
+    tag = f" 🎥 {want}"
+    head = lines[0]
+    teaser = head[: head.index(want)].replace("🎥", "").replace("Live:", "").strip() if want in head else head
+    rest = "\n".join(lines[1:])
+    keep = CAPS["ds"] - len(rest) - 1 - len(tag)
+    if keep >= 10:
+        teaser = teaser if len(teaser) <= keep else teaser[: keep - 1].rstrip() + "…"
+        return teaser + tag + ("\n" + rest if rest else "")
+    # Still too long: drop the promise line (line 3 of 4), then hard-cut as a last resort.
+    if len(lines) >= 4:
+        return _fit_description([lines[0], lines[1], lines[-1]], want)
+    return ds[: CAPS["ds"]]
+
+
+def build_description(lines: list[str], login: str, platform: str) -> str:
+    """Drop engagement bait, make sure line 1 carries the streamer credit, fit the length cap."""
+    want = credit(login, platform)
+    lines = [ln.strip() for ln in lines if ln.strip() and not is_bait(ln)]
+    if not any(want in ln for ln in lines):
+        lines = [(lines[0] + " " if lines else "") + f"🎥 {want}", *lines[1:]]
+    return _fit_description(lines, want)
+
+
+_FB_HOOKS = ("WAIT FOR IT 💀", "WATCH HIS FACE", "CHAT LOST IT", "DIDN'T SEE THAT COMING")
+_FB_TITLES = (
+    "{n} did NOT expect this... 💀",
+    "Chat saw it before {n} did 😭",
+    "{n} wasn't ready for this...",
+)
+_FB_TEASERS = ("Chat went off for a reason", "Nobody saw the ending coming", "Watch it to the last second")
+_FB_QUESTIONS = ("Rate that reaction 1-10 👇", "Skill or pure luck? 👇", "Would you have seen it coming? 👇")
+_FB_PROMISES = ("Every wild {n} moment lands here first 🔔", "The best {n} moments, every single day 🔔")
+
+
+def hashtag(text: str) -> str:
+    """'GTA VI' -> 'GTA6' style tag body: alphanumerics only, roman numeral suffixes as digits."""
+    roman = {"II": "2", "III": "3", "IV": "4", "V": "5", "VI": "6", "VII": "7"}
+    words = str(text).split()
+    if len(words) > 1 and words[-1].upper() in roman:
+        words[-1] = roman[words[-1].upper()]
+    return "".join(ch for ch in "".join(words) if ch.isalnum())
+
+
+def fallback_copy(login: str, platform: str, game: str | None, seed: int) -> dict[str, str]:
+    """English hook/title/description for clips the judge could not write (no key, API error).
+
+    Same 4-line description shape as the judge: teaser + credit, a question, a reason to follow, hashtags.
+    """
+    n = login[:1].upper() + login[1:]
+    pick = lambda opts: opts[seed % len(opts)]  # noqa: E731
+    tags = [f"#{n}"] + ([f"#{hashtag(game)}"] if game and hashtag(game) else []) + ["#Clip", "#Shorts"]
+    lines = [pick(_FB_TEASERS), pick(_FB_QUESTIONS), pick(_FB_PROMISES).format(n=n), " ".join(tags)]
+    return {
+        "hk": pick(_FB_HOOKS),
+        "tt": _cap(pick(_FB_TITLES).format(n=n), CAPS["tt"]),
+        "ds": build_description(lines, login, platform),
+    }
+
+
 def normalize_output(data: dict[str, Any], *, login: str, platform: str, dur: float) -> dict[str, Any]:
     """Clamp scores/times, enforce character caps and the streamer credit, recompute ok from flags.
 
@@ -255,23 +332,7 @@ def normalize_output(data: dict[str, Any], *, login: str, platform: str, dur: fl
     t1 = max(0.0, min(float(dur), float(data.get("t1", dur))))
     if t1 <= t0:
         t0, t1 = 0.0, float(dur)
-    want = credit(login, platform)
-    lines = [ln.strip() for ln in str(data.get("ds", "")).split("\n") if ln.strip()]
-    if not any(want in ln for ln in lines):
-        lines = [(lines[0] + " " if lines else "") + f"🎥 Live: {want}", *lines[1:]]
-    ds = "\n".join(lines)
-    if len(ds) > CAPS["ds"]:  # keep the credit line and hashtags; shorten the teaser
-        head, rest = lines[0], "\n".join(lines[1:])
-        room = CAPS["ds"] - len(rest) - 1
-        if room > len(want) + 10:
-            teaser = head.replace(f"🎥 Live: {want}", "").strip()
-            keep = room - len(f" 🎥 Live: {want}")
-            head = (
-                teaser[: max(0, keep - 1)].rstrip() + "…" if len(teaser) > keep else teaser
-            ) + f" 🎥 Live: {want}"
-            ds = head + "\n" + rest
-        else:
-            ds = ds[: CAPS["ds"]]
+    ds = build_description(str(data.get("ds", "")).split("\n"), login, platform)
     reject = config.global_config().get("judge", {}).get("reject_flags", ["sp", "mu", "gb"])
     ok = bool(data.get("ok", False)) and not any(fl[k] for k in reject if k in fl)
     return {

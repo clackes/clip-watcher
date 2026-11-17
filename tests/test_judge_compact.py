@@ -11,24 +11,24 @@ from clipwatcher.models import ChatMessage, Word
 
 def test_transcript_compact_groups_phrases_and_drops_bloat():
     whisper = {
-        "language": "it",
+        "language": "en",
         "segments": [
             {"start": 0.0, "end": 2.0, "avg_logprob": -0.2, "words": [
-                {"start": 0.0, "end": 0.4, "word": " ma", "probability": 0.91},
-                {"start": 0.45, "end": 0.9, "word": " cosa", "probability": 0.88},
-                {"start": 0.95, "end": 1.4, "word": " fai?", "probability": 0.97},
+                {"start": 0.0, "end": 0.4, "word": " what", "probability": 0.91},
+                {"start": 0.45, "end": 0.9, "word": " are", "probability": 0.88},
+                {"start": 0.95, "end": 1.4, "word": " you?", "probability": 0.97},
                 {"start": 3.0, "end": 3.5, "word": " NO", "probability": 0.99},
             ]},
         ],
     }  # fmt: skip
     tr = compact.serialize_transcript_compact(whisper)
-    assert tr == [[0.0, 1.4, "ma cosa fai?"], [3.0, 3.5, "NO"]]
+    assert tr == [[0.0, 1.4, "what are you?"], [3.0, 3.5, "NO"]]
     assert compact.serialize_transcript_compact([Word(0, 1, "hi"), Word(5, 6, "there")]) == [
         [0.0, 1.0, "hi"],
         [5.0, 6.0, "there"],
     ]
     assert compact.serialize_transcript_compact([]) == []
-    phrases = [[0.0, 4.0, "[music]"], [4.0, 9.0, "baila conmigo"], [9.0, 13.0, "[music]"]]
+    phrases = [[0.0, 4.0, "[music]"], [4.0, 9.0, "dance with me"], [9.0, 13.0, "[music]"]]
     assert len(compact.serialize_transcript_compact(phrases)) == 3
 
 
@@ -57,21 +57,39 @@ def test_payload_is_minified_and_deterministic():
         "p": "twitch",
         "g": "GTA VI",
         "l": "en",
-        "cl": "en",
         "dur": 30.0,
         "pk": 17.0,
     }
 
 
-def test_copy_language_falls_back_for_other_languages():
-    assert compact.copy_language("it") == "it" and compact.copy_language("en") == "en"
-    assert compact.copy_language("es") == config.global_config()["judge"]["default_copy_language"]
+def test_copy_is_always_english():
+    assert {compact.copy_language(x) for x in ("it", "es", "en", None)} == {"en"}
+    assert config.channel_language() == "en"
+    sp = compact.system_prompt()
+    assert '"cl"' not in sp and "always in natural American English" in sp
+
+
+def test_bait_lines_are_dropped():
+    for bait in ("Like, comment and subscribe!", "Follow for more 🔥", "Don't forget to subscribe",
+                 "Smash that like button", "comment below and follow"):  # fmt: skip
+        assert compact.is_bait(bait), bait
+    for fine in ("Skill or pure luck? 👇", "Tag the friend who'd do this 😭", "#Like #Clip",
+                 "Every wild Zack moment lands here first 🔔", "Would you have pressed it? 👇"):  # fmt: skip
+        assert not compact.is_bait(fine), fine
+
+
+def test_fallback_copy_is_english_four_lines():
+    c = compact.fallback_copy("zackrawrr", "twitch", "GTA VI", 3)
+    lines = c["ds"].split("\n")
+    assert len(lines) == 4 and lines[0].endswith("🎥 twitch.tv/zackrawrr") and lines[1].endswith("👇")
+    assert lines[3] == "#Zackrawrr #GTA6 #Clip #Shorts" and not any(compact.is_bait(x) for x in lines)
+    assert len(c["tt"]) <= 60 and c["hk"]
 
 
 def test_request_system_prompt_is_static_and_cached(tmp_path):
     img = tmp_path / "f.jpg"
     img.write_bytes(b"\xff\xd8\xff")
-    p1 = compact.build_payload(streamer="a", platform="kick", game="g", language="it", dur=20, peak_s=5,
+    p1 = compact.build_payload(streamer="a", platform="kick", game="g", language="en", dur=20, peak_s=5,
                                transcript=[], chat=[])  # fmt: skip
     p2 = compact.build_payload(streamer="b", platform="twitch", game="h", language="en", dur=40, peak_s=9,
                                transcript=[Word(0, 1, "x")], chat=["u: y"])  # fmt: skip
@@ -93,12 +111,13 @@ def test_request_system_prompt_is_static_and_cached(tmp_path):
 
 def test_normalize_output_caps_credit_and_flags():
     raw = {"ok": True, "sc": 14, "t0": 5, "t1": 3, "hk": "H" * 50, "tt": "T" * 90,
-           "ds": "teaser " * 40 + "\nSubscribe for daily best moments 🔔\n#X #GTA6 #Clip #Shorts",
+           "ds": "teaser " * 60 + "\nDoes he make it? 👇\nGTA chaos daily 🔔\n#X #GTA6 #Clip #Shorts",
            "fl": {"sp": True, "mu": False, "gb": False}, "why": "w" * 200}  # fmt: skip
     out = compact.normalize_output(raw, login="Kenetgr", platform="kick", dur=28)
     assert out["sc"] == 10 and (out["t0"], out["t1"]) == (0.0, 28.0)
     assert len(out["hk"]) <= 35 and len(out["tt"]) <= 60 and len(out["why"]) <= 80
-    assert len(out["ds"]) <= 220 and "kick.com/kenetgr" in out["ds"] and out["ds"].endswith("#Shorts")
+    assert len(out["ds"]) <= 300 and "kick.com/kenetgr" in out["ds"] and out["ds"].endswith("#Shorts")
+    assert "Does he make it? 👇" in out["ds"]
     assert out["ok"] is False  # spoiler flag overrides the model's ok
     with pytest.raises(ValueError):
         compact.normalize_output({"ok": True}, login="a", platform="twitch", dur=10)

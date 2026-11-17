@@ -11,8 +11,8 @@ from clipwatcher.models import ChatMessage
 from tests.fixtures import synth
 
 PRIV = (
-    "@badge-info=;display-name=Mario_Rossi;tmi-sent-ts=1700000000123;msg-id=x "
-    ":mario_rossi!mario_rossi@mario_rossi.tmi.twitch.tv PRIVMSG #chan :KEKW che ride"
+    "@badge-info=;display-name=Lucas_Reed;tmi-sent-ts=1700000000123;msg-id=x "
+    ":lucas_reed!lucas_reed@lucas_reed.tmi.twitch.tv PRIVMSG #chan :KEKW so funny"
 )
 RAID = (
     "@login=raider;msg-id=raid;msg-param-viewerCount=250;tmi-sent-ts=1700000001000 "
@@ -22,10 +22,10 @@ RAID = (
 
 def test_parse_privmsg_and_tags():
     ln = parse_line(PRIV)
-    assert ln.command == "PRIVMSG" and ln.params == ["#chan", "KEKW che ride"]
+    assert ln.command == "PRIVMSG" and ln.params == ["#chan", "KEKW so funny"]
     m = line_to_message(ln, {"nightbot"})
-    assert (m.ts_ms, m.user, m.text, m.is_bot) == (1700000000123, "mario_rossi", "KEKW che ride", False)
-    bot = line_to_message(parse_line(PRIV.replace("Mario_Rossi", "Nightbot")), {"nightbot"})
+    assert (m.ts_ms, m.user, m.text, m.is_bot) == (1700000000123, "lucas_reed", "KEKW so funny", False)
+    bot = line_to_message(parse_line(PRIV.replace("Lucas_Reed", "Nightbot")), {"nightbot"})
     assert bot.is_bot
 
 
@@ -87,7 +87,7 @@ def test_irc_client_against_fake_server():
         return out, chat
 
     out, chat = _run(go())
-    assert [m.text for m in out] == ["KEKW che ride", ""] and out[1].notice_type == "raid"
+    assert [m.text for m in out] == ["KEKW so funny", ""] and out[1].notice_type == "raid"
     assert chat.connects == 2
     assert seen[0] == "CAP REQ :twitch.tv/tags twitch.tv/commands"
     assert seen[1] == "PASS SCHMOOPIIE" and seen[2].startswith("NICK justinfan") and seen[3] == "JOIN #chan"
@@ -120,7 +120,7 @@ def test_irc_pong_timeout_reconnects():
             return m, chat
 
     m, chat = _run(go())
-    assert m.user == "mario_rossi" and chat.connects == 2
+    assert m.user == "lucas_reed" and chat.connects == 2
 
 
 def test_live_log_flushes_each_line(tmp_path):
