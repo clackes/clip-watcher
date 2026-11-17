@@ -50,13 +50,13 @@ def _live_transcribe(media: Path, start_s: float, dur_s: float, language: str | 
         return []
     import tempfile
 
-    from .judge.transcribe import extract_wav
+    from .judge.transcribe import extract_wav, load_wav
 
     name = config.global_config().get("judge", {}).get("live_whisper_model", "small")
     model = _whisper(name, WhisperModel)
     with tempfile.TemporaryDirectory() as td:
         wav = extract_wav(media, start_s, dur_s, Path(td) / "w.wav")
-        segs, _ = model.transcribe(str(wav), word_timestamps=True, vad_filter=True, language=language)
+        segs, _ = model.transcribe(load_wav(wav), word_timestamps=True, vad_filter=True, language=language)
         return [Word(w.start, w.end, w.word.strip()) for s in segs for w in (s.words or [])]
 
 

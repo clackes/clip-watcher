@@ -61,3 +61,19 @@ def test_screen():
     p = {"funny_score": 6, "hype_score": 4, "works_without_context": True, "reject_reason": None}
     assert claude.screen("t", [], "ti", "g", client=FakeClient(resp(p)))["funny_score"] == 6
     assert claude.screen("t", [], "ti", "g", client=FakeClient(exc=ValueError()))["works_without_context"]
+
+
+def test_load_wav_returns_float_samples(tmp_path):
+    import struct
+    import wave
+
+    from clipwatcher.judge.transcribe import load_wav
+
+    p = tmp_path / "a.wav"
+    with wave.open(str(p), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes(struct.pack("<3h", 0, 16384, -32768))
+    arr = load_wav(p)
+    assert arr.dtype.name == "float32" and list(arr) == [0.0, 0.5, -1.0]

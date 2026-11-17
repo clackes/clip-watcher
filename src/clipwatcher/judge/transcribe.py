@@ -31,6 +31,18 @@ def extract_wav(media: str | Path, start_s: float, dur_s: float, out: Path) -> P
 
 
 @lru_cache
+def load_wav(path: Path) -> Any:
+    """16 kHz mono s16 WAV -> float32 array. Passing an array keeps faster-whisper away from PyAV, whose
+    newer releases dropped an argument faster-whisper 1.2.1 still passes."""
+    import wave
+
+    import numpy as np
+
+    with wave.open(str(path)) as w:
+        pcm = w.readframes(w.getnframes())
+    return np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+
+
 def _model() -> Any:
     from faster_whisper import WhisperModel
 
@@ -53,7 +65,7 @@ def transcribe(
     with tempfile.TemporaryDirectory() as td:
         wav = extract_wav(media, start_s, dur_s, Path(td) / "w.wav")
         segments, _info = _model().transcribe(
-            str(wav),
+            load_wav(wav),
             word_timestamps=True,
             vad_filter=True,
             language=language,
