@@ -22,32 +22,43 @@ if ($YtLogin) {
 }
 
 New-Item -ItemType Directory -Force work\logs | Out-Null
-$day = Get-Date -Format yyyyMMdd
+$root = $PWD.Path
 $bot = $null
-if ($env:TELEGRAM_BOT_TOKEN) {
+function Start-TelegramBot {
+    if (-not $env:TELEGRAM_BOT_TOKEN) { "TELEGRAM_BOT_TOKEN not set: clips are staged in staging\ without approval cards"; return }
+    if ($script:bot -and -not $script:bot.HasExited) { return }
     $running = Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
         Where-Object { $_.CommandLine -like "*clipwatcher.queue.telegram_bot*" }
-    if ($running) { "telegram bot already running" }
-    else {
-        $bot = Start-Process $py -ArgumentList "-m", "clipwatcher.queue.telegram_bot" -NoNewWindow -PassThru `
-            -RedirectStandardOutput "work\logs\telegram-$day.log" -RedirectStandardError "work\logs\telegram-$day.err.log"
-        "telegram bot started (pid $($bot.Id), log work\logs\telegram-$day.log)"
-    }
-} else { "TELEGRAM_BOT_TOKEN not set: clips are staged in staging\ without approval cards" }
+    if ($running) { "telegram bot already running"; return }
+    $day = Get-Date -Format yyyyMMdd
+    $script:bot = Start-Process $py -ArgumentList "-m", "clipwatcher.queue.telegram_bot" -NoNewWindow -PassThru `
+        -RedirectStandardOutput "work\logs\telegram-$day.log" -RedirectStandardError "work\logs\telegram-$day.err.log"
+    "telegram bot started (pid $($script:bot.Id), log work\logs\telegram-$day.log)"
+}
 
 # Keep the server from sleeping while the lane runs (no-op on servers that never sleep).
 powercfg /change standby-timeout-ac 0 2>$null | Out-Null
-$host.UI.RawUI.WindowTitle = "Clip Watcher LIVE"
+try { $host.UI.RawUI.WindowTitle = "Clip Watcher LIVE" } catch {}
 # No list on the command line: config\live_streamers.txt (written by cw_remote.py restart), else every streamer.
 if (-not $Streamers -and (Test-Path config\live_streamers.txt)) {
     $Streamers = @((Get-Content config\live_streamers.txt -Raw) -split '[,\s]+' | Where-Object { $_ })
 }
+$lane = @("-m", "clipwatcher.live")
+if ($Streamers) { $lane += @("--streamers", ($Streamers -join ",")) }
 try {
-    $lane = @("-m", "clipwatcher.live")
-    if ($Streamers) { $lane += @("--streamers", ($Streamers -join ",")) }
-    # Tee-Object -Append writes UTF-16 on Windows PowerShell 5.1; append UTF-8 lines ourselves.
-    $logf = Join-Path $PWD "work\logs\live-$day.log"
-    & $py @lane 2>&1 | ForEach-Object { $l = "$_"; $l; [IO.File]::AppendAllText($logf, $l + "`r`n") }
+    # Supervisor: a crashed lane or Telegram bot comes back; only stop/restart (which kill this script) end it.
+    while ($true) {
+        Start-TelegramBot
+        # Tee-Object -Append writes UTF-16 on Windows PowerShell 5.1; append UTF-8 lines ourselves, into the
+        # file of the current day (the lane runs across midnight).
+        & $py @lane 2>&1 | ForEach-Object {
+            $l = "$_"; $l
+            [IO.File]::AppendAllText("$root\work\logs\live-$(Get-Date -Format yyyyMMdd).log", $l + "`r`n")
+        }
+        $msg = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ERROR run_live: live lane exited (code $LASTEXITCODE); restarting in 15 s"
+        $msg; [IO.File]::AppendAllText("$root\work\logs\live-$(Get-Date -Format yyyyMMdd).log", $msg + "`r`n")
+        Start-Sleep 15
+    }
 } finally {
     if ($bot -and -not $bot.HasExited) { taskkill /T /F /PID $bot.Id | Out-Null }
 }

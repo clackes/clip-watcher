@@ -7,6 +7,7 @@
     test [pytest args]           run the test suite on the server (default: -q -m "not ffmpeg")
     logs [-n N] [-g REGEX]       tail today's live log (optionally only lines matching REGEX)
     restart [list|all]           restart the bot; a comma list (or all) becomes its streamers
+    install                      (re)register task cw-live: runs logged on or not, starts at boot
     stop                         stop the bot and its recorders
     ps [FILE|-]                  run a PowerShell script (file or stdin) in C:\\clip-watcher
     put LOCAL REMOTE             upload a small file (configs; chunked, ~1 MB max is sensible)
@@ -170,15 +171,39 @@ def cmd_restart(a: argparse.Namespace) -> None:
     elif a.streamers:
         script += rf" Set-Content config\live_streamers.txt '{a.streamers}';"
     script += (
-        " $arg = '-NoExit -ExecutionPolicy Bypass -File " + SRV + r"\scripts\run_live_windows.ps1';"
-        f" $act = New-ScheduledTaskAction -Execute powershell.exe -WorkingDirectory {SRV} -Argument $arg;"
-        " Set-ScheduledTask -TaskName cw-live -Action $act | Out-Null;"
         " Start-ScheduledTask cw-live; Start-Sleep 25;"
         r" $l = 'config\live_streamers.txt';"
         " 'streamers: ' + $(if (Test-Path $l) { Get-Content $l } else { 'all' });"
         " 'streamlink: ' + (Get-Process streamlink -EA SilentlyContinue).Count"
     )
     print(ps(script))
+
+
+def cmd_install(_: argparse.Namespace) -> None:
+    """Task cw-live as a background service: "run whether the user is logged on or not" (a Remote Desktop
+    sign-out killed the interactive task on 18 Nov), started at boot (Windows Update reboots). Password logon,
+    not S4U: Chrome's YouTube cookies are DPAPI-encrypted and need the user's real credentials. No window:
+    watch it with status/logs. Re-run after changing the Administrator password."""
+    pw = password().replace("'", "''")
+    print(
+        ps(
+            KILL_BOT
+            + " $arg = '-ExecutionPolicy Bypass -File "
+            + SRV
+            + r"\scripts\run_live_windows.ps1';"
+            f" $act = New-ScheduledTaskAction -Execute powershell.exe -WorkingDirectory {SRV} -Argument $arg;"
+            " $trg = New-ScheduledTaskTrigger -AtStartup; $trg.Delay = 'PT1M';"
+            " $set = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances"
+            " IgnoreNew -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries"
+            " -DontStopIfGoingOnBatteries -StartWhenAvailable;"
+            " Unregister-ScheduledTask cw-live -Confirm:$false -EA SilentlyContinue;"
+            " Register-ScheduledTask cw-live -Action $act -Trigger $trg -Settings $set -RunLevel Highest"
+            f" -User {USER} -Password '{pw}' | Out-Null;"
+            " Start-ScheduledTask cw-live; Start-Sleep 30;"
+            " $t = Get-ScheduledTask cw-live; 'task: ' + $t.State + ', logon ' + $t.Principal.LogonType;"
+            " 'streamlink: ' + (Get-Process streamlink -EA SilentlyContinue).Count"
+        )
+    )
 
 
 def cmd_stop(_: argparse.Namespace) -> None:
@@ -199,6 +224,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status").set_defaults(fn=cmd_status)
+    sub.add_parser("install").set_defaults(fn=cmd_install)
     sub.add_parser("push").set_defaults(fn=cmd_push)
     t = sub.add_parser("test")
     t.add_argument("args", nargs="*")
