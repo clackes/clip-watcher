@@ -54,6 +54,12 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   time on the seam (y960), Anton, shouted words yellow. Judge `fx` beats (hype|fail|shock|funny + label like
   *FAIL*) -> zoom punch, colour effect, coloured label and a meme sound from assets/sfx/<kind>/ (myinstants US
   trending, owner's pick; some may get audio claims). No webcam -> 1080x760 frame over a blurred copy.
+- D12 Edit like the top clip channels (owner, 18 Nov; from 20 Shorts with 0.1-130M views): open on the setup
+  line, end on the punchline (cold open off, `render.cold_open_s: 0`); jump cuts drop pauses between lines
+  (render/jumpcut.py: 0.8-4 s pauses, never below 12 s / 60 %, beats and action labels protected); judge `ac`
+  action labels (*WATCHING*) on silent stretches; labels and sounds only in pauses (template.cues); no-webcam
+  full-camera / IRL clips reframed to a full-screen 9:16 window that follows the face (render/reframe.py).
+  Judge: thinking on at low effort (off, the same clip scored 5-8), a frame every 2.5 s (8-16), audio peaks `au`.
 - D6 Judge (v2, 17 Nov): one static cached system prompt (prompts/judge_v2.md, no per-clip variables) + 8
   labelled 480x270 JPEG q65 frames + compact JSON {meta,tr,ch,task}; short-key output {ok,sc,t0,t1,hk,tt,ds,
   fl{sp,mu,gb},why}, caps/credit enforced in code (judge/compact.py). Thinking off, effort low (judge.* in

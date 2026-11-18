@@ -307,6 +307,7 @@ SEAM_Y = 960
 FRAME_H = 760  # no-webcam frame 1080x760 (16:9 source, sides trimmed a little) -> y580-1340
 FRAME_Y = 580
 FRAME_CAP_Y = 1450
+REFRAME_CAP_Y = 1250  # full-screen reframe: captions under the face, above the Shorts UI
 SPLIT_LOGO_W, SPLIT_LOGO_Y = 520, 40
 PUNCH, PUNCH_S = 0.12, 0.45  # zoom punch on a beat: +12 %, eased out over 0.45 s
 FX_FILTERS = {  # beat kind -> (seconds, filter) applied to the whole picture under the captions
@@ -428,7 +429,7 @@ def build_split_graph(
     measured: dict | None = None, src_wh: tuple[int, int] = (1920, 1080), fps: float = 30.0,
     face: Rect | None = None, beats: list[tuple] | None = None,
     sfx: list[tuple[float, int]] | None = None, sfx_gain_db: float = -4.0,
-    keep: list[tuple[float, float]] | None = None,
+    keep: list[tuple[float, float]] | None = None, reframe_x: str | None = None,
 ) -> str:  # fmt: skip
     """beats are on the output timeline (after the cold open); sfx = (output time, ffmpeg input index);
     keep = jump-cut stretches of the clip (relative to its start), None = the whole clip."""
@@ -452,6 +453,17 @@ def build_split_graph(
         g.append(_zoomed("[cs]", fit_crop(cam, 1080 / 960, centre), (1080, 960), z, fps, "[cam]"))
         g.append(_zoomed("[gs]", fit_crop(game, 1080 / 960), (1080, 960), None, fps, "[game]"))
         g.append("[cam][game]vstack=inputs=2,format=yuv420p,setsar=1[v1]")
+    elif reframe_x:  # full-screen 9:16 window following the person (crop x is evaluated per frame)
+        fw, fh = src_wh
+        cw = int(fh * 9 / 16) // 2 * 2
+        g.append(f"[sv]crop={cw}:{fh}:'{reframe_x}':0,scale=1080:1920:flags=lanczos,setsar=1[rf]")
+        if z:  # punches on the whole picture, 1x canvas (2x of a full 1080x1920 frame is too slow)
+            g.append(
+                f"[rf]zoompan=z='{z}':x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s=1080x1920:fps={fps:g},"
+                "setpts=PTS-STARTPTS,format=yuv420p,setsar=1[v1]"
+            )
+        else:
+            g.append("[rf]format=yuv420p[v1]")
     else:
         fw, fh = src_wh
         g.append("[sv]split=2[bgs][fs]")
@@ -488,7 +500,7 @@ def render_short(
     has_webcam: bool = True, profile: str = "cpu_batch", captions: str | None = None,
     cold_open: tuple[float, float] | None = None, face: Rect | str | None = None,
     beats: list[tuple] | None = None, layout: str | None = None,
-    actions: list[tuple[float, float, str]] | None = None,
+    actions: list[tuple[float, float, str]] | None = None, reframe: bool = False,
 ) -> Path:  # fmt: skip
     """cold_open=(start, duration) relative to start_s: that moment plays first, zoomed in, then the clip.
     The output is duration + dur_s long; captions follow the clip part. beats = judge beats (t relative to
@@ -538,6 +550,7 @@ def render_short(
         words = co_words + [Word(w.start + co_d, w.end + co_d, w.text) for w in words]
     beats = [(b[0] + co_d, *b[1:]) for b in beats or [] if 0 <= b[0] <= main_d]
     actions = [(a[0] + co_d, min(a[1], main_d) + co_d, *a[2:]) for a in actions or [] if a[0] < main_d]
+    do_reframe = reframe and not has_webcam
     if split:
         return _render_split(
             src, out, coarse=coarse, trim=trim, dur_s=dur_s, total=total, info=info, fps=fps, cam=cam,
@@ -545,6 +558,7 @@ def render_short(
             captions=captions or caption_style(clip_id), cold_open=cold_open, face=parse_rect(face),
             profile=profile, sfx=pick_sfx(cues(beats, words)), keep=keep, actions=actions,
             cue_beats=cues(beats, words),
+            reframe_x=_reframe_path(src, start_s, dur_s, info, keep, cold_open) if do_reframe else None,
         )  # fmt: skip
 
     with tempfile.TemporaryDirectory(prefix="clipwatcher_") as td:
@@ -590,16 +604,45 @@ def render_short(
     return out
 
 
+def _reframe_path(
+    src: Path, start_s: float, dur_s: float, info: SourceInfo, keep: list[tuple[float, float]],
+    cold_open: tuple[float, float] | None,
+) -> str | None:  # fmt: skip
+    """crop x(t) expression on the output timeline that follows the main face, or None (boxed frame)."""
+    from clipwatcher.render import jumpcut, reframe
+
+    if not reframe.enabled():
+        return None
+    samples = reframe.track(src, start_s, dur_s)
+    if reframe.coverage(samples) < reframe.MIN_COVER:
+        return None
+    path = reframe.smooth(samples)
+    co_d = cold_open[1] if cold_open else 0.0
+    pts = []
+    for t, x in path:
+        if cold_open and cold_open[0] <= t <= cold_open[0] + co_d:
+            pts.append((round(t - cold_open[0], 2), x))
+        m = jumpcut.remap(t, keep) if keep else t
+        if m is not None:
+            pts.append((round(m + co_d, 2), x))
+    crop_w = int(info.height * 9 / 16) // 2 * 2
+    return reframe.x_expr(reframe.keyframes(sorted(pts)), info.width, crop_w)
+
+
 def _render_split(
     src: Path, out: Path, *, coarse: float, trim: float, dur_s: float, total: float, info: SourceInfo,
     fps: float, cam: Rect, game: Rect, has_webcam: bool, words: list[Word], beats: list, streamer: str,
     captions: str, cold_open: tuple[float, float] | None, face: Rect | None, profile: str,
     sfx: list[tuple[float, Path]] | None = None, keep: list[tuple[float, float]] | None = None,
     actions: list[tuple[float, float, str]] | None = None, cue_beats: list[tuple] | None = None,
+    reframe_x: str | None = None,
 ) -> Path:  # fmt: skip
-    """beats drive zoom and colour effects; cue_beats (labels and sounds moved off speech) the captions."""
-    cap_y = SEAM_Y if has_webcam else FRAME_CAP_Y
-    credit_pos = (7, 24, SEAM_Y + 75) if has_webcam else (7, 24, FRAME_Y + FRAME_H + 12)
+    """beats drive zoom and colour effects; cue_beats (labels and sounds moved off speech) the captions.
+    reframe_x: crop x(t) of a full-screen 9:16 window that follows the person (no-webcam clips)."""
+    cap_y = SEAM_Y if has_webcam else (REFRAME_CAP_Y if reframe_x else FRAME_CAP_Y)
+    credit_pos = (
+        (7, 24, SEAM_Y + 75) if has_webcam else (7, 24, 170) if reframe_x else (7, 24, FRAME_Y + FRAME_H + 12)
+    )
     use_logo = bool(config.global_config().get("render", {}).get("logo", True))
     with tempfile.TemporaryDirectory(prefix="clipwatcher_") as td:
         ass = write_ass(
@@ -618,7 +661,7 @@ def _render_split(
             trim=trim, dur=dur_s, has_webcam=has_webcam, cam=cam, game=game, logo_idx=1 if use_logo else -1,
             ass=ass, fontsdir=FONTS_DIR, cold_open=cold_open, zoom=co_settings()[1],
             measured=_measure(src, coarse, trim, dur_s, cold_open, keep), src_wh=(info.width, info.height),
-            fps=fps, face=face, beats=beats, sfx=sfx_in, sfx_gain_db=gain, keep=keep,
+            fps=fps, face=face, beats=beats, sfx=sfx_in, sfx_gain_db=gain, keep=keep, reframe_x=reframe_x,
         )  # fmt: skip
         cmd += ["-filter_complex", graph, "-map", "[v]", "-map", "[a]", *video_args(profile)]
         cmd += ["-fps_mode", "cfr", "-r", f"{fps:g}", "-c:a", "aac", "-b:a", "192k", "-ar", "48000"]

@@ -386,3 +386,35 @@ def test_cues_move_label_and_sound_off_speech():
     assert cue_time(1.4, words + [Word(2.05, 2.55, "and"), Word(2.9, 4.0, "on")]) is None
     beats = [(1.4, "funny", "*ROBBED*", "bruh"), (5.0, "shock", "", "")]
     assert cues(beats, words) == [(2.05, "funny", "*ROBBED*", "bruh")]  # no label/sound: nothing to cue
+
+
+def test_reframe_path_smooths_and_builds_a_clamped_expression():
+    from clipwatcher.render import reframe
+
+    samples = [
+        (i * 0.5, x) for i, x in enumerate([None, 0.30, 0.31, 0.95, 0.30, 0.32, 0.70, 0.71, 0.72, 0.72])
+    ]
+    assert reframe.coverage(samples) == 0.9
+    path = reframe.smooth(samples)
+    assert path[0][1] == 0.30  # gap backfilled with the first face
+    assert max(x for _, x in path) < 0.8  # the 0.95 blip is filtered out
+    assert path[-1][1] > 0.6  # the real move to the right is followed
+    expr = reframe.x_expr(reframe.keyframes(path), 1920, 606)
+    assert expr.startswith("if(lt(t,") and "t-" in expr
+    assert reframe.x_expr([(0.0, 0.0)], 1920, 606) == "if(lt(t,0.00),0,0)"  # clamped at the left edge
+    steps = [abs(b[1] - a[1]) for a, b in zip(path, path[1:], strict=False)]
+    assert max(steps) <= reframe.MAX_SPEED * reframe.SAMPLE_S + 1e-9  # no whip pans
+
+
+@pytest.mark.ffmpeg
+def test_split_short_reframes_a_full_camera_clip(synth_src, tmp_path, monkeypatch):
+    from clipwatcher.render import reframe
+
+    monkeypatch.setattr(reframe, "track", lambda *a, **k: [(i * 0.5, 0.3 + 0.05 * i) for i in range(8)])
+    out = tmp_path / "rf.mp4"
+    render_short(
+        synth_src, 2.0, 4.0, out, clip_id="rf", streamer="tester", words=demo_words(4), hook=None,
+        has_webcam=False, profile="cpu_live", captions="word", layout="split", reframe=True,
+        beats=[(1.0, "shock", "*WAIT*", "")],
+    )  # fmt: skip
+    check_short(out, 4.0)

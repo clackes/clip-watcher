@@ -39,7 +39,12 @@ class Layout:
     face: str | None = None  # "w:h:x:y" of the detected face (cold open centres on it)
 
     def as_render_kwargs(self) -> dict:
-        return {"has_webcam": self.has_webcam, "cam": self.cam, "game": self.game, "face": self.face}
+        # no overlay cam: a full-screen camera or IRL shot may be reframed to 9:16 around the person
+        reframe = not self.has_webcam and self.source in ("fullcam", "no-face")
+        return {
+            "has_webcam": self.has_webcam, "cam": self.cam, "game": self.game, "face": self.face,
+            "reframe": reframe,
+        }  # fmt: skip
 
 
 def _parse(r: str) -> tuple[int, int, int, int]:
