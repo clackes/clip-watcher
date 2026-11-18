@@ -408,6 +408,28 @@ def fit_crop(rect: Rect, aspect: float, centre: tuple[float, float] | None = Non
     return int(cx) // 2 * 2, int(cy) // 2 * 2, cw, ch
 
 
+def split_game_crop(cam: Rect | None, fw: int, fh: int, aspect: float = 1080 / 960) -> Rect:
+    """Gameplay half of the split Short: the full frame height at the panel's aspect, centred on the action
+    (owner, 18 Nov: the old crop of the strip above/beside the cam showed sky and cut the character).
+    Slides sideways only as far as needed to keep the facecam overlay out of the panel (it is already on
+    top), never trimming height."""
+    cw = min(fw, int(fh * aspect)) // 2 * 2
+    ch = fh // 2 * 2 if fw >= fh * aspect else int(cw / aspect) // 2 * 2
+    y = (fh - ch) // 2 // 2 * 2
+    centre_x = (fw - cw) / 2
+    if not cam:
+        return int(centre_x) // 2 * 2, y, cw, ch
+    cx, cy, cwid, chgt = cam
+    area = max(cwid * chgt, 1)
+
+    def cost(x: int) -> float:
+        ov = max(0, min(x + cw, cx + cwid) - max(x, cx)) * max(0, min(y + ch, cy + chgt) - max(y, cy))
+        return ov / area + 0.5 * abs(x - centre_x) / fw  # a cam in view weighs more than leaving centre
+
+    best = min(range(0, fw - cw + 1, 2), key=cost)
+    return best, y, cw, ch
+
+
 def zoom_expr(cold_open_s: float, zoom: float, beat_ts: list[float]) -> str | None:
     """zoompan z(it): cold-open punch-in ramp, then a short punch on every beat. None = no zoom."""
     terms = []
@@ -458,7 +480,7 @@ def build_split_graph(
         centre = (face[0] + face[2] / 2, face[1] + face[3] / 2) if face else None
         g.append("[sv]split=2[cs][gs]")
         g.append(_zoomed("[cs]", fit_crop(cam, 1080 / 960, centre), (1080, 960), z, fps, "[cam]"))
-        g.append(_zoomed("[gs]", fit_crop(game, 1080 / 960), (1080, 960), None, fps, "[game]"))
+        g.append(_zoomed("[gs]", split_game_crop(cam, *src_wh), (1080, 960), None, fps, "[game]"))
         g.append("[cam][game]vstack=inputs=2,format=yuv420p,setsar=1[v1]")
     elif reframe_x:  # full-screen 9:16 window following the person (crop x is evaluated per frame)
         fw, fh = src_wh

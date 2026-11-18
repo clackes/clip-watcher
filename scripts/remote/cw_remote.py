@@ -187,10 +187,7 @@ def cmd_install(_: argparse.Namespace) -> None:
     pw = password().replace("'", "''")
     print(
         ps(
-            KILL_BOT
-            + " $arg = '-ExecutionPolicy Bypass -File "
-            + SRV
-            + r"\scripts\run_live_windows.ps1';"
+            KILL_BOT + " $arg = '-ExecutionPolicy Bypass -File " + SRV + r"\scripts\run_live_windows.ps1';"
             f" $act = New-ScheduledTaskAction -Execute powershell.exe -WorkingDirectory {SRV} -Argument $arg;"
             " $trg = New-ScheduledTaskTrigger -AtStartup; $trg.Delay = 'PT1M';"
             " $set = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances"

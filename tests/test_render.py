@@ -418,3 +418,14 @@ def test_split_short_reframes_a_full_camera_clip(synth_src, tmp_path, monkeypatc
         beats=[(1.0, "shock", "*WAIT*", "")],
     )  # fmt: skip
     check_short(out, 4.0)
+
+
+def test_split_game_crop_keeps_full_height_and_dodges_the_cam():
+    """Owner, 18 Nov: the gameplay half showed sky (strip above a bottom-left cam), not the action."""
+    from clipwatcher.render.template import split_game_crop
+
+    assert split_game_crop(None, 1920, 1080) == (352, 0, 1214, 1080)  # centred, full height
+    x, y, w, h = split_game_crop((345, 760, 210, 320), 1920, 1080)  # peanut's cam, bottom-left
+    assert (y, h) == (0, 1080) and x >= 555 and x + w <= 1920
+    x, *_ = split_game_crop((1700, 0, 220, 200), 1920, 1080)  # corner cam outside the centre: stay centred
+    assert x == 352
