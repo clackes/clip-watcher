@@ -35,11 +35,6 @@ SRV = r"C:\clip-watcher"
 STAGE = r"C:\cw-up"
 CHUNK = 2500  # base64 chars per call: run_ps goes through an 8191-char command line
 
-LOAD_ENV = (
-    "Get-Content .env | ? { $_ -match '^\\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$' } | "
-    "% { [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2].Trim().Trim('\"'), 'Process') }; "
-    "$env:PYTHONUTF8='1';"
-)
 KILL_BOT = (
     "Stop-ScheduledTask cw-live -EA SilentlyContinue; "
     "Get-CimInstance Win32_Process | "
@@ -128,7 +123,8 @@ def cmd_push(_: argparse.Namespace) -> None:
 def cmd_test(a: argparse.Namespace) -> None:
     args = " ".join(a.args) if a.args else '-q -m "not ffmpeg"'
     run = f" .venv\\Scripts\\python -m pytest -p no:cacheprovider {args} 2>&1 | Select-Object -Last 40"
-    print(ps(LOAD_ENV + run, check=False))
+    # Not .env: tests must not see the API keys. Only the tool path they need.
+    print(ps(r"$env:CLIPWATCHER_FFMPEG='C:\ffmpeg\bin\ffmpeg.exe'; $env:PYTHONUTF8='1';" + run, check=False))
 
 
 def cmd_logs(a: argparse.Namespace) -> None:
@@ -150,7 +146,8 @@ def cmd_status(_: argparse.Namespace) -> None:
             "| % { ($_.CommandLine -replace '.*-m ','').Trim() } | Sort-Object -Unique) -join ', '); "
             "'recorders: streamlink ' + (Get-Process streamlink -EA SilentlyContinue).Count + ', ffmpeg ' "
             "+ (Get-Process ffmpeg -EA SilentlyContinue).Count; "
-            "$d = Get-PSDrive C; 'disk C: {0:N0} GB free of {1:N0}' -f ($d.Free/1GB), (($d.Free+$d.Used)/1GB); "
+            "$d = Get-PSDrive C; "
+            "'disk C: {0:N0} GB free of {1:N0}' -f ($d.Free/1GB), (($d.Free+$d.Used)/1GB); "
             "'repo: ' + (git log --oneline -1); "
             "'--- log:'; "
             "Get-Content ('work\\logs\\live-' + (Get-Date -f yyyyMMdd) + '.log') -Encoding UTF8 -Tail 8"

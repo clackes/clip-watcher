@@ -79,7 +79,11 @@ def _steps(log):
     async def post(app, db, cid, video):
         log.append(("post", cid))
 
-    return fastlane.Steps(tr, sc, heur, rs, rc, stage, post)
+    st = fastlane.Steps(tr, sc, heur, rs, rc, stage, post)
+    # Never the real judge: with ANTHROPIC_API_KEY in the environment (the server's .env) the default judge
+    # extracted frames and could call the API from a unit test.
+    st.judge = lambda *a, **k: None
+    return st
 
 
 def test_sequence_and_pins(tmp_path):
