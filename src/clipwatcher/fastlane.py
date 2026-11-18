@@ -261,8 +261,20 @@ class FastLane:
         pad = float(self.cfg["pin_pad_s"])
         self.ring.pin(int((cand.start_s - pad) * 1000), int((cand.end_s + pad) * 1000), PIN_TTL_S)
 
+    def _chat_delay_s(self) -> float:
+        d = getattr(self.detector, "delay_s", None)
+        if d is None:
+            cfg = config.global_config().get("detector", {})
+            d = config.streamer(self.streamer).get("delay_s", cfg.get("default_delay_s", 8))
+        return float(d)
+
     def _chat_lines(self, cand: Candidate) -> list[str]:
-        lo, hi = int(cand.start_s * 1000), int(cand.end_s * 1000)
+        """Chat that reacts to the clip: chat runs delay_s behind the video, so the window is shifted by it
+        (plus the post-roll). Reading the clip's own seconds handed the judge the calm before the reaction
+        ("chat quiet") on every GTA VI candidate (18 Nov)."""
+        shift = self._chat_delay_s()
+        lo = int((cand.start_s + shift) * 1000)
+        hi = int((cand.end_s + shift + float(self.cfg["post_roll_s"])) * 1000)
         return [f"{m.user}: {m.text}" for m in self.recent if lo <= m.ts_ms <= hi and not m.is_notice]
 
     async def _wait_for_buffer(self, need_end_s: float) -> None:

@@ -225,3 +225,19 @@ def test_same_window_fires_once(tmp_path):
     )  # fmt: skip
     out = asyncio.run(lane.run())
     assert len(out) == 1 and sum(e[0] == "transcribe" for e in log) == 1
+
+
+def test_judge_gets_the_chat_that_reacts_to_the_clip():
+    """Regression (18 Nov): chat runs delay_s behind the video; the judge got the clip's own seconds of chat,
+    i.e. the calm before the reaction, and called every GTA VI moment "chat quiet"."""
+    import types
+
+    from clipwatcher.models import Candidate, ChatMessage
+
+    lane = fastlane.FastLane("x", None, types.SimpleNamespace(delay_s=8.0), None, cfg={"post_roll_s": 5.0})
+    for t in range(100, 160):
+        lane.recent.append(ChatMessage(t * 1000, f"u{t}", "before" if t < 128 else "LMAO"))
+    cand = Candidate("x", 120.0, 100.0, 130.0, chat_score=6, final_score=6)  # chat reacts at 128-143
+    lines = lane._chat_lines(cand)
+    assert sum("LMAO" in ln for ln in lines) == 143 - 128 + 1
+    assert all(int(ln.split(": ")[0][1:]) >= 108 for ln in lines)
