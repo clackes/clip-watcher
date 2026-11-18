@@ -49,7 +49,7 @@ async def run_streamer(login: str, *, db, bot=None, staging_root: Path | None = 
         login,
         stream_id,
         data_root() / "ring",
-        quality=scfg.get("quality", "1080p60,720p60,720p,best"),
+        quality=scfg.get("quality", buf.get("quality", "720p,720p30,720p60,best")),
         segment_s=int(buf.get("segment_s", 10)),
         window_min=float(buf.get("window_min", 30)),
         min_free_disk_pct=float(buf.get("min_free_disk_pct", 15)),

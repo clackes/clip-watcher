@@ -365,3 +365,29 @@ def test_recorder_respawns_dead_pipeline(tmp_path, monkeypatch):
     rec._run_start_ms = 0  # spawned long ago
     asyncio.run(rec.check_once())
     assert events == ["kill", "spawn"]
+
+
+def test_recorder_alerts_once_when_recording_falls_behind_live(tmp_path, monkeypatch):
+    import asyncio
+
+    from clipwatcher.ingest.recorder import Recorder
+
+    alerts = []
+
+    async def on_alert(text):
+        alerts.append(text)
+
+    rec = Recorder("twitch", "x", "s", tmp_path, on_alert=on_alert)
+    lag = {"s": 840.0}
+    monkeypatch.setattr(rec, "newest_segment_age_s", lambda now=None: lag["s"])
+
+    async def go():
+        await rec._check_lag()
+        await rec._check_lag()  # still behind: no second alert
+        lag["s"] = 5.0
+        await rec._check_lag()  # caught up: re-armed
+        lag["s"] = 300.0
+        await rec._check_lag()
+
+    asyncio.run(go())
+    assert len(alerts) == 2 and "14.0 min behind live" in alerts[0]

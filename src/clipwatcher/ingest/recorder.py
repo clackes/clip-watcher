@@ -168,6 +168,8 @@ class Recorder:
         self._n_runs = 0
         self.paused = False
         self.on_alert = on_alert  # async callable(text), e.g. a Telegram alert
+        self.lag_alert_s = float(config.global_config().get("buffer", {}).get("lag_alert_s", 60))
+        self._lagging = False
 
     def newest_segment_age_s(self, now: float | None = None) -> float | None:
         rows = self.ring.segments()
@@ -281,6 +283,7 @@ class Recorder:
                 log.warning("%s: recorder exited (code %s); restarting", self.login, proc.returncode)
                 await self._kill_pipeline()
                 await self._spawn()
+        await self._check_lag()
         if alert and not self.paused:
             self.paused = True
             log.error("%s: %s", self.login, alert)
@@ -291,6 +294,22 @@ class Recorder:
             log.warning("%s: disk free again, recording resumed", self.login)
             await self._spawn()
             await self._alert(f"{self.login}: disk free again, recording resumed")
+
+    async def _check_lag(self) -> None:
+        """Warn once when the recording falls behind live: the line cannot carry every stream at this
+        quality, and clips would be cut from minutes-old video. Clears when it catches up."""
+        lag = self.newest_segment_age_s()
+        if lag is None or self.paused:
+            return
+        if lag > self.lag_alert_s and not self._lagging:
+            self._lagging = True
+            msg = (f"{self.login}: recording {lag / 60:.1f} min behind live - the connection cannot keep up; "
+                   "record fewer streamers or lower buffer.quality")  # fmt: skip
+            log.error(msg)
+            await self._alert(msg)
+        elif lag < self.lag_alert_s / 3 and self._lagging:
+            self._lagging = False
+            log.warning("%s: recording caught up with live", self.login)
 
     async def _alert(self, text: str) -> None:
         if self.on_alert is None:

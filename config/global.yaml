@@ -11,6 +11,10 @@ buffer:
   pin_pad_s: 60
   min_free_disk_pct: 15
   min_free_disk_gb: 5     # recording pauses only below BOTH floors; pruning always runs
+  # streamlink quality ladder for live recording (per streamer: quality: in streamers.yaml). 18 Nov: nine
+  # 1080p60 streams (~7 Mbps each) on a ~28 Mbps line ran 14 min behind live; 720p30 is ~2.5-3 Mbps.
+  quality: 720p,720p30,720p60,best
+  lag_alert_s: 60           # recording this far behind live -> log + Telegram alert (line too slow)
 
 detector:                   # D3
   weights: {U: 0.5, E: 0.35, S: 0.15}
