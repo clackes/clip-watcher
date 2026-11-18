@@ -241,3 +241,24 @@ def test_small_gifted_subs_do_not_mute_the_detector():
 
     assert any(abs(c.signals["fire_s"] - (base / 1000 + 1000)) < 15 for c in run(3))
     assert not run(20)  # a 20-sub bomb every 20 s keeps it muted
+
+
+def test_spike_without_reaction_does_not_fire(monkeypatch):
+    """Owner, 18 Nov: chat spikes of prompted words ("TIP TIP" in a GTA strip club, emote spam) are not
+    moments; the same spike of laughter is (detector.min_reaction_share)."""
+    from clipwatcher import config
+
+    real = config.global_config()
+    monkeypatch.setattr(config, "global_config", lambda: {**real, "detector": {**real["detector"],
+                                                          "min_reaction_share": 0.15}})  # fmt: skip
+    base = 1_790_000_000_000
+
+    def run(word):
+        msgs = [ChatMessage(base + t * 1000, f"u{t % 40}", f"talking {t}") for t in range(1200)]
+        msgs += [ChatMessage(base + 1_000_000 + i * 100, f"fan{i}", word) for i in range(80)]
+        msgs.sort(key=lambda m: m.ts_ms)
+        det = LiveDetector("nobody")
+        return [c for m in msgs if (c := det.feed(m))] + det.drain()
+
+    assert any(abs(c.signals["fire_s"] - (base / 1000 + 1000)) < 15 for c in run("KEKW LMAO"))
+    assert not run("TIP HER")

@@ -28,6 +28,7 @@ detector:                   # D3
   min_unique_viewer_pct: 0.01
   mute_after_notice_s: 75   # raid / sub-bomb / giveaway mute window (60-90 s)
   sub_bomb_min: 10          # gifted subs that count as a sub-bomb (smaller gifts don't mute; 18 Nov)
+  min_reaction_share: 0.15  # a spike needs this share of real reactions (lol/LMAO/KEKW/omg/wtf/laughter/clip link); 18 Nov
   cooldown_s: 45
   prompt_share: 0.4         # one keyword-less message from >= 40% of chatters = prompted copy-paste, not a moment
   keep_final: 4.5

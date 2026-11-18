@@ -24,6 +24,17 @@ class _Rec:
     weight: float
     short: bool
     norm: str
+    react: bool = False  # a real reaction: strong keyword (weight >= 1.5), laughter or a pasted clip link
+
+
+REACT_MIN_WEIGHT = 1.5  # keywords at or above this weight are a reaction (lol, LMAO, KEKW, omg, wtf, ????)
+
+
+def reaction_share(window: Sequence[_Rec]) -> float:
+    """Share of messages that are a real reaction. Chat spikes made of game- or streamer-prompted words
+    ("TIP TIP" in a strip club, "shoe store", "missions", emote spam, yes/no polls) sit at 0-0.10 on the
+    18 Nov GTA VI live chats; laughing moments at 0.25-0.60 (owner OK'd the gate)."""
+    return sum(1 for r in window if r.react) / len(window) if window else 0.0
 
 
 CLIP_LINK = re.compile(r"(?i)(clips\.twitch\.tv/|twitch\.tv/\w+/clip/|kick\.com/\w+/clips?/)")
@@ -74,6 +85,7 @@ def _build_records(
     rarity = {k: max(1.0, math.sqrt(100.0 * c / total / 5.0)) for k, c in hits.items()}
     wmap = {k: w for k, _, w in pats}
     wcache: dict[str, float] = {}
+    rcache: dict[str, bool] = {}
     out = []
     for m in msgs:
         if m.is_bot or m.is_notice or m.text.startswith("!"):
@@ -85,8 +97,14 @@ def _build_records(
             if CLIP_LINK.search(m.text):  # a viewer pasting a clip of it: strongest chat signal
                 cands.append(3.0)
             wcache[m.text] = max(cands) if cands else other_weight
+            rcache[m.text] = (
+                any(wmap[k] >= REACT_MIN_WEIGHT for k in cache[m.text])
+                or bool(laugh and laugh.search(m.text))
+                or bool(CLIP_LINK.search(m.text))
+            )
         toks = m.text.split()
-        out.append((m.ts_ms // 1000, _Rec(m.user, wcache[m.text], len(toks) <= 3, _norm(m.text))))
+        rec = _Rec(m.user, wcache[m.text], len(toks) <= 3, _norm(m.text), rcache[m.text])
+        out.append((m.ts_ms // 1000, rec))
     return out
 
 
@@ -201,7 +219,8 @@ def detect(
         per_sec[sec].append(r)
 
     rU, rE, rS = (_Robust(_FLOORS[k], hist_n) for k in "UES")
-    steps: list[tuple[float, float, float, float, int] | None] = []
+    min_react = float(cfg.get("min_reaction_share", 0.0))
+    steps: list[tuple[float, float, float, float, int, float] | None] = []
     for t in range(horizon + 1):
         window = [r for s in range(max(0, t - win + 1), t + 1) for r in per_sec[s]]
         if window:
@@ -220,7 +239,7 @@ def detect(
             muted = any(a <= t <= b for a, b in spans) or (
                 bool(window) and prompted_share(window, other_w) >= prompt_max
             )
-            steps.append(None if muted else (score, zu, ze, zs, u))
+            steps.append(None if muted else (score, zu, ze, zs, u, reaction_share(window)))
         else:
             steps.append(None)
         rU.push(u)
@@ -238,7 +257,7 @@ def detect(
     t, last_fire = 0, -1e9
     while t < len(steps):
         st = steps[t]
-        if st is None or st[0] < fire_z or st[4] < u_need or t - last_fire < cooldown:
+        if st is None or st[0] < fire_z or st[4] < u_need or st[5] < min_react or t - last_fire < cooldown:
             t += 1
             continue
         # best score within the cooldown span after the first fire

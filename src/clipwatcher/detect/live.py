@@ -16,12 +16,14 @@ from clipwatcher import config
 from clipwatcher.detect.detector import (
     _FLOORS,
     CLIP_LINK,
+    REACT_MIN_WEIGHT,
     _kw_patterns,
     _median,
     _norm,
     _Rec,
     _Robust,
     prompted_share,
+    reaction_share,
 )
 from clipwatcher.models import Candidate, ChatMessage
 
@@ -51,6 +53,7 @@ class LiveDetector:
         self.trace: deque[tuple] | None = None  # set to a deque to record (t, score, u, u_need, hold, muted)
         self.viewers = viewers
         self.mute_s = float(cfg.get("mute_after_notice_s", 75))
+        self.min_react = float(cfg.get("min_reaction_share", 0.0))
         self.sub_bomb_min = int(cfg.get("sub_bomb_min", 10))
         self.cooldown = float(cfg.get("cooldown_s", 45))
         sc = config.streamer(streamer)
@@ -113,6 +116,13 @@ class LiveDetector:
             hit = self._match_cache[text] = [k for k, p, _ in self._pats if p.search(text)]
         return hit
 
+    def _is_reaction(self, text: str) -> bool:
+        return (
+            any(self._wmap[k] >= REACT_MIN_WEIGHT for k in self._matches(text))
+            or bool(self._laugh and self._laugh.search(text))
+            or bool(CLIP_LINK.search(text))
+        )
+
     def _rec_weight(self, text: str) -> float:
         keys = self._matches(text)
         for k in keys:
@@ -150,7 +160,8 @@ class LiveDetector:
         if m.text.startswith("!") or sec < (self._next or 0):
             return
         norm = _norm(m.text)
-        rec = _Rec(m.user, self._rec_weight(m.text), len(m.text.split()) <= 3, norm)
+        react = self._is_reaction(m.text)
+        rec = _Rec(m.user, self._rec_weight(m.text), len(m.text.split()) <= 3, norm, react)
         self._pending.setdefault(sec, []).append(rec)
         self._humans.append((m.ts_ms, m.user, norm))
 
@@ -244,6 +255,7 @@ class LiveDetector:
             and not hold
             and score >= self.fire_z
             and u >= u_need
+            and reaction_share(window) >= self.min_react
             and t - self._last_fire >= self.cooldown
         ):
             first = self._run_first if self._run_first is not None else t
