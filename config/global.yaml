@@ -104,7 +104,7 @@ judge:
   frame_every_s: 2.5
   frame_size: [480, 270]    # ~173 vision tokens/frame (w*h/750)
   frame_quality: 65
-  reject_flags: [sp, mu]  # judge flags that drop a clip (spoiler, music risk); gb is kept in meta only (owner, 17 Nov)
+  reject_flags: [sp]      # judge flags that drop a clip (spoiler); mu and gb are kept in meta only (owner: music risk accepted, 18 Nov)
   screen_min: 5
   keyframes: 6              # legacy VOD keyframes()
   keyframe_height: 480

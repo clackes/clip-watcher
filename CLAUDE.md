@@ -77,8 +77,8 @@ uvx ruff check . && uvx ruff format --check .
 - D6 Judge (v2, 17 Nov): one static cached system prompt (prompts/judge_v2.md, no per-clip variables) + 8
   labelled 480x270 JPEG q65 frames + compact JSON {meta,tr,ch,task}; short-key output {ok,sc,t0,t1,hk,tt,ds,
   fl{sp,mu,gb},why}, caps/credit enforced in code (judge/compact.py). Thinking off, effort low (judge.* in
-  global.yaml). judge.mode single | two_stage | off. Owner asked for spoiler/music/gambling flags; sp/mu
-  clips are rejected (judge.reject_flags); gb is informational since 17 Nov (gambling streamers are clipped). Heuristic fallback on API errors (English fallback copy, same shape). Judge t0/t1 start late (<= 2 s before the
+  global.yaml). judge.mode single | two_stage | off. Owner asked for spoiler/music/gambling flags; sp
+  clips are rejected (judge.reject_flags); gb (17 Nov) and mu (18 Nov, owner accepts music-claim risk) are informational. Heuristic fallback on API errors (English fallback copy, same shape). Judge t0/t1 start late (<= 2 s before the
   action; fallback 10 s before the reaction), never cut a word, end on a finished sentence (judge/snap.py).
 - D10 English only (owner, 17 Nov): `channel.language: en`. All copy (hook, title, description, fallbacks) is
   English; streamers whose `language` differs are skipped by live/vod. Description = 4 lines: teaser + credit,

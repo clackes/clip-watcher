@@ -63,9 +63,17 @@ def test_exception_and_bad_output_fall_back():
 
 def test_flags_reject_even_if_model_says_ok():
     r = claude.judge_candidate(
+        cand(), WORDS, [], [], client=FakeClient(resp(dict(GOOD, fl={"sp": True, "mu": False, "gb": False})))
+    )
+    assert r.source == "claude" and not r.ok and r.flags["sp"] and "sp" in r.reject_reason
+
+
+def test_music_flag_is_informational():
+    """Owner, 18 Nov: music-claim risk is accepted; mu stays in meta but never rejects."""
+    r = claude.judge_candidate(
         cand(), WORDS, [], [], client=FakeClient(resp(dict(GOOD, fl={"sp": False, "mu": True, "gb": False})))
     )
-    assert r.source == "claude" and not r.ok and r.flags["mu"] and "mu" in r.reject_reason
+    assert r.source == "claude" and r.ok and r.flags["mu"]
 
 
 def test_screen():

@@ -422,7 +422,7 @@ def normalize_output(data: dict[str, Any], *, login: str, platform: str, dur: fl
     )
     fx = normalize_fx(data.get("fx"), t0, t1)
     ac = normalize_ac(data.get("ac"), t0, t1)
-    reject = config.global_config().get("judge", {}).get("reject_flags", ["sp", "mu"])
+    reject = config.global_config().get("judge", {}).get("reject_flags", ["sp"])
     ok = bool(data.get("ok", False)) and not any(fl[k] for k in reject if k in fl)
     return {
         "ok": ok,
