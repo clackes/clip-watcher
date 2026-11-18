@@ -17,11 +17,20 @@ renders a branded 9:16 Short + clean 16:9 clip, stages them in a Telegram approv
 - Work only on `main`. Small commits.
 
 ## Dev
+The bot runs and is developed on the Windows Server 2025 box (since 18 Nov), repo at `C:\clip-watcher`,
+PowerShell in Warp. The repo has no GitHub remote there (owner's choice): commit on `main` locally.
 ```
-python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
-.venv/bin/pytest -q            # -m "not ffmpeg" to skip render tests
-.venv/bin/ruff check . && .venv/bin/ruff format --check .
+.venv\Scripts\python -m pytest -q          # -m "not ffmpeg" to skip render tests
+.venv\Scripts\ruff check . ; .venv\Scripts\ruff format --check .
+powershell -ExecutionPolicy Bypass -File scripts\run_live_windows.ps1 [xqc,lacy]   # bot + live lane, loads .env
+powershell -ExecutionPolicy Bypass -File scripts\run_live_windows.ps1 -YtLogin -Account <username>
 ```
+- Running bot: scheduled task `cw-live` (interactive, window "Clip Watcher LIVE"); restart with
+  `Stop-ScheduledTask cw-live`, kill `clipwatcher.live`/`telegram_bot` python + streamlink/ffmpeg, `Start-ScheduledTask cw-live`.
+  Only one Telegram bot per token may poll: never start a second copy.
+- Logs: `work\logs\live-<yyyymmdd>.log` (UTF-8). ffmpeg 8.1 (libass) in `C:\ffmpeg\bin` via CLIPWATCHER_FFMPEG.
+- YouTube uploads use the patchright Chrome profile `~\.clipwatcher\yt-profiles\<YT_BROWSER_ACCOUNT>` (capybarasking).
+- Windows needs the VC++ runtime for Whisper (installed). Mac/Linux: `.venv/bin/...` equivalents still work.
 
 ## Testing against reality
 - Replay real VOD chats through `LiveDetector` and compare with batch `detect()` top-10 (see git log
