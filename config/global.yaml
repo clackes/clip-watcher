@@ -33,6 +33,8 @@ detector:                   # D3
   prompt_share: 0.4         # one keyword-less message from >= 40% of chatters = prompted copy-paste, not a moment
   keep_final: 4.5
   default_delay_s: 8        # chat reacts ~5-15 s after the moment
+  live_before_s: 30         # live window before the estimated moment: 41/175 judged windows opened mid-sentence at 20 s
+  live_after_s: 12          # and after it (the judge trims both ends)
   bots: [nightbot, streamelements, moobot, fossabot, sery_bot, streamlabs, wizebot, soundalerts]
   keywords:                 # weights for E (case-insensitive; emotes match whole tokens)
     "clip it": 3

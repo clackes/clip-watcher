@@ -37,12 +37,14 @@ class LiveDetector:
         viewers: int | None = None,
         *,
         delay_s: float | None = None,
-        before_s: float = 20,
-        after_s: float = 10,
+        before_s: float | None = None,
+        after_s: float | None = None,
     ):
         cfg = config.global_config().get("detector", {})
         self.streamer = streamer
-        self.before_s, self.after_s = before_s, after_s
+        # Chat lag differs per stream and per viewer, so the window is wide and the judge trims it.
+        self.before_s = float(before_s if before_s is not None else cfg.get("live_before_s", 20))
+        self.after_s = float(after_s if after_s is not None else cfg.get("live_after_s", 10))
         self.w = cfg.get("weights", {"U": 0.5, "E": 0.35, "S": 0.15})
         self.win = int(cfg.get("window_s", 10))
         self.fire_z, self.pre_z = float(cfg.get("fire_z", 3.0)), float(cfg.get("pre_z", 2.0))

@@ -114,12 +114,28 @@ def _default_judge(
     from .render import cold_open
 
     loud = cold_open.loud_moments(cold_open.loudness(Path(src), t0_s, dur))
+    if loud:  # loudest jump, kept to measure the chat lag per streamer (meta.timing)
+        t, db = max(loud, key=lambda x: x[1])
+        cand.signals.update(au_rel=float(t), au_db=float(db))
     frames = fr.keyframes_lowres(
         src, t0_s, dur, n=fr.frame_count(dur), peak_rel=cand.peak_s - cand.start_s,
         size=(int(size[0]), int(size[1])), quality=int(jcfg.get("frame_quality", 65)),
         out_dir=Path(src).parent / "frames",  # inside the clip's work dir, removed with it
     )  # fmt: skip
     return claude.judge_clip(cand, words, chat_lines, frames, game=game, language=language, loud=loud)
+
+
+def _timing(cand: Candidate, jr: Any) -> dict[str, Any]:
+    """Seconds inside the window: estimated moment, chat fire, loudest audio jump, judge pk and trim.
+    au - est and pk - est across clips show whether a streamer's delay_s is right."""
+    sig, s0 = cand.signals, cand.start_s
+    return {
+        "est": round(cand.peak_s - s0, 1),
+        "fire": round(sig["fire_s"] - s0, 1) if "fire_s" in sig else None,
+        "au": sig.get("au_rel"), "au_db": sig.get("au_db"),
+        "pk": getattr(jr, "peak_rel_s", None),
+        "t0": getattr(jr, "trim_start_s", None), "t1": getattr(jr, "trim_end_s", None),
+    }  # fmt: skip
 
 
 def trim_words(words: list[Word], start: float, end: float) -> list[Word]:
@@ -369,7 +385,7 @@ class FastLane:
             if jr.source == "claude" and not jr.ok:
                 log.info("%s: judge rejected %s (sc=%s): %s", self.streamer, cid, jr.score, jr.reject_reason)
                 self._unpin(cand)
-                self._reject_cleanup(cand, judge=jr, chat=chat_lines, words=words)
+                self._reject_cleanup(cand, judge=jr, chat=chat_lines, words=words, timing=_timing(cand, jr))
                 return Outcome(cid, "rejected", timings, error=str(jr.reject_reason or jr.why))
         from .render import cold_open
 
@@ -425,7 +441,7 @@ class FastLane:
             "chat_score": cand.chat_score, "final_score": cand.final_score, "peak_s": cand.peak_s,
             "start_s": cand.start_s, "end_s": cand.end_s, "funny_score": screen.get("funny_score"),
             "hype_score": screen.get("hype_score"), "layout": lay.source,
-            "captions": caption_style(cid),
+            "captions": caption_style(cid), "timing": _timing(cand, jr),
         }  # fmt: skip
         meta.update(title=jr.title_options[0], description=jr.description)  # heuristic copy too
         if jr.source == "claude":
