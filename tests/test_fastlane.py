@@ -83,6 +83,7 @@ def _steps(log):
     # Never the real judge: with ANTHROPIC_API_KEY in the environment (the server's .env) the default judge
     # extracted frames and could call the API from a unit test.
     st.judge = lambda *a, **k: None
+    st.still_edges = lambda *a, **k: (0.0, 0.0)
     return st
 
 
@@ -285,3 +286,40 @@ def test_card_error_keeps_the_clip_staged(tmp_path):
     out = asyncio.run(lane.run())
     assert [o.status for o in out] == ["staged"]
     assert any(e[0] == "unpin" for e in log)
+
+
+def _one_clip(tmp_path, st, **kw):
+    t0 = 1_700_000_000_000
+    msgs = [ChatMessage(t0 + i * 1000, f"u{i}", "hi") for i in range(60)]
+    msgs[41] = ChatMessage(t0 + 41_000, "late", "fire")
+    lane = fastlane.FastLane(
+        "zack", FakeChat(msgs), FakeDetector({"fire"}), FakeRing([]), steps=st,
+        cfg={"work_dir": str(tmp_path), "pin_pad_s": 60}, **kw,
+    )  # fmt: skip
+    return asyncio.run(lane.run())
+
+
+def test_still_head_is_cut_before_render(tmp_path):
+    """Owner, 18 Nov: a clip opened on 2 s of a capture card's NO SIGNAL screen."""
+    base: list = []
+    _one_clip(tmp_path / "a", _steps(base))
+    cut: list = []
+    st = _steps(cut)
+    st.still_edges = lambda *a, **k: (2.0, 0.0)
+    _one_clip(tmp_path / "b", st)
+    start = lambda lg: next(e[1] for e in lg if e[0] == "render_start")  # noqa: E731
+    assert round(start(cut) - start(base), 2) == 2.0
+
+
+def test_auto_publish_runs_after_staging(tmp_path):
+    log: list = []
+    st = _steps(log)
+
+    async def auto(app, db, cid):
+        log.append(("auto", cid))
+        return "https://youtube.com/shorts/x"
+
+    st.auto_publish = auto
+    out = _one_clip(tmp_path, st, db=object(), bot=object())
+    assert [o.status for o in out] == ["staged"]
+    assert any(e[0] == "auto" for e in log)

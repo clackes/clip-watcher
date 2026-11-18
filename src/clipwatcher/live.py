@@ -59,9 +59,10 @@ async def run_streamer(login: str, *, db, bot=None, staging_root: Path | None = 
     )
     steps = Steps()
     if bot is not None:
-        from clipwatcher.queue.telegram_bot import post_card
+        from clipwatcher.queue.telegram_bot import auto_publish, post_card
 
         steps.post_card = post_card
+        steps.auto_publish = auto_publish
     from clipwatcher.ingest.recorder import sweep_stale
 
     for d in sweep_stale(data_root() / "ring", login, keep=rec.dir):

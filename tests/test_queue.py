@@ -72,10 +72,19 @@ def test_job_lease_retry(db):
 
 
 def test_auto_approve_respects_config(db, monkeypatch):
-    assert db.auto_approve() == []
+    monkeypatch.setattr(config, "global_config", lambda: {"publish": {"auto_approve": False}})
+    assert db.auto_approve() == [] and db.auto_approve_one("c1") is False
     cfg = {"publish": {"auto_approve": True, "auto_approve_min": 8}}
     monkeypatch.setattr(config, "global_config", lambda: cfg)
     assert db.auto_approve() == ["c1"] and db.state("c1") == "APPROVED"
+
+
+def test_auto_approve_one_only_this_clip_above_min(db, monkeypatch):
+    cfg = {"publish": {"auto_approve": True, "auto_approve_min": 8}}
+    monkeypatch.setattr(config, "global_config", lambda: cfg)
+    assert db.auto_approve_one("nope") is False
+    assert db.auto_approve_one("c1") is True and db.state("c1") == "APPROVED"
+    assert db.auto_approve_one("c1") is False  # already approved
 
 
 def test_staging_flow(tmp_path, db):

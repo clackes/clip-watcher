@@ -89,6 +89,13 @@ def esc_filter_path(p: str | Path) -> str:
     return "".join(out)
 
 
+def screen_credit(streamer: str) -> str | None:
+    """The twitch.tv/<name> tag on the video, or None: off by default since 18 Nov (owner). The credit
+    stays in the title/description metadata (config.credit)."""
+    on = bool(config.global_config().get("render", {}).get("credit_on_screen", False))
+    return config.credit(streamer) if on else None
+
+
 def _seek(start_s: float) -> tuple[float, float]:
     coarse = max(0.0, start_s - 6)
     return coarse, start_s - coarse
@@ -581,7 +588,7 @@ def render_short(
     with tempfile.TemporaryDirectory(prefix="clipwatcher_") as td:
         work = Path(td)
         ass = write_ass(
-            work / "subs.ass", words, total, credit=config.credit(streamer),
+            work / "subs.ass", words, total, credit=screen_credit(streamer),
             style=captions or caption_style(clip_id),
         )  # fmt: skip
         cmd = [ffmpeg_bin(), "-y", "-hide_banner", "-ss", f"{coarse:.3f}", "-i", str(src)]
@@ -663,7 +670,7 @@ def _render_split(
     use_logo = bool(config.global_config().get("render", {}).get("logo", True))
     with tempfile.TemporaryDirectory(prefix="clipwatcher_") as td:
         ass = write_ass(
-            Path(td) / "subs.ass", words, total, credit=config.credit(streamer), style=captions,
+            Path(td) / "subs.ass", words, total, credit=screen_credit(streamer), style=captions,
             y=cap_y, beats=beats if cue_beats is None else cue_beats, credit_pos=credit_pos, actions=actions,
         )  # fmt: skip
         cmd = [ffmpeg_bin(), "-y", "-hide_banner", "-ss", f"{coarse:.3f}", "-i", str(src)]

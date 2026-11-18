@@ -269,6 +269,33 @@ def _chat_id() -> int | None:
     return data.get("telegram_chat_id") or None
 
 
+async def auto_publish(app: Any, db: ClipDB, clip_id: str) -> str | None:
+    """publish.auto_approve (owner, 18 Nov): a clip scoring >= auto_approve_min is approved by the bot and
+    uploaded at once; the link (or the error) goes to the operators' chat. None = not auto-approved."""
+    import asyncio
+
+    if not db.auto_approve_one(clip_id):
+        return None
+    staging.mark_approved(clip_id, "auto")
+    if _youtube_mode() == "api":
+        from clipwatcher.publish import youtube as pub
+    else:
+        from clipwatcher.publish import youtube_browser as pub
+    chat_id = _chat_id()
+    try:
+        res = await asyncio.to_thread(pub.publish_clip, db, clip_id)
+    except Exception as e:  # noqa: BLE001 - report every failure to the operators
+        log.exception("auto upload failed for %s", clip_id)
+        if chat_id and app is not None:
+            await app.bot.send_message(chat_id, f"Auto-approved {clip_id}, YouTube upload failed: {e}")
+        return None
+    if chat_id and app is not None:
+        privacy = "private (DRY_RUN=1)" if config.dry_run() else "public"
+        what = f"not uploaded (dry run: {res})" if res.startswith("dryrun-") else f"YouTube {privacy}: {res}"
+        await app.bot.send_message(chat_id, f"Auto-approved {clip_id}. {what}")
+    return res
+
+
 async def alert(app: Any, text: str) -> None:
     chat_id = _chat_id()
     if chat_id:

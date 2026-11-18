@@ -14,7 +14,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -133,6 +133,12 @@ def _default_heuristic(cand: Candidate, words: list[Word]) -> JudgeResult:
     return claude.heuristic_judge(cand, words, game=config.streamer(cand.stream).get("game"))
 
 
+def _default_still_edges(*a: Any, **k: Any) -> tuple[float, float]:
+    from .render.still import still_edges
+
+    return still_edges(*a, **k)
+
+
 def _default_render_short(*a: Any, **k: Any) -> Path:
     from .render.template import render_short
 
@@ -172,7 +178,9 @@ class Steps:
     render_clean: Callable[..., Path] = _default_render_clean
     stage: Callable[..., Path] = _default_stage
     post_card: Callable[..., Any] | None = None  # async (app, db, clip_id, video)
+    auto_publish: Callable[..., Any] | None = None  # async (app, db, clip_id): publish.auto_approve
     judge: Callable[..., JudgeResult | None] = _default_judge  # None -> screen + heuristic path
+    still_edges: Callable[..., tuple[float, float]] = _default_still_edges  # (head, tail) s of frozen picture
 
 
 @dataclass
@@ -299,6 +307,14 @@ class FastLane:
         log.info("fastlane %s step=%s %.2fs", self.streamer, name, timings[name])
         return out
 
+    async def _auto_publish(self, cid: str) -> None:
+        try:
+            res = await self.steps.auto_publish(self.bot, self.db, cid)  # type: ignore[misc]
+            if res:
+                log.info("%s: auto-published %s: %s", self.streamer, cid, res)
+        except Exception:  # noqa: BLE001 - the clip stays staged/approved for a manual retry
+            log.warning("%s: auto-publish of %s failed", self.streamer, cid, exc_info=True)
+
     # -- one candidate ------------------------------------------------------
     async def process(self, cand: Candidate) -> Outcome:
         cid = self._clip_id(cand)
@@ -358,6 +374,14 @@ class FastLane:
         from .render import cold_open
 
         pl = cold_open.plan(src, t0_s, dur, cand.peak_s - cand.start_s, jr, words)
+        # A "NO SIGNAL" card or a frozen/black screen at either edge is cut (owner, 18 Nov: not funny).
+        head, tail = self.steps.still_edges(src, t0_s + pl.t0, pl.t1 - pl.t0)
+        if (head or tail) and pl.t1 - pl.t0 - head - tail >= 8:
+            log.info("%s: %s cut %.1fs still head, %.1fs still tail", self.streamer, cid, head, tail)
+            co_shift = None
+            if pl.cold_open and pl.cold_open[0] - head >= 0:
+                co_shift = (pl.cold_open[0] - head, pl.cold_open[1])
+            pl = replace(pl, t0=pl.t0 + head, t1=pl.t1 - tail, cold_open=co_shift)
         beats = cold_open.clip_beats(jr, pl)
         actions = cold_open.clip_actions(jr, pl)
         peak_media = t0_s + (pl.reaction if pl.reaction is not None else cand.peak_s - cand.start_s)
@@ -417,6 +441,9 @@ class FastLane:
             except Exception:  # noqa: BLE001 - the clip is staged; a card error must not mark it failed
                 log.warning("%s: card for %s failed (clip staged)", self.streamer, cid, exc_info=True)
             timings["post"] = round(time.perf_counter() - t1, 2)
+        if self.db is not None and self.steps.auto_publish is not None:
+            # in the background: an upload takes minutes and must not hold this lane's render slot
+            asyncio.get_running_loop().create_task(self._auto_publish(cid))
         self._unpin(cand)
         self._cleanup(cand)  # staging holds copies; the cut .ts and renders would fill the disk 24/7
         timings["total"] = round(time.perf_counter() - t_all, 2)

@@ -17,10 +17,12 @@ under DRY_RUN (then the visibility is forced to private).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
 import re
+import time
 import uuid
 from pathlib import Path
 
@@ -153,6 +155,35 @@ async def _upload(
             await ctx.close()
 
 
+@contextlib.contextmanager
+def _profile_lock(wait_s: float = 1800, stale_s: float = 1800):
+    """One upload at a time per Chrome profile: auto-publish (live lane) and Approve (Telegram bot) run in
+    different processes, and a second Chrome on a profile in use fails. A lock older than stale_s is a
+    crashed upload's and is taken over."""
+    lock = profile_dir() / ".cw-upload.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    t_end = time.time() + wait_s
+    while True:
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+            break
+        except FileExistsError:
+            try:
+                if time.time() - lock.stat().st_mtime > stale_s:
+                    lock.unlink(missing_ok=True)
+                    continue
+            except FileNotFoundError:
+                continue
+            if time.time() > t_end:
+                raise RuntimeError("another YouTube upload is still running") from None
+            time.sleep(5)
+    try:
+        yield
+    finally:
+        lock.unlink(missing_ok=True)
+
+
 def publish_clip(db: ClipDB, clip_id: str, root: Path | None = None) -> str:
     """Upload an APPROVED clip through real Chrome. Returns watch URL or dryrun id."""
     from ..queue import staging
@@ -176,7 +207,8 @@ def publish_clip(db: ClipDB, clip_id: str, root: Path | None = None) -> str:
         return vid
 
     private = config.dry_run()  # under DRY_RUN with force, still upload private
-    url = asyncio.run(_upload(video, md["title"], md["description"], private=private))
+    with _profile_lock():
+        url = asyncio.run(_upload(video, md["title"], md["description"], private=private))
     m = _URL_RE.search(url)
     yt_id = m.group(1) if m else url
     db.set_state(clip_id, "PUBLISHED", actor="publisher", youtube_id=yt_id)

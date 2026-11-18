@@ -427,3 +427,28 @@ def test_split_game_crop_is_full_height_centre():
     assert split_game_crop(None, 1920, 1080) == (352, 0, 1214, 1080)
     assert split_game_crop((345, 760, 210, 320), 1920, 1080) == (352, 0, 1214, 1080)
     assert split_game_crop(None, 1280, 720) == (234, 0, 810, 720)
+
+
+def test_still_edges_cut_no_signal_head_and_frozen_tail():
+    """Owner, 18 Nov: a clip opened on 2 s of an Elgato NO SIGNAL card."""
+    from clipwatcher.render.still import edges, freezes
+
+    err = (
+        "[freezedetect @ 0x1] lavfi.freezedetect.freeze_start: 0\n"
+        "[freezedetect @ 0x1] lavfi.freezedetect.freeze_duration: 2.1\n"
+        "[freezedetect @ 0x1] lavfi.freezedetect.freeze_end: 2.1\n"
+        "[freezedetect @ 0x1] lavfi.freezedetect.freeze_start: 9\n"
+        "[freezedetect @ 0x1] lavfi.freezedetect.freeze_end: 10.5\n"
+        "[freezedetect @ 0x1] lavfi.freezedetect.freeze_start: 18.2\n"
+    )
+    spans = freezes(err)
+    assert spans == [(0.0, 2.1), (9.0, 10.5), (18.2, None)]
+    head, tail = edges(spans, 20.0)
+    assert head == 2.1 and round(tail, 2) == 1.8  # the freeze in the middle stays
+    assert edges([], 20.0) == (0.0, 0.0)
+
+
+def test_no_credit_on_screen_by_default():
+    from clipwatcher.render.template import screen_credit
+
+    assert screen_credit("xqc") is None

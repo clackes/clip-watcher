@@ -165,6 +165,22 @@ class ClipDB:
                 done.append(r["id"])
         return done
 
+    def auto_approve_one(self, clip_id: str) -> bool:
+        """Approve this READY clip if publish.auto_approve is on and it scores >= auto_approve_min."""
+        pub = config.global_config().get("publish", {})
+        if not pub.get("auto_approve", False):
+            return False
+        min_score = pub.get("auto_approve_min", 8)
+        cur = self._conn().execute(
+            "UPDATE clips SET state='APPROVED', approved_by='auto', updated_at=? "
+            "WHERE id=? AND state='READY' AND score>=?",
+            (time.time(), clip_id, min_score),
+        )
+        if cur.rowcount != 1:
+            return False
+        self.log("auto", "auto_approve", clip_id, f"min={min_score}")
+        return True
+
     def set_state(self, clip_id: str, state: str, actor: str = "system", **fields: Any) -> None:
         sets = ["state=?", "updated_at=?"]
         args: list[Any] = [state, time.time()]

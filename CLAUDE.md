@@ -6,9 +6,10 @@ renders a branded 9:16 Short + clean 16:9 clip, stages them in a Telegram approv
 
 ## Base rules
 - `DRY_RUN=1` is the default (`config.dry_run()`). Tests never touch the network and never upload.
-- The publisher uploads only clips in state APPROVED. `publish.auto_approve` (default false) lets the bot
-  approve top-scored clips itself.
-- Credit the streamer on screen (`twitch.tv/<name>` tag) and in metadata. Campaign link lives in streamers.yaml.
+- The publisher uploads only clips in state APPROVED. `publish.auto_approve` (on since 18 Nov, owner) lets the
+  bot approve and upload clips scoring >= `auto_approve_min` (7) itself; the link goes to Telegram.
+- Credit the streamer in metadata (title/description). Owner, 18 Nov: no on-screen `twitch.tv/<name>` tag
+  (`render.credit_on_screen: false`). Campaign link lives in streamers.yaml.
 - Do not add content filters or blocking rules the spec doesn't ask for.
 - Secrets via env / credential files only, never committed. No model names in commits or code comments
   (model IDs live only in config/global.yaml).
@@ -83,7 +84,7 @@ uvx ruff check . && uvx ruff format --check .
   fl{sp,mu,gb},why}, caps/credit enforced in code (judge/compact.py). Thinking off, effort low (judge.* in
   global.yaml). judge.mode single | two_stage | off. Owner asked for spoiler/music/gambling flags; sp
   clips are rejected (judge.reject_flags); gb (17 Nov) and mu (18 Nov, owner accepts music-claim risk) are informational. Content (sexual, violent,
-  crude, "ad-unsafe") is never a minus by itself (owner, 18 Nov). Heuristic fallback on API errors (English fallback copy, same shape). Judge t0/t1 start late (<= 2 s before the
+  crude, "ad-unsafe") is never a minus by itself (owner, 18 Nov). Heuristic fallback on API errors (English fallback copy, same shape). A still edge ("NO SIGNAL", frozen/black screen) is cut (render/still.py). Judge t0/t1 start late (<= 2 s before the
   action; fallback 10 s before the reaction), never cut a word, end on a finished sentence (judge/snap.py).
 - D10 English only (owner, 17 Nov): `channel.language: en`. All copy (hook, title, description, fallbacks) is
   English; streamers whose `language` differs are skipped by live/vod. Description = 4 lines: teaser + credit,
