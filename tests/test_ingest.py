@@ -338,7 +338,7 @@ def test_streamlink_bin_found_without_activated_venv(monkeypatch):
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
     monkeypatch.delenv("CLIPWATCHER_STREAMLINK", raising=False)
     try:
-        assert Path(config.streamlink_bin()).name == "streamlink"
+        assert Path(config.streamlink_bin()).stem == "streamlink"
     finally:
         config.streamlink_bin.cache_clear()
 

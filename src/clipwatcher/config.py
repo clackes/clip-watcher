@@ -111,7 +111,7 @@ def ffmpeg_bin() -> str:
 @lru_cache
 def ffprobe_bin() -> str:
     ff = Path(ffmpeg_bin())
-    sib = ff.with_name("ffprobe")
+    sib = ff.with_name("ffprobe" + ff.suffix)  # ffprobe.exe next to ffmpeg.exe on Windows
     return str(sib) if sib.exists() else (shutil.which("ffprobe") or "ffprobe")
 
 
