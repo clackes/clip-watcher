@@ -165,6 +165,7 @@ def test_recorder_anchors_run_that_waited_for_the_stream(tmp_path):
     (rec.dir / "seg_b_00000.ts").write_bytes(b"1")
     (rec.dir / "seg_b_00001.ts").write_bytes(b"1")
     os.utime(rec.dir / "seg_b_00000.ts", (8_610, 8_610))  # live at 8_600 s, spawned at 5_000 s
+    os.utime(rec.dir / "seg_b_00001.ts", (8_620, 8_620))
     (rec.dir / "b.csv").write_text("seg_b_00000.ts,0.0,10.0\n")
     assert rec.ingest_run("b", 5_000_000) == 1
     (rec.dir / "b.csv").write_text("seg_b_00000.ts,0.0,10.0\nseg_b_00001.ts,10.0,20.0\n")
