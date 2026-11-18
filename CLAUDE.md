@@ -28,8 +28,10 @@ cwr restart [xqc,lacy|all]   # restart the bot (new code); a list is saved in co
 cwr status ; cwr logs -n 80 -g 'judge|ERROR' ; cwr stop ; cwr put/get <file> ; cwr ps script.ps1
 uvx ruff check . && uvx ruff format --check .
 ```
-- On the server: scheduled task `cw-live` (interactive, window "Clip Watcher LIVE") runs
-  `scripts\run_live_windows.ps1` (loads .env). Only one Telegram bot per token may poll: never start a second copy.
+- On the server: scheduled task `cw-live` runs `scripts\run_live_windows.ps1` (loads .env, restarts a crashed
+  lane/Telegram bot). Since 18 Nov it runs logged on or not, starts at boot, no window (`cwr install`, password
+  logon: a Remote Desktop sign-out killed the old interactive task). Only one Telegram bot per token may poll:
+  never start a second copy.
 - `config/streamers.yaml` / `operators.yaml` are not in git: edit on the Mac, `cwr put` them to `C:\clip-watcher\config\`.
 - Remote desktop (YouTube login, watching windows): `scripts/remote/clipwatcher-server.rdp` in Windows App.
   YouTube login: `run_live_windows.ps1 -YtLogin -Account <username>` on the server desktop.
