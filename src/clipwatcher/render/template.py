@@ -76,8 +76,12 @@ def default_game(info: SourceInfo) -> Rect:
 
 def esc_filter_path(p: str | Path) -> str:
     out = []
-    if os.name == "nt":  # forward slashes; the drive colon is escaped below
+    drive = ""
+    if os.name == "nt":  # forward slashes; "C:" -> "C\\:" (option-level + filtergraph-level escaping)
         p = Path(p).as_posix()
+        if len(p) > 1 and p[1] == ":":
+            drive, p = p[0] + "\\\\:", p[2:]
+    out.append(drive)
     for ch in str(p):
         if ch in "\\:'[],;":
             out.append("\\")
