@@ -216,7 +216,6 @@ def judge_clip(
     client: Any = None,
     model: str | None = None,
     loud: list[tuple[float, float]] | None = None,
-    views: int | None = None,
 ) -> JudgeResult:
     """Standardised multimodal judge (prompts/judge_v2.md + compact JSON). Heuristic fallback on any error.
     loud = [(t, dB jump)] audio peaks of the window (cold_open.loud_moments)."""
@@ -229,7 +228,6 @@ def judge_clip(
         payload = compact.build_payload(
             streamer=login, platform=plat, game=game, language=language, dur=cand.duration,
             peak_s=cand.peak_s - cand.start_s, transcript=words, chat=chat_lines, task=task, loud=loud,
-            views=views,
         )  # fmt: skip
         jcfg = _jcfg()
         mdl = model or (jcfg.get("screen_model") if task == "screen" else jcfg.get("judge_model", ""))

@@ -119,12 +119,3 @@ fastlane:                   # live lane (python -m clipwatcher.live)
   min_score: 5              # peak chat score gate; replay of 4 VODs: ~3-5 clips/h/streamer, keeps most top moments
   max_parallel: 2
   profile: cpu_live
-
-clips_lane:                 # python -m clipwatcher.clipslane: viewers' top clips -> judge -> Shorts
-  period: week              # a clip enters once it is popular; seen ids stop repeats (day: max 91 views on Kick)
-  min_views: {twitch: 200, kick: 100}
-  per_streamer: 3           # at most this many judged per streamer per run
-  min_s: 12                 # clips shorter than this cannot hold a setup and a payoff
-  max_s: 90                 # longer ones are stream chunks, not moments (Kick allows 180 s)
-  max_per_run: 12           # judge calls per run (~1 cent each)
-  interval_min: 60

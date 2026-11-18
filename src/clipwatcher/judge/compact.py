@@ -189,7 +189,6 @@ def build_payload(
     chat: Iterable[Any],
     task: str = "judge",
     loud: list[tuple[float, float]] | None = None,
-    views: int | None = None,
 ) -> dict[str, Any]:
     meta = {
         "s": streamer.lower(),
@@ -200,8 +199,6 @@ def build_payload(
     }
     if peak_s is not None:
         meta["pk"] = round(float(peak_s), 1)
-    if views is not None:  # a viewer-made clip: how many people watched it on the platform
-        meta["v"] = int(views)
     out = {
         "meta": meta,
         "tr": serialize_transcript_compact(transcript),
