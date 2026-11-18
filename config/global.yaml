@@ -117,5 +117,6 @@ publish:
 
 fastlane:                   # live lane (python -m clipwatcher.live)
   min_score: 5              # peak chat score gate; replay of 4 VODs: ~3-5 clips/h/streamer, keeps most top moments
-  max_parallel: 2
+  max_parallel: 2            # per streamer
+  max_parallel_total: 2      # across all streamers on this machine (renders queue, segments stay pinned)
   profile: cpu_live

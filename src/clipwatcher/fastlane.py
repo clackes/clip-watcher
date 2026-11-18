@@ -150,6 +150,18 @@ def _default_stage(*a: Any, **k: Any) -> Path:
     return stage_package(*a, **k)
 
 
+_SLOTS: dict[int, asyncio.Semaphore] = {}
+
+
+def global_slots(n: int) -> asyncio.Semaphore:
+    """One render semaphore shared by every streamer's lane in this event loop: nine streams live at once
+    must not start eighteen whisper + ffmpeg jobs on one machine (fastlane.max_parallel_total)."""
+    key = id(asyncio.get_running_loop())
+    if key not in _SLOTS:
+        _SLOTS[key] = asyncio.Semaphore(max(1, n))
+    return _SLOTS[key]
+
+
 @dataclass
 class Steps:
     transcribe: Callable[..., list[Word]] = _live_transcribe
@@ -227,7 +239,7 @@ class FastLane:
         assert self._sem is not None
         # pin immediately so the window cannot be pruned while we wait for a render slot
         self._pin(cand)
-        async with self._sem:
+        async with self._sem, global_slots(int(self.cfg.get("max_parallel_total", 2))):
             try:
                 self.outcomes.append(await self.process(cand))
             except Exception as e:  # noqa: BLE001

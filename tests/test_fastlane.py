@@ -189,3 +189,27 @@ def test_wall_clock_wait_when_ring_has_no_coverage_api(tmp_path):
     )  # fmt: skip
     asyncio.run(lane._wait_for_buffer(cand.end_s + 5))
     assert now[0] >= 125.0
+
+
+def test_global_slots_are_shared_by_every_lane_in_a_loop():
+    import asyncio
+
+    from clipwatcher.fastlane import global_slots
+
+    async def go():
+        a, b = global_slots(2), global_slots(5)
+        assert a is b  # one semaphore per event loop, whatever the lanes ask for later
+        running, peak = 0, 0
+
+        async def job():
+            nonlocal running, peak
+            async with global_slots(2):
+                running += 1
+                peak = max(peak, running)
+                await asyncio.sleep(0.01)
+                running -= 1
+
+        await asyncio.gather(*(job() for _ in range(6)))
+        return peak
+
+    assert asyncio.run(go()) == 2
