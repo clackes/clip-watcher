@@ -40,7 +40,9 @@ powercfg /change standby-timeout-ac 0 2>$null | Out-Null
 try {
     $lane = @("-m", "clipwatcher.live")
     if ($Streamers) { $lane += @("--streamers", ($Streamers -join ",")) }
-    & $py @lane 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath "work\logs\live-$day.log" -Append
+    # Tee-Object -Append writes UTF-16 on Windows PowerShell 5.1; append UTF-8 lines ourselves.
+    $logf = Join-Path $PWD "work\logs\live-$day.log"
+    & $py @lane 2>&1 | ForEach-Object { $l = "$_"; $l; [IO.File]::AppendAllText($logf, $l + "`r`n") }
 } finally {
     if ($bot -and -not $bot.HasExited) { taskkill /T /F /PID $bot.Id | Out-Null }
 }
