@@ -98,9 +98,7 @@ async def _upload(
             await page.keyboard.type(description[:4900])
 
             # Audience: Not made for kids.
-            await page.get_by_role(
-                "radio", name=re.compile(r"No,? it'?s not made for kids", re.I)
-            ).click()
+            await page.get_by_role("radio", name=re.compile(r"No,? it'?s not made for kids", re.I)).click()
 
             # Studio stamps the assigned id on the dialog as video-id="..."
             # as soon as the backend accepts the file, well before the upload
