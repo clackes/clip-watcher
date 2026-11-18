@@ -90,15 +90,21 @@ def _build_records(
     return out
 
 
-def _mute_spans(msgs: Sequence[ChatMessage], mute_s: float, min_unique: int) -> list[tuple[float, float]]:
-    """Raid / sub-bomb notices and giveaway bursts (bot message then one word typed by most chatters)."""
+def _mute_spans(
+    msgs: Sequence[ChatMessage], mute_s: float, min_unique: int, sub_bomb_min: int = 10
+) -> list[tuple[float, float]]:
+    """Raid / sub-bomb notices and giveaway bursts (bot message then one word typed by most chatters).
+
+    Only a real sub-bomb (>= sub_bomb_min gifts) mutes: on busy days 1-5 sub gifts arrive every few seconds
+    and muting on each kept xqc's detector deaf 99% of the GTA VI launch (18 Nov)."""
     spans: list[tuple[float, float]] = []
     notices = [m for m in msgs if m.is_notice]
     for m in notices:
         t = m.ts_ms / 1000
         recent = [n for n in notices if 0 <= (n.ts_ms / 1000 - t) <= 10]
-        bomb = m.notice_type in _SUB_BOMB_TYPES and len(recent) >= 5 and recent[0] is m
-        if m.notice_type == "raid" or m.notice_type == "submysterygift" or bomb:
+        bomb = m.notice_type in _SUB_BOMB_TYPES and len(recent) >= sub_bomb_min and recent[0] is m
+        mystery = m.notice_type == "submysterygift" and (m.viewers is None or m.viewers >= sub_bomb_min)
+        if m.notice_type == "raid" or mystery or bomb:
             spans.append((t, t + mute_s))
     humans = [m for m in msgs if not (m.is_bot or m.is_notice)]
     times = [m.ts_ms for m in humans]
@@ -188,7 +194,7 @@ def detect(
         float(cfg.get("other_weight", 0.5)),
         cfg.get("laughter_regex", ""),
     )
-    spans = _mute_spans(msgs, mute_s, min_unique)
+    spans = _mute_spans(msgs, mute_s, min_unique, int(cfg.get("sub_bomb_min", 10)))
     horizon = int(msgs[-1].ts_ms // 1000) + 1
     per_sec: list[list[_Rec]] = [[] for _ in range(horizon + 1)]
     for sec, r in recs:

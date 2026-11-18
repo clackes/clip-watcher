@@ -218,3 +218,26 @@ def test_streamer_prompted_copy_paste_is_not_a_moment():
 
     assert not [c for c in run(["IWASHERE", "IWASHERE", "yo"]) if c.chat_score >= 5]
     assert [c for c in run(["KEKW", "LMAO", "no way", "OMEGALUL"]) if c.chat_score >= 5]
+
+
+def test_small_gifted_subs_do_not_mute_the_detector():
+    """Regression (GTA VI launch, 18 Nov): every 1-3 sub community gift muted the detector for 75 s, so xqc's
+    was deaf 99% of the stream. Only a real sub-bomb (>= detector.sub_bomb_min gifts) mutes."""
+    base = 1_790_000_000_000
+
+    def run(gift_count):
+        msgs = [ChatMessage(base + t * 1000, f"u{t % 40}", f"talking {t}") for t in range(1200)]
+        for t in range(0, 1200, 20):  # a community gift every 20 s, with its subgift notices
+            msgs.append(ChatMessage(base + t * 1000 + 1, "gifter", "", is_notice=True,
+                                    notice_type="submysterygift", viewers=gift_count))  # fmt: skip
+            for k in range(gift_count):
+                msgs.append(ChatMessage(base + t * 1000 + 2 + k, "gifter", "", is_notice=True,
+                                        notice_type="subgift"))  # fmt: skip
+        for i in range(80):  # the moment at 1000 s
+            msgs.append(ChatMessage(base + 1_000_000 + i * 100, f"fan{i}", "KEKW LMAO"))
+        msgs.sort(key=lambda m: m.ts_ms)
+        det = LiveDetector("nobody")
+        return [c for m in msgs if (c := det.feed(m))] + det.drain()
+
+    assert any(abs(c.signals["fire_s"] - (base / 1000 + 1000)) < 15 for c in run(3))
+    assert not run(20)  # a 20-sub bomb every 20 s keeps it muted

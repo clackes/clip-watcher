@@ -25,7 +25,6 @@ from clipwatcher.detect.detector import (
 )
 from clipwatcher.models import Candidate, ChatMessage
 
-_SUB_BOMB_MIN = 5
 _GIVEAWAY_LOOKAHEAD_S = 20
 
 
@@ -52,6 +51,7 @@ class LiveDetector:
         self.trace: deque[tuple] | None = None  # set to a deque to record (t, score, u, u_need, hold, muted)
         self.viewers = viewers
         self.mute_s = float(cfg.get("mute_after_notice_s", 75))
+        self.sub_bomb_min = int(cfg.get("sub_bomb_min", 10))
         self.cooldown = float(cfg.get("cooldown_s", 45))
         sc = config.streamer(streamer)
         default_delay = sc.get("delay_s", cfg.get("default_delay_s", 8))
@@ -131,13 +131,15 @@ class LiveDetector:
         self._total += 1
         t = m.ts_ms / 1000
         if m.is_notice:
-            if m.notice_type in ("raid", "submysterygift"):
+            if m.notice_type == "raid" or (
+                m.notice_type == "submysterygift" and (m.viewers is None or m.viewers >= self.sub_bomb_min)
+            ):
                 self._spans.append((t, t + self.mute_s))
             elif m.notice_type == "subgift":
                 self._gifts.append(m.ts_ms)
                 while self._gifts and m.ts_ms - self._gifts[0] > 10_000:
                     self._gifts.popleft()
-                if len(self._gifts) >= _SUB_BOMB_MIN:
+                if len(self._gifts) >= self.sub_bomb_min:
                     t0 = self._gifts[0] / 1000
                     self._spans.append((t0, t0 + self.mute_s))
                     self._gifts.clear()
