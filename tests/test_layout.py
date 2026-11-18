@@ -153,3 +153,28 @@ def test_judge_point_finds_a_small_cam_the_full_pass_missed(monkeypatch, tmp_pat
     lay = layout.resolve(tmp_path / "x.mp4", "x", detector=lambda p: [], cam_hint=(0.8, 0.5))
     assert lay.source == "judge-cam" and lay.has_webcam
     assert layout.resolve(tmp_path / "x.mp4", "x", detector=lambda p: []).source == "no-face"
+
+
+def test_no_face_is_not_reframed_and_a_passing_closeup_is_not_a_full_cam(monkeypatch, tmp_path):
+    """Owner, 18 Nov: gameplay without a webcam (GTA, avatars) got the IRL centre crop. Only a real
+    full-screen camera (big face in nearly every frame) is reframed; a game character's close-up is not."""
+    from PIL import Image
+
+    frames = []
+    for i in range(4):
+        f = tmp_path / f"f{i}.png"
+        Image.new("RGB", (1920, 1080)).save(f)
+        frames.append((float(i), f))
+    monkeypatch.setattr(layout.config, "streamer", lambda n: {})
+    monkeypatch.setattr(layout.calibrate, "sample_frames", lambda m, d, n: frames[:n])
+    big = (700.0, 200.0, 420.0, 420.0)  # a face ~39% of the frame height
+
+    lay = layout.resolve(tmp_path / "x.mp4", "x", detector=lambda p: [])
+    assert lay.source == "no-face" and not lay.as_render_kwargs()["reframe"]
+
+    lay = layout.resolve(tmp_path / "x.mp4", "x", detector=lambda p: [big])
+    assert lay.source == "fullcam" and lay.as_render_kwargs()["reframe"]
+
+    closeup = {frames[0][1], frames[1][1]}  # the character's face in 2 of 4 frames only
+    lay = layout.resolve(tmp_path / "x.mp4", "x", detector=lambda p: [big] if p in closeup else [])
+    assert lay.source == "no-face" and not lay.has_webcam and not lay.as_render_kwargs()["reframe"]

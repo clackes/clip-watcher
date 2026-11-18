@@ -21,6 +21,7 @@ there (laughing, shouting, jumping) wins (owner, 17 Nov).
 from __future__ import annotations
 
 import logging
+import math
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,8 +40,10 @@ class Layout:
     face: str | None = None  # "w:h:x:y" of the detected face (cold open centres on it)
 
     def as_render_kwargs(self) -> dict:
-        # no overlay cam: a full-screen camera or IRL shot may be reframed to 9:16 around the person
-        reframe = not self.has_webcam and self.source in ("fullcam", "no-face")
+        # Only a real full-screen camera / IRL shot is reframed to 9:16 around the person. No face at all is
+        # mostly gameplay without a cam (GTA, avatars): the whole frame over a blurred copy (D11), never a
+        # centre crop that cuts two thirds of the game away (owner, 18 Nov).
+        reframe = not self.has_webcam and self.source == "fullcam"
         return {
             "has_webcam": self.has_webcam, "cam": self.cam, "game": self.game, "face": self.face,
             "reframe": reframe,
@@ -138,7 +141,8 @@ def resolve(
             return Layout(
                 bool(s.get("has_webcam", False)), s.get("facecam_rect"), s.get("gameplay_rect"), "default"
             )
-        boxes = [b for _, p in frames for b in detector(p)]
+        per_frame = [detector(p) for _, p in frames]
+        boxes = [b for bs in per_frame for b in bs]
         from PIL import Image
 
         with Image.open(frames[0][1]) as im:
@@ -158,7 +162,13 @@ def resolve(
             if face is None:  # still nothing: a typical webcam face at the judge's point
                 fs = 0.09 * fh
                 face, judge_cam = (cam_hint[0] * fw - fs / 2, cam_hint[1] * fh - fs / 2, fs, fs), True
-    full_cam = bool(face) and face[3] > calibrate.FULL_CAM_FACE_H * fh
+    # A real full-screen camera shows the big face in nearly every frame; a game character's close-up
+    # (GTA cutscene, club scene) only in some, and must not turn gameplay into an IRL reframe.
+    big_face = bool(face) and face[3] > calibrate.FULL_CAM_FACE_H * fh
+    big = sum(any(b[3] > calibrate.FULL_CAM_FACE_H * fh for b in bs) for bs in per_frame) if big_face else 0
+    full_cam = big_face and big >= math.ceil(0.75 * len(frames))
+    if big_face and not full_cam:
+        face = None  # a passing close-up is not a webcam either: treat it as gameplay without a cam
     fstr = calibrate.rect_str(tuple(int(v) for v in face)) if face and not full_cam else None  # type: ignore[arg-type]
     hit = match_scene(face, full_cam, sc)
     if hit:
