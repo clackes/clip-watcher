@@ -17,17 +17,22 @@ renders a branded 9:16 Short + clean 16:9 clip, stages them in a Telegram approv
 - Work only on `main`. Small commits.
 
 ## Dev
-The bot runs and is developed on the Windows Server 2025 box (since 18 Nov), repo at `C:\clip-watcher`,
-PowerShell in Warp. The repo has no GitHub remote there (owner's choice): commit on `main` locally.
+Code is edited and committed on the Mac (`main`); the bot runs only on the Windows Server 2025 box
+(`C:\clip-watcher`, since 18 Nov), driven from the Mac over WinRM. No GitHub and no SSH (owner's choice).
+The Mac has no venv (space): tests run on the server.
 ```
-.venv\Scripts\python -m pytest -q          # -m "not ffmpeg" to skip render tests
-.venv\Scripts\ruff check . ; .venv\Scripts\ruff format --check .
-powershell -ExecutionPolicy Bypass -File scripts\run_live_windows.ps1 [xqc,lacy]   # bot + live lane, loads .env
-powershell -ExecutionPolicy Bypass -File scripts\run_live_windows.ps1 -YtLogin -Account <username>
+cwr() { uv run -q --with pywinrm==0.5.0 scripts/remote/cw_remote.py "$@"; }   # password: Keychain "clipwatcher-winrm"
+cwr push            # commit first; sends the server's missing commits as a git bundle
+cwr test            # pytest on the server (default -m "not ffmpeg"; pass args for more)
+cwr restart [xqc,lacy]   # restart the bot (new code), optionally with a new streamer list
+cwr status ; cwr logs -n 80 -g 'judge|ERROR' ; cwr stop ; cwr put/get <file> ; cwr ps script.ps1
+uvx ruff check . && uvx ruff format --check .
 ```
-- Running bot: scheduled task `cw-live` (interactive, window "Clip Watcher LIVE"); restart with
-  `Stop-ScheduledTask cw-live`, kill `clipwatcher.live`/`telegram_bot` python + streamlink/ffmpeg, `Start-ScheduledTask cw-live`.
-  Only one Telegram bot per token may poll: never start a second copy.
+- On the server: scheduled task `cw-live` (interactive, window "Clip Watcher LIVE") runs
+  `scripts\run_live_windows.ps1` (loads .env). Only one Telegram bot per token may poll: never start a second copy.
+- `config/streamers.yaml` / `operators.yaml` are not in git: edit on the Mac, `cwr put` them to `C:\clip-watcher\config\`.
+- Remote desktop (YouTube login, watching windows): `scripts/remote/clipwatcher-server.rdp` in Windows App.
+  YouTube login: `run_live_windows.ps1 -YtLogin -Account <username>` on the server desktop.
 - Logs: `work\logs\live-<yyyymmdd>.log` (UTF-8). ffmpeg 8.1 (libass) in `C:\ffmpeg\bin` via CLIPWATCHER_FFMPEG.
 - YouTube uploads use the patchright Chrome profile `~\.clipwatcher\yt-profiles\<YT_BROWSER_ACCOUNT>` (capybarasking).
 - Windows needs the VC++ runtime for Whisper (installed). Mac/Linux: `.venv/bin/...` equivalents still work.
