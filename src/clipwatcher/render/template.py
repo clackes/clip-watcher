@@ -283,6 +283,37 @@ FX_FILTERS = {  # beat kind -> (seconds, filter) applied to the whole picture un
 }
 
 
+SFX_DIR = config.ROOT / "assets" / "sfx"  # <kind>/<name>.mp3, loudness-normalised to -16 LUFS, <= 3 s
+SFX_LIMIT = 0.891  # -1 dBFS ceiling after the sound effects are mixed in
+
+
+def pick_sfx(clip_id: str, beats: list[tuple[float, str, str]]) -> list[tuple[float, Path]]:
+    """One sound effect per beat (render.sfx), stable per clip, never the same file twice in a clip."""
+    if not config.global_config().get("render", {}).get("sfx", True):
+        return []
+    out: list[tuple[float, Path]] = []
+    for i, (t, k, _) in enumerate(beats):
+        files = sorted((SFX_DIR / k).glob("*.mp3")) if (SFX_DIR / k).is_dir() else []
+        files = [f for f in files if f not in {o[1] for o in out}] or files
+        if files:
+            out.append((t, files[stable_hash(f"{clip_id}:{i}:{k}") % len(files)]))
+    return out
+
+
+def _sfx_mix(sfx: list[tuple[float, int]], gain_db: float) -> str:
+    """[am] + one input per (t, input index) -> [a]: delayed, mixed without rescaling, limited."""
+    g, labels = [], []
+    for j, (t, idx) in enumerate(sfx):
+        ms = max(0, round(t * 1000))
+        g.append(f"[{idx}:a]aresample=48000,volume={gain_db:.1f}dB,adelay={ms}|{ms}[sfx{j}]")
+        labels.append(f"[sfx{j}]")
+    g.append(
+        f"[am]{''.join(labels)}amix=inputs={len(sfx) + 1}:duration=first:normalize=0,"
+        f"alimiter=limit={SFX_LIMIT}:level=false,aresample=48000[a]"
+    )
+    return ";".join(g)
+
+
 def layout_mode() -> str:
     m = str(config.global_config().get("render", {}).get("layout", "split"))
     return m if m in LAYOUTS else "split"
@@ -326,8 +357,9 @@ def build_split_graph(
     fontsdir: Path, cold_open: tuple[float, float] | None = None, zoom: float = 1.15,
     measured: dict | None = None, src_wh: tuple[int, int] = (1920, 1080), fps: float = 30.0,
     face: Rect | None = None, beats: list[tuple[float, str, str]] | None = None,
+    sfx: list[tuple[float, int]] | None = None, sfx_gain_db: float = -4.0,
 ) -> str:  # fmt: skip
-    """beats are on the output timeline (after the cold open)."""
+    """beats are on the output timeline (after the cold open); sfx = (output time, ffmpeg input index)."""
     g: list[str] = []
     co_d = cold_open[1] if cold_open else 0.0
     if cold_open:  # the reaction plays first in the same layout, cam punched in, then the clip
@@ -369,7 +401,10 @@ def build_split_graph(
     g.append(
         f"{last}ass=filename={esc_filter_path(ass)}:fontsdir={esc_filter_path(fontsdir)},format=yuv420p[v]"
     )
-    g.append(_audio_chain(trim, dur, cold_open, measured))
+    audio = _audio_chain(trim, dur, cold_open, measured)
+    if sfx:
+        audio = audio[: audio.rindex("[a]")] + "[am];" + _sfx_mix(sfx, sfx_gain_db)
+    g.append(audio)
     return ";".join(g)
 
 
@@ -414,7 +449,7 @@ def render_short(
             src, out, coarse=coarse, trim=trim, dur_s=dur_s, total=total, info=info, fps=fps, cam=cam,
             game=game, has_webcam=has_webcam, words=words, beats=beats, streamer=streamer,
             captions=captions or caption_style(clip_id), cold_open=cold_open, face=parse_rect(face),
-            profile=profile,
+            profile=profile, sfx=pick_sfx(clip_id, beats),
         )  # fmt: skip
 
     with tempfile.TemporaryDirectory(prefix="clipwatcher_") as td:
@@ -464,6 +499,7 @@ def _render_split(
     src: Path, out: Path, *, coarse: float, trim: float, dur_s: float, total: float, info: SourceInfo,
     fps: float, cam: Rect, game: Rect, has_webcam: bool, words: list[Word], beats: list, streamer: str,
     captions: str, cold_open: tuple[float, float] | None, face: Rect | None, profile: str,
+    sfx: list[tuple[float, Path]] | None = None,
 ) -> Path:  # fmt: skip
     cap_y = SEAM_Y if has_webcam else FRAME_CAP_Y
     credit_pos = (7, 24, SEAM_Y + 75) if has_webcam else (7, 24, FRAME_Y + FRAME_H + 12)
@@ -476,11 +512,16 @@ def _render_split(
         cmd = [ffmpeg_bin(), "-y", "-hide_banner", "-ss", f"{coarse:.3f}", "-i", str(src)]
         if use_logo:
             cmd += ["-i", str(BRANDING_DIR / "top_logo.png")]
+        first = 2 if use_logo else 1
+        for _, f in sfx or []:
+            cmd += ["-i", str(f)]
+        sfx_in = [(t, first + j) for j, (t, _) in enumerate(sfx or [])]
+        gain = float(config.global_config().get("render", {}).get("sfx_gain_db", -4.0))
         graph = build_split_graph(
             trim=trim, dur=dur_s, has_webcam=has_webcam, cam=cam, game=game, logo_idx=1 if use_logo else -1,
             ass=ass, fontsdir=FONTS_DIR, cold_open=cold_open, zoom=co_settings()[1],
             measured=_measure(src, coarse, trim, dur_s, cold_open), src_wh=(info.width, info.height),
-            fps=fps, face=face, beats=beats,
+            fps=fps, face=face, beats=beats, sfx=sfx_in, sfx_gain_db=gain,
         )  # fmt: skip
         cmd += ["-filter_complex", graph, "-map", "[v]", "-map", "[a]", *video_args(profile)]
         cmd += ["-fps_mode", "cfr", "-r", f"{fps:g}", "-c:a", "aac", "-b:a", "192k", "-ar", "48000"]

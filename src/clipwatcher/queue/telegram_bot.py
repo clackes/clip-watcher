@@ -168,14 +168,21 @@ def _youtube_on_approve() -> bool:
     return bool(config.global_config().get("publish", {}).get("youtube_on_approve", True))
 
 
+def _youtube_mode() -> str:
+    return str(config.global_config().get("publish", {}).get("youtube_mode", "browser")).lower()
+
+
 async def _publish(message: Any, db: ClipDB, clip_id: str) -> None:
     """Upload right after Approve and reply under the card with the link (or the error)."""
     import asyncio
 
-    from clipwatcher.publish import youtube
+    if _youtube_mode() == "api":
+        from clipwatcher.publish import youtube as pub
+    else:
+        from clipwatcher.publish import youtube_browser as pub
 
     try:
-        res = await asyncio.to_thread(youtube.publish_clip, db, clip_id)
+        res = await asyncio.to_thread(pub.publish_clip, db, clip_id)
     except Exception as e:  # noqa: BLE001 - report every failure to the operators
         log.exception("youtube upload failed for %s", clip_id)
         await message.reply_text(f"YouTube upload failed for {clip_id}: {e}")

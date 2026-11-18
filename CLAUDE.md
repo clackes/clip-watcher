@@ -49,6 +49,11 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   scripts/build_brand_assets.py) | dead zone 1536-1920. Credit {\an9\pos(1060,407)}. Background ambient blur or
   frame_gradient_<accent>.png (-loop 1); accent red/yellow/cyan from hash(clip_id). No webcam -> 16:9 frame
   1080x608 centred in y395-1415. Cold open: webcam only (centred on the face) filling y395-1415, zoompan punch-in.
+- D11 Split Short (owner, 17-18 Nov; supersedes the D5 stack, kept as `render.layout: stack`): webcam 1080x960
+  over gameplay 1080x960, small ClipVault logo, no on-screen hook, no CTA banner. Captions `word`: one word at a
+  time on the seam (y960), Anton, shouted words yellow. Judge `fx` beats (hype|fail|shock|funny + label like
+  *FAIL*) -> zoom punch, colour effect, coloured label and a meme sound from assets/sfx/<kind>/ (myinstants US
+  trending, owner's pick; some may get audio claims). No webcam -> 1080x760 frame over a blurred copy.
 - D6 Judge (v2, 17 Nov): one static cached system prompt (prompts/judge_v2.md, no per-clip variables) + 8
   labelled 480x270 JPEG q65 frames + compact JSON {meta,tr,ch,task}; short-key output {ok,sc,t0,t1,hk,tt,ds,
   fl{sp,mu,gb},why}, caps/credit enforced in code (judge/compact.py). Thinking off, effort low (judge.* in

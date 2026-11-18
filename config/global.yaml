@@ -73,6 +73,8 @@ render:
   default_game: "1920:960:0:60"
   layout: split             # split = webcam 1080x960 over gameplay 1080x960, no on-screen hook | stack (old)
   logo: true                # small ClipVault logo at the top of the split layout
+  sfx: true                 # meme sound effect on every judge beat (assets/sfx/<kind>/, split layout)
+  sfx_gain_db: -4           # sound effect level against the -14 LUFS clip
   captions: word            # word (one word on the seam) | pop | classic | bounce | ab; stored in meta.captions
   cold_open_s: 3.5          # replay the strongest reaction first (0 = off)
   cold_open_lead_s: 2.5     # cold open starts this long before the peak (build-up, not mid-shout)
@@ -107,6 +109,7 @@ publish:
   auto_approve_min: 8
   claim_ttl_min: 15
   youtube_on_approve: true  # Approve in Telegram uploads at once (private while DRY_RUN=1)
+  youtube_mode: browser     # browser: real Chrome via patchright (scripts/yt_browser_login.py); api: Data API (publish/youtube.py)
 
 fastlane:                   # live lane (python -m clipwatcher.live)
   min_score: 5              # peak chat score gate; replay of 4 VODs: ~3-5 clips/h/streamer, keeps most top moments

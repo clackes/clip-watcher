@@ -301,3 +301,12 @@ def test_hook_pill_drops_emoji():
 
     assert " ".join(_strip_emoji("He didn't see it 💀").split()) == "He didn't see it"
     assert _strip_emoji("WAIT… 😳🔥").strip() == "WAIT…"
+
+
+def test_pick_sfx_one_per_beat_stable_and_distinct():
+    from clipwatcher.render.template import pick_sfx
+
+    beats = [(1.0, "fail", "*FAIL*"), (3.0, "fail", ""), (5.0, "hype", ""), (7.0, "nope", "")]
+    a, b = pick_sfx("clip-1", beats), pick_sfx("clip-1", beats)
+    assert a == b and [t for t, _ in a] == [1.0, 3.0, 5.0]  # unknown kind -> no sound
+    assert a[0][1] != a[1][1] and a[0][1].parent.name == "fail" and a[2][1].parent.name == "hype"
