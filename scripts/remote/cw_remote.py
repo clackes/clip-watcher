@@ -6,7 +6,7 @@
     push                         send the commits the server lacks (git bundle) and reset its main to them
     test [pytest args]           run the test suite on the server (default: -q -m "not ffmpeg")
     logs [-n N] [-g REGEX]       tail today's live log (optionally only lines matching REGEX)
-    restart [login,login,...]    restart the bot (cw-live); with a list, that list becomes its streamers
+    restart [list|all]           restart the bot; a comma list (or all) becomes its streamers
     stop                         stop the bot and its recorders
     ps [FILE|-]                  run a PowerShell script (file or stdin) in C:\\clip-watcher
     put LOCAL REMOTE             upload a small file (configs; chunked, ~1 MB max is sensible)
@@ -61,7 +61,13 @@ _session: winrm.Session | None = None
 def session() -> winrm.Session:
     global _session
     if _session is None:
-        _session = winrm.Session(f"http://{HOST}:5985/wsman", auth=(USER, password()), transport="ntlm")
+        _session = winrm.Session(
+            f"http://{HOST}:5985/wsman",
+            auth=(USER, password()),
+            transport="ntlm",
+            read_timeout_sec=900,
+            operation_timeout_sec=850,  # restarts and test runs take minutes
+        )
     return _session
 
 
@@ -156,19 +162,22 @@ def cmd_status(_: argparse.Namespace) -> None:
 
 
 def cmd_restart(a: argparse.Namespace) -> None:
+    """The task always runs run_live_windows.ps1 with no arguments; the streamer list lives in
+    config\\live_streamers.txt (no list: keep it; "all": remove it = every streamer)."""
     script = KILL_BOT + " Start-Sleep 2;"
-    if a.streamers:
-        arg = (
-            "-NoExit -ExecutionPolicy Bypass -Command \"`$host.UI.RawUI.WindowTitle='Clip Watcher LIVE'; "
-            f'& {SRV}\\scripts\\run_live_windows.ps1 {a.streamers}"'
-        )
-        script += (
-            " $a = New-ScheduledTaskAction -Execute powershell.exe"
-            f' -WorkingDirectory {SRV} -Argument "{arg}";'
-            " Set-ScheduledTask -TaskName cw-live -Action $a | Out-Null;"
-        )
-    script += " Start-ScheduledTask cw-live; Start-Sleep 25;"
-    script += " 'streamlink: ' + (Get-Process streamlink -EA SilentlyContinue).Count"
+    if a.streamers == "all":
+        script += r" Remove-Item config\live_streamers.txt -EA SilentlyContinue;"
+    elif a.streamers:
+        script += rf" Set-Content config\live_streamers.txt '{a.streamers}';"
+    script += (
+        " $arg = '-NoExit -ExecutionPolicy Bypass -File " + SRV + r"\scripts\run_live_windows.ps1';"
+        f" $act = New-ScheduledTaskAction -Execute powershell.exe -WorkingDirectory {SRV} -Argument $arg;"
+        " Set-ScheduledTask -TaskName cw-live -Action $act | Out-Null;"
+        " Start-ScheduledTask cw-live; Start-Sleep 25;"
+        r" $l = 'config\live_streamers.txt';"
+        " 'streamers: ' + $(if (Test-Path $l) { Get-Content $l } else { 'all' });"
+        " 'streamlink: ' + (Get-Process streamlink -EA SilentlyContinue).Count"
+    )
     print(ps(script))
 
 

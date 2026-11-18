@@ -1,5 +1,5 @@
 # Windows twin of run_live_mac.sh: Telegram approval bot + live lane, with .env loaded.
-#   powershell -ExecutionPolicy Bypass -File scripts\run_live_windows.ps1                  # every English streamer
+#   powershell -ExecutionPolicy Bypass -File scripts\run_live_windows.ps1                  # config\live_streamers.txt, else all
 #   powershell -ExecutionPolicy Bypass -File scripts\run_live_windows.ps1 kaicenat,clix    # a subset
 #   powershell -ExecutionPolicy Bypass -File scripts\run_live_windows.ps1 -YtLogin -Account <username>  # YouTube Studio login
 # Ctrl-C (or closing the window) stops both.
@@ -37,6 +37,11 @@ if ($env:TELEGRAM_BOT_TOKEN) {
 
 # Keep the server from sleeping while the lane runs (no-op on servers that never sleep).
 powercfg /change standby-timeout-ac 0 2>$null | Out-Null
+$host.UI.RawUI.WindowTitle = "Clip Watcher LIVE"
+# No list on the command line: config\live_streamers.txt (written by cw_remote.py restart), else every streamer.
+if (-not $Streamers -and (Test-Path config\live_streamers.txt)) {
+    $Streamers = @((Get-Content config\live_streamers.txt -Raw) -split '[,\s]+' | Where-Object { $_ })
+}
 try {
     $lane = @("-m", "clipwatcher.live")
     if ($Streamers) { $lane += @("--streamers", ($Streamers -join ",")) }

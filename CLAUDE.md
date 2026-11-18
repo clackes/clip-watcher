@@ -24,7 +24,7 @@ The Mac has no venv (space): tests run on the server.
 cwr() { uv run -q --with pywinrm==0.5.0 scripts/remote/cw_remote.py "$@"; }   # password: Keychain "clipwatcher-winrm"
 cwr push            # commit first; sends the server's missing commits as a git bundle
 cwr test            # pytest on the server (default -m "not ffmpeg"; pass args for more)
-cwr restart [xqc,lacy]   # restart the bot (new code), optionally with a new streamer list
+cwr restart [xqc,lacy|all]   # restart the bot (new code); a list is saved in config\live_streamers.txt
 cwr status ; cwr logs -n 80 -g 'judge|ERROR' ; cwr stop ; cwr put/get <file> ; cwr ps script.ps1
 uvx ruff check . && uvx ruff format --check .
 ```
