@@ -14,7 +14,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from clipwatcher import config
-from clipwatcher.chat.convert import tdl_to_messages, write_jsonl
+from clipwatcher.chat.convert import read_jsonl, tdl_to_messages, write_jsonl
 from clipwatcher.detect.detector import detect
 from clipwatcher.models import Candidate, ChatMessage
 from clipwatcher.render import cold_open
@@ -246,11 +246,16 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     chat_path = a.chat
+    if chat_path is None and (work / "chat.jsonl").exists():
+        chat_path = work / "chat.jsonl"  # already downloaded and converted on an earlier run
     if chat_path is None:
         chat_path = work / "chat.json"
         run_cmd(build_chatdownload_cmd(config.twitch_downloader_bin(), a.vod, chat_path))
-    messages = tdl_to_messages(chat_path)
-    write_jsonl(messages, work / "chat.jsonl")
+    if chat_path.suffix == ".jsonl":
+        messages = read_jsonl(chat_path)
+    else:
+        messages = tdl_to_messages(chat_path)
+        write_jsonl(messages, work / "chat.jsonl")
 
     cands = detect(messages, streamer=streamer, top=a.top, before_s=a.before, after_s=a.after, gap_s=a.gap)
     print_table(cands)

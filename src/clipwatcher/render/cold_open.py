@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 import statistics
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +38,8 @@ EXCLAMATIONS = {
 SEARCH_BEFORE_S = 15.0  # look for the reaction this far before the chat spike...
 SEARCH_AFTER_S = 3.0  # ...and this far after it
 REFINE_S = 1.5  # move the judge's pk to the loudest instant this close to it
+ONSET_BEFORE_S, ONSET_AFTER_S = 1.0, 0.6  # a beat moves to the sharpest loudness rise in this range
+ONSET_MIN_DB = 4.0  # ...when the rise is at least this big; otherwise the judge's time stands
 
 
 def settings() -> tuple[float, float]:
@@ -181,12 +183,30 @@ def refine(series: list[tuple[float, float]], pk: float) -> float:
     return round(t, 2)
 
 
+def onset(series: list[tuple[float, float]], t: float) -> float:
+    """Beat time moved onto the sharpest loudness rise near it (the crash, the shout starting), so the
+    sound effect and the flash land on the event itself rather than on the judge's frame estimate."""
+    by_t = dict(series)
+    best, rise = t, ONSET_MIN_DB
+    for c, _ in series:
+        if not t - ONSET_BEFORE_S <= c <= t + ONSET_AFTER_S:
+            continue
+        after = [v for x, v in series if c <= x <= c + 0.1]  # M is a 400 ms window ending at x
+        before = [v for x, v in series if c - 0.5 <= x < c - 0.1]
+        if after and before and c in by_t:
+            r = min(after) - statistics.median(before)
+            if r > rise:
+                best, rise = c, r
+    return round(best, 2)
+
+
 @dataclass
 class Plan:
     t0: float  # trim, relative to the candidate window
     t1: float
     reaction: float | None  # relative to the candidate window
     cold_open: tuple[float, float] | None  # relative to the trimmed clip start
+    beats: list[tuple[float, str, str, str]] = field(default_factory=list)  # window-relative, snapped
 
 
 def plan(
@@ -199,8 +219,11 @@ def plan(
     judged = get("source") == "claude"
     react = get("peak_rel_s") if judged else None
     fallback = bool(config.global_config().get("render", {}).get("cold_open_audio_fallback", False))
-    if settings()[0] > 0 and (react is not None or fallback):
+    raw_beats = [_beat(b) for b in (get("beats") or [])] if judged else []
+    series: list[tuple[float, float]] = []
+    if raw_beats or (settings()[0] > 0 and (react is not None or fallback)):
         series = loudness(media, win_start, win_dur)
+    if settings()[0] > 0 and (react is not None or fallback):
         if react is not None:
             react = refine(series, float(react))
         else:
@@ -212,15 +235,16 @@ def plan(
         t0, t1 = snap_trim(t0, t1, words, win_dur)
     if not (0 <= t0 < t1 <= win_dur + 0.5 and t1 - t0 >= 12):
         t0, t1 = 0.0, win_dur
-    return Plan(t0, t1, react, window(react, t0, t1 - t0, words))
+    beats = [(onset(series, t) if series else t, k, lb, sx) for t, k, lb, sx in raw_beats]
+    return Plan(t0, t1, react, window(react, t0, t1 - t0, words), beats)
 
 
-def clip_beats(jr: Any, pl: Plan) -> list[tuple[float, str, str]]:
-    """Judge beats (window-relative) re-timed to the trimmed clip; [] without a judge."""
-    get = jr.get if isinstance(jr, dict) else lambda k, d=None: getattr(jr, k, d)
-    out = []
-    for b in get("beats") or []:
-        t, k, lb = float(b[0]), str(b[1]), str(b[2])
-        if pl.t0 <= t <= pl.t1:
-            out.append((round(t - pl.t0, 2), k, lb))
-    return out
+def _beat(b: Any) -> tuple[float, str, str, str]:
+    """(t, kind, label, sound) from a judge beat tuple/list; older 3-field beats have no sound."""
+    return float(b[0]), str(b[1]), str(b[2]), str(b[3]) if len(b) > 3 else ""
+
+
+def clip_beats(jr: Any, pl: Plan) -> list[tuple[float, str, str, str]]:
+    """Snapped judge beats re-timed to the trimmed clip: (t, kind, label, sound); [] without a judge.
+    jr is unused (kept for callers): plan() already read and snapped the beats."""
+    return [(round(t - pl.t0, 2), k, lb, sx) for t, k, lb, sx in pl.beats if pl.t0 <= t <= pl.t1]

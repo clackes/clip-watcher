@@ -61,8 +61,9 @@ class JudgeResult:
     why: str = ""  # one line for the Telegram approval card
     score: int = 0  # 1-10 viral score
     cam_xy: tuple[float, float] | None = None  # judge: centre (0-1) of the cam of whoever makes the moment
-    # editor beats (t relative to the candidate window, kind hype|fail|shock|funny, label like *FAIL*)
-    beats: list[tuple[float, str, str]] = field(default_factory=list)
+    # editor beats: (t relative to the candidate window, kind hype|fail|shock|funny, label like *FAIL*,
+    # meme sound name from clipwatcher.sfx or "")
+    beats: list[tuple[float, str, str, str]] = field(default_factory=list)
 
 
 @dataclass

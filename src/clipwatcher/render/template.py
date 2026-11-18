@@ -283,20 +283,22 @@ FX_FILTERS = {  # beat kind -> (seconds, filter) applied to the whole picture un
 }
 
 
-SFX_DIR = config.ROOT / "assets" / "sfx"  # <kind>/<name>.mp3, loudness-normalised to -16 LUFS, <= 3 s
 SFX_LIMIT = 0.891  # -1 dBFS ceiling after the sound effects are mixed in
 
 
-def pick_sfx(clip_id: str, beats: list[tuple[float, str, str]]) -> list[tuple[float, Path]]:
-    """One sound effect per beat (render.sfx), stable per clip, never the same file twice in a clip."""
+def pick_sfx(beats: list[tuple]) -> list[tuple[float, Path]]:
+    """(start time, file) for every beat whose sound the judge chose (render.sfx). Never random: no sound
+    when the judge left sx empty. The sound starts early by its attack so the hit lands on the beat."""
+    from clipwatcher import sfx
+
     if not config.global_config().get("render", {}).get("sfx", True):
         return []
-    out: list[tuple[float, Path]] = []
-    for i, (t, k, _) in enumerate(beats):
-        files = sorted((SFX_DIR / k).glob("*.mp3")) if (SFX_DIR / k).is_dir() else []
-        files = [f for f in files if f not in {o[1] for o in out}] or files
-        if files:
-            out.append((t, files[stable_hash(f"{clip_id}:{i}:{k}") % len(files)]))
+    out = []
+    for b in beats:
+        name = b[3] if len(b) > 3 else ""
+        f = sfx.path(name) if name else None
+        if f:
+            out.append((max(0.0, b[0] - sfx.attack(name)), f))
     return out
 
 
@@ -356,7 +358,7 @@ def build_split_graph(
     *, trim: float, dur: float, has_webcam: bool, cam: Rect, game: Rect, logo_idx: int, ass: Path,
     fontsdir: Path, cold_open: tuple[float, float] | None = None, zoom: float = 1.15,
     measured: dict | None = None, src_wh: tuple[int, int] = (1920, 1080), fps: float = 30.0,
-    face: Rect | None = None, beats: list[tuple[float, str, str]] | None = None,
+    face: Rect | None = None, beats: list[tuple] | None = None,
     sfx: list[tuple[float, int]] | None = None, sfx_gain_db: float = -4.0,
 ) -> str:  # fmt: skip
     """beats are on the output timeline (after the cold open); sfx = (output time, ffmpeg input index)."""
@@ -372,7 +374,7 @@ def build_split_graph(
         )
     else:
         g.append(f"[0:v]trim=start={trim:.3f}:duration={dur:.3f},setpts=PTS-STARTPTS[sv]")
-    z = zoom_expr(co_d, zoom, [t for t, _, _ in beats or []])
+    z = zoom_expr(co_d, zoom, [b[0] for b in beats or []])
     if has_webcam:
         centre = (face[0] + face[2] / 2, face[1] + face[3] / 2) if face else None
         g.append("[sv]split=2[cs][gs]")
@@ -393,7 +395,7 @@ def build_split_graph(
         g.append(f"[{logo_idx}:v]scale={SPLIT_LOGO_W}:-1,format=rgba[lg]")
         g.append(f"{last}[lg]overlay=(W-w)/2:{SPLIT_LOGO_Y}[v2]")
         last = "[v2]"
-    for i, (t, k, _) in enumerate(beats or []):
+    for i, (t, k, *_) in enumerate(beats or []):
         if k in FX_FILTERS:
             d, f = FX_FILTERS[k]
             g.append(f"{last}{f}:enable='between(t,{t:.3f},{t + d:.3f})'[fx{i}]")
@@ -414,7 +416,7 @@ def render_short(
     accent: str | None = None, cam: Rect | None = None, game: Rect | None = None,
     has_webcam: bool = True, profile: str = "cpu_batch", captions: str | None = None,
     cold_open: tuple[float, float] | None = None, face: Rect | str | None = None,
-    beats: list[tuple[float, str, str]] | None = None, layout: str | None = None,
+    beats: list[tuple] | None = None, layout: str | None = None,
 ) -> Path:  # fmt: skip
     """cold_open=(start, duration) relative to start_s: that moment plays first, zoomed in, then the clip.
     The output is duration + dur_s long; captions follow the clip part. beats = judge beats (t relative to
@@ -443,13 +445,13 @@ def render_short(
             if cs - 0.05 <= w.start < cs + co_d - 0.1
         ]
         words = co_words + [Word(w.start + co_d, w.end + co_d, w.text) for w in words]
-    beats = [(t + co_d, k, lb) for t, k, lb in beats or [] if 0 <= t <= dur_s]
+    beats = [(b[0] + co_d, *b[1:]) for b in beats or [] if 0 <= b[0] <= dur_s]
     if (layout or layout_mode()) == "split":
         return _render_split(
             src, out, coarse=coarse, trim=trim, dur_s=dur_s, total=total, info=info, fps=fps, cam=cam,
             game=game, has_webcam=has_webcam, words=words, beats=beats, streamer=streamer,
             captions=captions or caption_style(clip_id), cold_open=cold_open, face=parse_rect(face),
-            profile=profile, sfx=pick_sfx(clip_id, beats),
+            profile=profile, sfx=pick_sfx(beats),
         )  # fmt: skip
 
     with tempfile.TemporaryDirectory(prefix="clipwatcher_") as td:

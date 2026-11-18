@@ -112,7 +112,11 @@ def test_short(synth_src, tmp_path, style, webcam, captions):
 @pytest.mark.parametrize("webcam", [True, False])
 def test_split_short_with_beats_and_cold_open(synth_src, tmp_path, webcam):
     out = tmp_path / "split.mp4"
-    beats = [(1.0, "hype", "*SUCCESS*"), (2.5, "fail", "*FAIL*"), (3.5, "shock", "")]
+    beats = [
+        (1.0, "hype", "*SUCCESS*", "anime-wow"),
+        (2.5, "fail", "*FAIL*", "fahhh"),
+        (3.5, "shock", "", ""),
+    ]
     render_short(
         synth_src, 4.0, 4.0, out, clip_id="sp", streamer="tester", words=demo_words(4), hook="unused",
         has_webcam=webcam, profile="cpu_live", captions="word", cold_open=(2.5, 1.5), beats=beats,
@@ -303,10 +307,31 @@ def test_hook_pill_drops_emoji():
     assert _strip_emoji("WAIT… 😳🔥").strip() == "WAIT…"
 
 
-def test_pick_sfx_one_per_beat_stable_and_distinct():
+def test_pick_sfx_uses_the_judges_sound_aligned_on_its_attack():
+    from clipwatcher import sfx
     from clipwatcher.render.template import pick_sfx
 
-    beats = [(1.0, "fail", "*FAIL*"), (3.0, "fail", ""), (5.0, "hype", ""), (7.0, "nope", "")]
-    a, b = pick_sfx("clip-1", beats), pick_sfx("clip-1", beats)
-    assert a == b and [t for t, _ in a] == [1.0, 3.0, 5.0]  # unknown kind -> no sound
-    assert a[0][1] != a[1][1] and a[0][1].parent.name == "fail" and a[2][1].parent.name == "hype"
+    beats = [(1.0, "fail", "*FAIL*", "metal-pipe"), (3.0, "hype", "", ""), (5.0, "shock", "", "nope"),
+             (0.5, "shock", "", "among-us-reveal")]  # fmt: skip
+    out = pick_sfx(beats)
+    assert [(round(t, 2), f.name) for t, f in out] == [(0.82, "metal-pipe.mp3"), (0.0, "among-us-reveal.mp3")]
+    assert all(sfx.path(n) for n in sfx.CATALOG)  # every catalogued sound is on disk
+
+
+def test_sfx_catalog_is_in_the_judge_prompt_and_schema():
+    from clipwatcher import sfx
+    from clipwatcher.judge import compact
+
+    prompt = compact.system_prompt()
+    assert all(f'"{n}" ({k}): {use}' in prompt for n, (k, _, use) in sfx.CATALOG.items())
+    item = compact.OUTPUT_SCHEMA["properties"]["fx"]["items"]
+    assert item["properties"]["sx"]["enum"] == ["", *sfx.CATALOG]
+
+
+def test_beat_snaps_to_the_loudness_rise():
+    from clipwatcher.render.cold_open import onset
+
+    series = [(round(i * 0.1, 1), -30.0 if i < 52 else -12.0) for i in range(100)]  # crash at 5.2 s
+    assert abs(onset(series, 5.8) - 5.2) <= 0.1  # judge said 5.8 from a frame -> moved onto the crash
+    flat = [(round(i * 0.1, 1), -20.0) for i in range(100)]
+    assert onset(flat, 5.8) == 5.8  # no clear rise: the judge's time stands

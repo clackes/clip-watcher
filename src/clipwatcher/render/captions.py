@@ -135,11 +135,9 @@ def _emphasis(w: Word) -> bool:
     return raw.endswith("!") or t in EMPHASIS or any(ch.isdigit() for ch in t)
 
 
-def build_word_events(
-    words: list[Word], dur_s: float, y: int, beats: list[tuple[float, str, str]] | None = None
-) -> list[str]:
+def build_word_events(words: list[Word], dur_s: float, y: int, beats: list[tuple] | None = None) -> list[str]:
     """One word per event at (540, y); labelled beats replace the words for LABEL_S seconds."""
-    labels = [(t, k, lb) for t, k, lb in beats or [] if lb]
+    labels = [(b[0], b[1], b[2]) for b in beats or [] if b[2]]
     busy = [(t, min(t + LABEL_S, dur_s)) for t, _, _ in labels]
     ws = [w for w in words if any(ch.isalnum() for ch in pop_text(w))]  # no bare '!?' or '[...]'
     lines = []
@@ -199,7 +197,7 @@ def group_words(
 
 def build_ass(
     words: list[Word], dur_s: float, credit: str | None = None, style: str = "classic", *, y: int = 1495,
-    beats: list[tuple[float, str, str]] | None = None, credit_pos: tuple[int, int, int] | None = None,
+    beats: list[tuple] | None = None, credit_pos: tuple[int, int, int] | None = None,
 ) -> str:  # fmt: skip
     """credit_pos = (alignment, x, y) of the streamer credit; default top-right of the stack panel."""
     if style not in CAPTION_STYLES:

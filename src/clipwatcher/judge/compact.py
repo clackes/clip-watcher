@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import config
+from .. import sfx as sfx_catalog
 from ..models import Word
 
 SYSTEM_PROMPT_FILE = config.ROOT / "prompts" / "judge_v2.md"
@@ -24,6 +25,7 @@ PHRASE_MAX_WORDS = 10
 CAPS = {"hk": 70, "tt": 60, "ds": 300, "why": 80, "lb": 16}
 FX_KINDS = ("hype", "fail", "shock", "funny")  # beat kinds -> label colour + screen effect
 FX_MAX = 3
+SFX_NAMES = list(sfx_catalog.CATALOG)
 _SENT_END = re.compile(r"[.!?…]$")
 
 OUTPUT_SCHEMA: dict[str, Any] = {
@@ -52,8 +54,9 @@ OUTPUT_SCHEMA: dict[str, Any] = {
                     "t": {"type": "number"},
                     "k": {"type": "string", "enum": list(FX_KINDS)},
                     "lb": {"type": "string"},
+                    "sx": {"type": "string", "enum": ["", *SFX_NAMES]},
                 },
-                "required": ["t", "k", "lb"],
+                "required": ["t", "k", "lb", "sx"],
                 "additionalProperties": False,
             },
         },
@@ -322,9 +325,10 @@ def hashtag(text: str) -> str:
     return "".join(ch for ch in "".join(words) if ch.isalnum())
 
 
-def normalize_fx(fx: Any, t0: float, t1: float) -> list[tuple[float, str, str]]:
-    """Beats inside [t0, t1], known kinds only, at most FX_MAX, >= 1.5 s apart, labels capped."""
-    out: list[tuple[float, str, str]] = []
+def normalize_fx(fx: Any, t0: float, t1: float) -> list[tuple[float, str, str, str]]:
+    """Beats (t, kind, label, sound) inside [t0, t1], known kinds only, at most FX_MAX, >= 1.5 s apart,
+    labels capped, unknown sounds dropped to "" (no sound)."""
+    out: list[tuple[float, str, str, str]] = []
     for b in fx if isinstance(fx, list) else []:
         try:
             t, k, lb = float(b["t"]), str(b["k"]), str(b.get("lb", ""))
@@ -335,7 +339,8 @@ def normalize_fx(fx: Any, t0: float, t1: float) -> list[tuple[float, str, str]]:
         lb = _cap(lb.strip().upper(), CAPS["lb"])
         if lb and not lb.startswith("*"):
             lb = f"*{lb.strip('*')}*"
-        out.append((round(t, 2), k, lb))
+        sx = str(b.get("sx", "") or "")
+        out.append((round(t, 2), k, lb, sx if sx in sfx_catalog.CATALOG else ""))
         if len(out) >= FX_MAX:
             break
     return sorted(out)

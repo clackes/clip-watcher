@@ -175,11 +175,11 @@ def test_judge_clip_uses_screen_model_for_screen_task():
 
 def test_normalize_fx_filters_and_labels():
     fx = [
-        {"t": 5.0, "k": "fail", "lb": "fail"},
+        {"t": 5.0, "k": "fail", "lb": "fail", "sx": "fahhh"},
         {"t": 5.5, "k": "hype", "lb": "too close"},
         {"t": 40.0, "k": "hype", "lb": "out of range"},
         {"t": 8.0, "k": "dance", "lb": "bad kind"},
-        {"t": 9.0, "k": "shock", "lb": ""},
+        {"t": 9.0, "k": "shock", "lb": "", "sx": "made-up"},
     ]
-    assert compact.normalize_fx(fx, 2.0, 20.0) == [(5.0, "fail", "*FAIL*"), (9.0, "shock", "")]
+    assert compact.normalize_fx(fx, 2.0, 20.0) == [(5.0, "fail", "*FAIL*", "fahhh"), (9.0, "shock", "", "")]
     assert compact.normalize_fx(None, 0, 10) == []
