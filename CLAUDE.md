@@ -49,7 +49,9 @@ uvx ruff check . && uvx ruff format --check .
   after render or 48 h. Pruning stops and alerts below 15% free disk.
 - D3 Spike trigger: chat_score = 0.5*z(U) + 0.35*z(E) + 0.15*z(S), median/MAD over 15 min. E uses
   config/global.yaml keywords merged with per-streamer extras. Bot/spam/giveaway/raid filters. Confirm with
-  viewer clips + audio loudness (final >= 4.5).
+  viewer clips + audio loudness (final >= 4.5). Owner, 18 Nov: a spike also needs `detector.min_reaction_share`
+  (0.15) of real reactions (keyword weight >= 1.5, laughter, clip link), and only a sub-bomb of
+  `detector.sub_bomb_min` (10) gifts mutes.
 - D4 Dual export: clean_16x9.mp4 (trimmed, no overlays, -14 LUFS) + short_9x16.mp4. Profiles cpu_batch,
   cpu_live, nvenc, mac_preview.
 - D5 One 9:16 template (1080x1920; owner 17 Nov: no CTA banner, stack moved down 125 px, see template.STACK_SHIFT):
@@ -78,7 +80,8 @@ uvx ruff check . && uvx ruff format --check .
   labelled 480x270 JPEG q65 frames + compact JSON {meta,tr,ch,task}; short-key output {ok,sc,t0,t1,hk,tt,ds,
   fl{sp,mu,gb},why}, caps/credit enforced in code (judge/compact.py). Thinking off, effort low (judge.* in
   global.yaml). judge.mode single | two_stage | off. Owner asked for spoiler/music/gambling flags; sp
-  clips are rejected (judge.reject_flags); gb (17 Nov) and mu (18 Nov, owner accepts music-claim risk) are informational. Heuristic fallback on API errors (English fallback copy, same shape). Judge t0/t1 start late (<= 2 s before the
+  clips are rejected (judge.reject_flags); gb (17 Nov) and mu (18 Nov, owner accepts music-claim risk) are informational. Content (sexual, violent,
+  crude, "ad-unsafe") is never a minus by itself (owner, 18 Nov). Heuristic fallback on API errors (English fallback copy, same shape). Judge t0/t1 start late (<= 2 s before the
   action; fallback 10 s before the reaction), never cut a word, end on a finished sentence (judge/snap.py).
 - D10 English only (owner, 17 Nov): `channel.language: en`. All copy (hook, title, description, fallbacks) is
   English; streamers whose `language` differs are skipped by live/vod. Description = 4 lines: teaser + credit,
