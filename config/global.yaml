@@ -117,7 +117,7 @@ publish:
   auto_approve: false       # true = bot approves clips with judge score >= auto_approve_min
   auto_approve_min: 8
   claim_ttl_min: 15
-  youtube_on_approve: true  # Approve in Telegram uploads at once (private while DRY_RUN=1)
+  youtube_on_approve: true  # Approve in Telegram uploads at once (browser mode + DRY_RUN=1: private, needs YT_BROWSER_FORCE=1)
   youtube_mode: browser     # browser: real Chrome via patchright (scripts/yt_browser_login.py); api: Data API (publish/youtube.py)
 
 fastlane:                   # live lane (python -m clipwatcher.live)

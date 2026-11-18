@@ -188,7 +188,12 @@ async def _publish(message: Any, db: ClipDB, clip_id: str) -> None:
         await message.reply_text(f"YouTube upload failed for {clip_id}: {e}")
         return
     if res.startswith("dryrun-"):
-        await message.reply_text(f"DRY RUN: {clip_id} not uploaded (no YouTube credentials set).")
+        why = (
+            "DRY_RUN=1 without YT_BROWSER_FORCE=1 (set it to upload as private)"
+            if _youtube_mode() != "api"
+            else "DRY_RUN=1 or no YouTube API credentials"
+        )
+        await message.reply_text(f"DRY RUN: {clip_id} not uploaded ({why}).")
     else:
         privacy = "private (DRY_RUN=1)" if config.dry_run() else "public"
         await message.reply_text(f"YouTube {privacy}: {res}")
