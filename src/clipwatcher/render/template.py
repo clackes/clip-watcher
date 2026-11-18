@@ -96,17 +96,50 @@ def _run(cmd: list[str]) -> None:
 LOUDNORM = "loudnorm=I=-14:TP=-1.5:LRA=11"
 
 
+def _segments(src: str, trim: float, keep: list[tuple[float, float]], out: str, *, audio: bool) -> str:
+    """src -> out: the kept stretches of the clip (jump cuts), back to back. 15 ms fades on audio cuts."""
+    n = len(keep)
+    tr, sp = ("atrim", "asetpts") if audio else ("trim", "setpts")
+    if n == 1:
+        a, b = keep[0]
+        return f"{src}{tr}=start={trim + a:.3f}:duration={b - a:.3f},{sp}=PTS-STARTPTS{out}"
+    tag = "ja" if audio else "jv"
+    g = [f"{src}{'asplit' if audio else 'split'}={n}" + "".join(f"[{tag}{i}]" for i in range(n))]
+    for i, (a, b) in enumerate(keep):
+        d = b - a
+        fade = f",afade=t=in:d=0.015,afade=t=out:st={max(0.0, d - 0.015):.3f}:d=0.015" if audio else ""
+        g.append(f"[{tag}{i}]{tr}=start={trim + a:.3f}:duration={d:.3f},{sp}=PTS-STARTPTS{fade}[{tag}{i}o]")
+    g.append(
+        "".join(f"[{tag}{i}o]" for i in range(n))
+        + f"concat=n={n}:v={0 if audio else 1}:a={1 if audio else 0}{out}"
+    )
+    return ";".join(g)
+
+
 def _audio_chain(
-    trim: float, dur: float, cold_open: tuple[float, float] | None = None, measured: dict | None = None
-) -> str:
+    trim: float, dur: float, cold_open: tuple[float, float] | None = None, measured: dict | None = None,
+    keep: list[tuple[float, float]] | None = None,
+) -> str:  # fmt: skip
     """Audio graph ending in [a]. measured = loudnorm pass-1 stats: one fixed gain + limiter instead of
-    loudnorm's dynamic mode, which rides the gain on the first seconds (a loud cold open came out garbled)."""
+    loudnorm's dynamic mode, which rides the gain on the first seconds (a loud cold open came out garbled).
+    keep = jump-cut stretches of the clip (relative to its start); None = the whole clip."""
     if measured:  # fixed gain to -14 LUFS + true-peak-ish limiter at -1.5 dBFS (0.841)
         gain = max(-30.0, min(30.0, -14.0 - float(measured["input_i"])))
         norm = f"volume={gain:.2f}dB,alimiter=limit=0.841:level=false:latency=true"
     else:
         norm = LOUDNORM
     norm += ",aresample=48000[a]"
+    if keep and len(keep) > 1:
+        if not cold_open:
+            return _segments("[0:a]", trim, keep, "[mnj]", audio=True) + f";[mnj]{norm}"
+        cs, cd = cold_open
+        return (
+            "[0:a]asplit=2[coa][mna];"
+            f"[coa]atrim=start={trim + cs:.3f}:duration={cd:.3f},asetpts=PTS-STARTPTS,"
+            f"afade=t=out:st={cd - 0.06:.3f}:d=0.06[coa1];"
+            + _segments("[mna]", trim, keep, "[mna1]", audio=True)
+            + f";[coa1][mna1]concat=n=2:v=0:a=1,{norm}"
+        )
     if not cold_open:
         return f"[0:a]atrim=start={trim:.3f}:duration={dur:.3f},asetpts=PTS-STARTPTS,{norm}"
     cs, cd = cold_open
@@ -119,9 +152,9 @@ def _audio_chain(
     )
 
 
-def _measure(src: Path, coarse: float, trim: float, dur: float, cold_open=None) -> dict | None:
+def _measure(src: Path, coarse: float, trim: float, dur: float, cold_open=None, keep=None) -> dict | None:
     """loudnorm pass 1 over the exact audio the render will use; None on failure (dynamic mode then)."""
-    chain = _audio_chain(trim, dur, cold_open).replace(
+    chain = _audio_chain(trim, dur, cold_open, keep=keep).replace(
         f"{LOUDNORM},aresample=48000[a]", f"{LOUDNORM}:print_format=json[a]"
     )
     cmd = [ffmpeg_bin(), "-hide_banner", "-nostats", "-ss", f"{coarse:.3f}", "-i", str(src)]
@@ -286,6 +319,41 @@ FX_FILTERS = {  # beat kind -> (seconds, filter) applied to the whole picture un
 SFX_LIMIT = 0.891  # -1 dBFS ceiling after the sound effects are mixed in
 
 
+CUE_GAP_S = 0.35  # a pause at least this long between words can take a label or a sound
+CUE_SHIFT_S = 1.5  # ...if it starts within this many seconds after the beat
+
+
+def cue_time(t: float, words: list[Word]) -> float | None:
+    """When a beat's label and sound can play without covering speech: t itself when nobody talks there,
+    else the first pause after the line in progress (the sound lands after the punchline, as clip
+    channels do), None when no pause comes within CUE_SHIFT_S."""
+    ws = sorted((w for w in words if w.text.strip()), key=lambda w: w.start)
+    if not any(w.start - 0.05 < t + 0.4 and t - 0.05 < w.end for w in ws):
+        return t
+    for i, w in enumerate(ws):
+        if w.end < t - 0.05:
+            continue
+        nxt = ws[i + 1].start if i + 1 < len(ws) else None
+        if nxt is None or nxt - w.end >= CUE_GAP_S:
+            c = round(w.end + 0.05, 3)
+            return c if c - t <= CUE_SHIFT_S else None
+    return None
+
+
+def cues(beats: list[tuple], words: list[Word]) -> list[tuple]:
+    """Beats for the label and the sound: moved off speech, or stripped of both when no pause is near.
+    The zoom and colour effect stay on the beat itself (the event)."""
+    out = []
+    for b in beats:
+        lb, sx = (b[2], b[3] if len(b) > 3 else "")
+        if not lb and not sx:
+            continue
+        c = cue_time(b[0], words)
+        if c is not None:
+            out.append((c, b[1], lb, sx))
+    return out
+
+
 def pick_sfx(beats: list[tuple]) -> list[tuple[float, Path]]:
     """(start time, file) for every beat whose sound the judge chose (render.sfx). Never random: no sound
     when the judge left sx empty. The sound starts early by its attack so the hit lands on the beat."""
@@ -360,20 +428,23 @@ def build_split_graph(
     measured: dict | None = None, src_wh: tuple[int, int] = (1920, 1080), fps: float = 30.0,
     face: Rect | None = None, beats: list[tuple] | None = None,
     sfx: list[tuple[float, int]] | None = None, sfx_gain_db: float = -4.0,
+    keep: list[tuple[float, float]] | None = None,
 ) -> str:  # fmt: skip
-    """beats are on the output timeline (after the cold open); sfx = (output time, ffmpeg input index)."""
+    """beats are on the output timeline (after the cold open); sfx = (output time, ffmpeg input index);
+    keep = jump-cut stretches of the clip (relative to its start), None = the whole clip."""
     g: list[str] = []
     co_d = cold_open[1] if cold_open else 0.0
+    keep = keep or [(0.0, dur)]
     if cold_open:  # the reaction plays first in the same layout, cam punched in, then the clip
         cs, cd = cold_open
         g.append(
             "[0:v]split=2[cov][mnv];"
             f"[cov]trim=start={trim + cs:.3f}:duration={cd:.3f},setpts=PTS-STARTPTS[cov1];"
-            f"[mnv]trim=start={trim:.3f}:duration={dur:.3f},setpts=PTS-STARTPTS[mnv1];"
-            "[cov1][mnv1]concat=n=2:v=1:a=0[sv]"
+            + _segments("[mnv]", trim, keep, "[mnv1]", audio=False)
+            + ";[cov1][mnv1]concat=n=2:v=1:a=0[sv]"
         )
     else:
-        g.append(f"[0:v]trim=start={trim:.3f}:duration={dur:.3f},setpts=PTS-STARTPTS[sv]")
+        g.append(_segments("[0:v]", trim, keep, "[sv]", audio=False))
     z = zoom_expr(co_d, zoom, [b[0] for b in beats or []])
     if has_webcam:
         centre = (face[0] + face[2] / 2, face[1] + face[3] / 2) if face else None
@@ -403,7 +474,7 @@ def build_split_graph(
     g.append(
         f"{last}ass=filename={esc_filter_path(ass)}:fontsdir={esc_filter_path(fontsdir)},format=yuv420p[v]"
     )
-    audio = _audio_chain(trim, dur, cold_open, measured)
+    audio = _audio_chain(trim, dur, cold_open, measured, keep=keep)
     if sfx:
         audio = audio[: audio.rindex("[a]")] + "[am];" + _sfx_mix(sfx, sfx_gain_db)
     g.append(audio)
@@ -417,6 +488,7 @@ def render_short(
     has_webcam: bool = True, profile: str = "cpu_batch", captions: str | None = None,
     cold_open: tuple[float, float] | None = None, face: Rect | str | None = None,
     beats: list[tuple] | None = None, layout: str | None = None,
+    actions: list[tuple[float, float, str]] | None = None,
 ) -> Path:  # fmt: skip
     """cold_open=(start, duration) relative to start_s: that moment plays first, zoomed in, then the clip.
     The output is duration + dur_s long; captions follow the clip part. beats = judge beats (t relative to
@@ -436,22 +508,43 @@ def render_short(
     ensure_branding(BRANDING_DIR)
     fps = min(info.fps, 60.0)
     co_d = cold_open[1] if cold_open else 0.0
-    total = dur_s + co_d
+    split = (layout or layout_mode()) == "split"
+    keep = [(0.0, dur_s)]
+    uncut = list(words)  # the cold open plays uncut source time: its captions come from these
+    if split:  # jump cuts: dead air between lines goes (beats and action labels are protected)
+        from clipwatcher.render import jumpcut
+
+        protect = [(b[0] - jumpcut.PROTECT_S, b[0] + jumpcut.PROTECT_S) for b in beats or []]
+        protect += [(a[0], a[1]) for a in actions or []]
+        keep = jumpcut.keep_ranges(words, dur_s, protect=protect)
+        if len(keep) > 1:
+            words = jumpcut.remap_words(words, keep)
+            beats = [(t, *b[1:]) for b in beats or [] if (t := jumpcut.remap(b[0], keep)) is not None]
+            actions = [
+                (s, e, *a[2:])
+                for a in actions or []
+                if (s := jumpcut.remap(a[0], keep)) is not None
+                and (e := jumpcut.remap(a[1], keep)) is not None
+            ]
+    main_d = sum(b - a for a, b in keep)
+    total = main_d + co_d
     if cold_open:  # captions for the replayed shout (sound-off viewers), then the clip re-timed after it
         cs = cold_open[0]
         co_words = [
             Word(max(0.0, w.start - cs), min(co_d, w.end - cs), w.text)
-            for w in words
+            for w in uncut
             if cs - 0.05 <= w.start < cs + co_d - 0.1
         ]
         words = co_words + [Word(w.start + co_d, w.end + co_d, w.text) for w in words]
-    beats = [(b[0] + co_d, *b[1:]) for b in beats or [] if 0 <= b[0] <= dur_s]
-    if (layout or layout_mode()) == "split":
+    beats = [(b[0] + co_d, *b[1:]) for b in beats or [] if 0 <= b[0] <= main_d]
+    actions = [(a[0] + co_d, min(a[1], main_d) + co_d, *a[2:]) for a in actions or [] if a[0] < main_d]
+    if split:
         return _render_split(
             src, out, coarse=coarse, trim=trim, dur_s=dur_s, total=total, info=info, fps=fps, cam=cam,
             game=game, has_webcam=has_webcam, words=words, beats=beats, streamer=streamer,
             captions=captions or caption_style(clip_id), cold_open=cold_open, face=parse_rect(face),
-            profile=profile, sfx=pick_sfx(beats),
+            profile=profile, sfx=pick_sfx(cues(beats, words)), keep=keep, actions=actions,
+            cue_beats=cues(beats, words),
         )  # fmt: skip
 
     with tempfile.TemporaryDirectory(prefix="clipwatcher_") as td:
@@ -501,15 +594,17 @@ def _render_split(
     src: Path, out: Path, *, coarse: float, trim: float, dur_s: float, total: float, info: SourceInfo,
     fps: float, cam: Rect, game: Rect, has_webcam: bool, words: list[Word], beats: list, streamer: str,
     captions: str, cold_open: tuple[float, float] | None, face: Rect | None, profile: str,
-    sfx: list[tuple[float, Path]] | None = None,
+    sfx: list[tuple[float, Path]] | None = None, keep: list[tuple[float, float]] | None = None,
+    actions: list[tuple[float, float, str]] | None = None, cue_beats: list[tuple] | None = None,
 ) -> Path:  # fmt: skip
+    """beats drive zoom and colour effects; cue_beats (labels and sounds moved off speech) the captions."""
     cap_y = SEAM_Y if has_webcam else FRAME_CAP_Y
     credit_pos = (7, 24, SEAM_Y + 75) if has_webcam else (7, 24, FRAME_Y + FRAME_H + 12)
     use_logo = bool(config.global_config().get("render", {}).get("logo", True))
     with tempfile.TemporaryDirectory(prefix="clipwatcher_") as td:
         ass = write_ass(
             Path(td) / "subs.ass", words, total, credit=config.credit(streamer), style=captions,
-            y=cap_y, beats=beats, credit_pos=credit_pos,
+            y=cap_y, beats=beats if cue_beats is None else cue_beats, credit_pos=credit_pos, actions=actions,
         )  # fmt: skip
         cmd = [ffmpeg_bin(), "-y", "-hide_banner", "-ss", f"{coarse:.3f}", "-i", str(src)]
         if use_logo:
@@ -522,8 +617,8 @@ def _render_split(
         graph = build_split_graph(
             trim=trim, dur=dur_s, has_webcam=has_webcam, cam=cam, game=game, logo_idx=1 if use_logo else -1,
             ass=ass, fontsdir=FONTS_DIR, cold_open=cold_open, zoom=co_settings()[1],
-            measured=_measure(src, coarse, trim, dur_s, cold_open), src_wh=(info.width, info.height),
-            fps=fps, face=face, beats=beats, sfx=sfx_in, sfx_gain_db=gain,
+            measured=_measure(src, coarse, trim, dur_s, cold_open, keep), src_wh=(info.width, info.height),
+            fps=fps, face=face, beats=beats, sfx=sfx_in, sfx_gain_db=gain, keep=keep,
         )  # fmt: skip
         cmd += ["-filter_complex", graph, "-map", "[v]", "-map", "[a]", *video_args(profile)]
         cmd += ["-fps_mode", "cfr", "-r", f"{fps:g}", "-c:a", "aac", "-b:a", "192k", "-ar", "48000"]

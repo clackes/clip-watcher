@@ -135,10 +135,15 @@ def _emphasis(w: Word) -> bool:
     return raw.endswith("!") or t in EMPHASIS or any(ch.isdigit() for ch in t)
 
 
-def build_word_events(words: list[Word], dur_s: float, y: int, beats: list[tuple] | None = None) -> list[str]:
+def build_word_events(
+    words: list[Word], dur_s: float, y: int, beats: list[tuple] | None = None,
+    actions: list[tuple] | None = None,
+) -> list[str]:  # fmt: skip
     """One word per event at (540, y); labelled beats replace the words for LABEL_S seconds."""
     labels = [(b[0], b[1], b[2]) for b in beats or [] if b[2]]
     busy = [(t, min(t + LABEL_S, dur_s)) for t, _, _ in labels]
+    acts = [(a[0], min(a[1], dur_s), str(a[2])) for a in actions or [] if a[2] and a[1] > a[0]]
+    busy += [(a, b) for a, b, _ in acts]
     ws = [w for w in words if any(ch.isalnum() for ch in pop_text(w))]  # no bare '!?' or '[...]'
     lines = []
     for i, w in enumerate(ws):
@@ -152,6 +157,11 @@ def build_word_events(words: list[Word], dur_s: float, y: int, beats: list[tuple
         txt = f"{{\\an5\\pos(540,{y}){colour}{WORD_POP}}}{esc(pop_text(w))}"
         if e0 - s0 >= 0.01:
             lines.append(f"Dialogue: 0,{ts(s0)},{ts(e0)},Word,,0,0,0,,{txt}")
+    for a, b, tx in acts:  # *WATCHING*, *STARTS CHEWING*: what happens while nobody talks
+        if any(t < b and a < t + LABEL_S for t, _, _ in labels):
+            continue
+        txt = f"{{\\an5\\pos(540,{y}){LABEL_POP}}}{esc(tx)}"
+        lines.append(f"Dialogue: 1,{ts(a)},{ts(b)},Word,,0,0,0,,{txt}")
     for t, k, lb in labels:
         c = LABEL_COLOURS.get(k, "&HFFFFFF&")
         txt = f"{{\\an5\\pos(540,{y})\\c{c}{LABEL_POP}}}{esc(lb)}"
@@ -198,6 +208,7 @@ def group_words(
 def build_ass(
     words: list[Word], dur_s: float, credit: str | None = None, style: str = "classic", *, y: int = 1495,
     beats: list[tuple] | None = None, credit_pos: tuple[int, int, int] | None = None,
+    actions: list[tuple] | None = None,
 ) -> str:  # fmt: skip
     """credit_pos = (alignment, x, y) of the streamer credit; default top-right of the stack panel."""
     if style not in CAPTION_STYLES:
@@ -232,7 +243,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     if style == "pop":
         return head + "\n".join(lines + build_pop_events(words, dur_s, y)) + "\n"
     if style == "word":
-        return head + "\n".join(lines + build_word_events(words, dur_s, y, beats)) + "\n"
+        return head + "\n".join(lines + build_word_events(words, dur_s, y, beats, actions)) + "\n"
     groups = group_words(words, max_words=2, max_chars=14) if bounce else group_words(words)
     for g, group in enumerate(groups):
         colour = BOUNCE_COLOURS[g % len(BOUNCE_COLOURS)] if bounce else HIGHLIGHT

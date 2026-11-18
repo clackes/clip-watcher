@@ -139,13 +139,14 @@ def process_candidate(
         words = transcribe.transcribe(src, local_start, dur, language)
         size = jcfg.get("frame_size", [480, 270])
         frames = frames_m.keyframes_lowres(
-            src, local_start, dur, n=int(jcfg.get("frames", 8)), peak_rel=cand.peak_s - cand.start_s,
+            src, local_start, dur, n=frames_m.frame_count(dur), peak_rel=cand.peak_s - cand.start_s,
             size=(int(size[0]), int(size[1])), quality=int(jcfg.get("frame_quality", 65)),
             out_dir=work / f"frames_{n}",
         )  # fmt: skip
         jr = claude.judge_clip(
             cand, words, _chat_lines(messages, cand.start_s, cand.end_s), frames,
             game=scfg.get("game") or "", platform=platform, language=language,
+            loud=cold_open.loud_moments(cold_open.loudness(src, local_start, dur)),
         )  # fmt: skip
         meta.update(
             hook=jr.hook_text,
@@ -188,6 +189,7 @@ def process_candidate(
         **lay.as_render_kwargs(),
         cold_open=pl.cold_open,
         beats=cold_open.clip_beats(jr or {}, pl),
+        actions=cold_open.clip_actions(jr or {}, pl),
     )
     clean = tpl.render_clean(src, local_start, dur, clip_dir / "clean_16x9.mp4")
     meta.update(

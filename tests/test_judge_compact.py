@@ -183,3 +183,29 @@ def test_normalize_fx_filters_and_labels():
     ]
     assert compact.normalize_fx(fx, 2.0, 20.0) == [(5.0, "fail", "*FAIL*", "fahhh"), (9.0, "shock", "", "")]
     assert compact.normalize_fx(None, 0, 10) == []
+
+
+def test_normalize_ac_clamps_and_drops_overlaps():
+    ac = [
+        {"t0": 1, "t1": 4, "tx": "watching"},
+        {"t0": 3, "t1": 5, "tx": "x"},
+        {"t0": 8, "t1": 8.5, "tx": "short"},
+        {"t0": 9, "t1": 40, "tx": "*locked in*"},
+    ]
+    assert compact.normalize_ac(ac, 2.0, 20.0) == [(2.0, 4.0, "*WATCHING*"), (9.0, 20.0, "*LOCKED IN*")]
+
+
+def test_loud_moments_and_frame_count():
+    from clipwatcher.judge.frames import frame_count
+    from clipwatcher.render.cold_open import loud_moments
+
+    series = [(round(i * 0.1, 1), -30.0) for i in range(200)]
+    series[80] = (8.0, -12.0)  # a scream at 8 s
+    series[150] = (15.0, -20.0)  # a smaller hit at 15 s
+    assert loud_moments(series) == [(8.0, 18.0), (15.0, 10.0)]
+    assert frame_count(10) == 8 and frame_count(30) == 12 and frame_count(90) == 16
+    payload = compact.build_payload(
+        streamer="x", platform="twitch", game="", language="en", dur=20, peak_s=None, transcript=[], chat=[],
+        loud=[(8.0, 18.04)],
+    )  # fmt: skip
+    assert payload["au"] == [[8.0, 18]]

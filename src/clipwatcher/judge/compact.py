@@ -60,9 +60,18 @@ OUTPUT_SCHEMA: dict[str, Any] = {
                 "additionalProperties": False,
             },
         },
+        "ac": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"t0": {"type": "number"}, "t1": {"type": "number"}, "tx": {"type": "string"}},
+                "required": ["t0", "t1", "tx"],
+                "additionalProperties": False,
+            },
+        },
         "why": {"type": "string"},
     },
-    "required": ["ok", "sc", "t0", "t1", "pk", "hk", "tt", "ds", "fl", "cm", "fx", "why"],
+    "required": ["ok", "sc", "t0", "t1", "pk", "hk", "tt", "ds", "fl", "cm", "fx", "ac", "why"],
     "additionalProperties": False,
 }
 
@@ -179,6 +188,7 @@ def build_payload(
     transcript: Any,
     chat: Iterable[Any],
     task: str = "judge",
+    loud: list[tuple[float, float]] | None = None,
 ) -> dict[str, Any]:
     meta = {
         "s": streamer.lower(),
@@ -189,12 +199,15 @@ def build_payload(
     }
     if peak_s is not None:
         meta["pk"] = round(float(peak_s), 1)
-    return {
+    out = {
         "meta": meta,
         "tr": serialize_transcript_compact(transcript),
         "ch": compact_chat(chat),
         "task": task,
     }
+    if loud is not None:  # sudden loudness jumps: screams, crashes, laughs, even when nothing is transcribed
+        out["au"] = [[round(t, 1), round(db)] for t, db in loud]
+    return out
 
 
 def payload_json(payload: dict[str, Any]) -> str:
@@ -346,6 +359,23 @@ def normalize_fx(fx: Any, t0: float, t1: float) -> list[tuple[float, str, str, s
     return sorted(out)
 
 
+def normalize_ac(ac: Any, t0: float, t1: float) -> list[tuple[float, float, str]]:
+    """Action labels (start, end, *TEXT*) clamped to [t0, t1], >= 0.8 s long, no overlaps, at most 3."""
+    out: list[tuple[float, float, str]] = []
+    for a in ac if isinstance(ac, list) else []:
+        try:
+            s, e, tx = max(t0, float(a["t0"])), min(t1, float(a["t1"])), str(a["tx"]).strip().upper()
+        except (KeyError, TypeError, ValueError):
+            continue
+        tx = _cap(tx.strip("*"), CAPS["lb"] + 6)
+        if not tx or e - s < 0.8 or any(s < oe and os < e for os, oe, _ in out):
+            continue
+        out.append((round(s, 2), round(e, 2), f"*{tx}*"))
+        if len(out) >= 3:
+            break
+    return sorted(out)
+
+
 def fallback_copy(login: str, platform: str, game: str | None, seed: int) -> dict[str, str]:
     """English hook/title/description for clips the judge could not write (no key, API error).
 
@@ -367,7 +397,7 @@ def normalize_output(data: dict[str, Any], *, login: str, platform: str, dur: fl
 
     Raises ValueError when a required key is missing or the hook/title is empty (caller falls back).
     """
-    missing = [k for k in OUTPUT_SCHEMA["required"] if k not in data and k not in ("pk", "cm", "fx")]
+    missing = [k for k in OUTPUT_SCHEMA["required"] if k not in data and k not in ("pk", "cm", "fx", "ac")]
     if missing:
         raise ValueError(f"missing keys {missing}")
     if not str(data["hk"]).strip() or not str(data["tt"]).strip():
@@ -390,6 +420,7 @@ def normalize_output(data: dict[str, Any], *, login: str, platform: str, dur: fl
         else None
     )
     fx = normalize_fx(data.get("fx"), t0, t1)
+    ac = normalize_ac(data.get("ac"), t0, t1)
     reject = config.global_config().get("judge", {}).get("reject_flags", ["sp", "mu"])
     ok = bool(data.get("ok", False)) and not any(fl[k] for k in reject if k in fl)
     return {
@@ -404,5 +435,6 @@ def normalize_output(data: dict[str, Any], *, login: str, platform: str, dur: fl
         "fl": fl,
         "cm": cm,
         "fx": fx,
+        "ac": ac,
         "why": _cap(data.get("why", ""), CAPS["why"]),
     }

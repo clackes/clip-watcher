@@ -183,6 +183,27 @@ def refine(series: list[tuple[float, float]], pk: float) -> float:
     return round(t, 2)
 
 
+def loud_moments(
+    series: list[tuple[float, float]], n: int = 6, min_db: float = 6.0
+) -> list[tuple[float, float]]:
+    """Up to n sudden loudness jumps [(t, dB above the 3 s before)], >= 1.5 s apart, in time order."""
+    found = []
+    for i, (t, v) in enumerate(series):
+        prev = [x for _, x in series[max(0, i - 30) : max(0, i - 2)]]
+        if len(prev) < 5 or v <= SILENCE_DB:
+            continue
+        jump = v - statistics.median(prev)
+        if jump >= min_db:
+            found.append((t, jump))
+    best: list[tuple[float, float]] = []
+    for t, j in sorted(found, key=lambda x: -x[1]):
+        if all(abs(t - b) >= 1.5 for b, _ in best):
+            best.append((round(t, 1), round(j, 1)))
+        if len(best) >= n:
+            break
+    return sorted(best)
+
+
 def onset(series: list[tuple[float, float]], t: float) -> float:
     """Beat time moved onto the sharpest loudness rise near it (the crash, the shout starting), so the
     sound effect and the flash land on the event itself rather than on the judge's frame estimate."""
@@ -242,6 +263,19 @@ def plan(
 def _beat(b: Any) -> tuple[float, str, str, str]:
     """(t, kind, label, sound) from a judge beat tuple/list; older 3-field beats have no sound."""
     return float(b[0]), str(b[1]), str(b[2]), str(b[3]) if len(b) > 3 else ""
+
+
+def clip_actions(jr: Any, pl: Plan) -> list[tuple[float, float, str]]:
+    """Judge action labels re-timed to the trimmed clip and clamped to it."""
+    get = jr.get if isinstance(jr, dict) else lambda k, d=None: getattr(jr, k, d)
+    if get("source") != "claude":
+        return []
+    out = []
+    for a in get("actions") or []:
+        s, e = max(float(a[0]), pl.t0) - pl.t0, min(float(a[1]), pl.t1) - pl.t0
+        if e - s >= 0.8:
+            out.append((round(s, 2), round(e, 2), str(a[2])))
+    return out
 
 
 def clip_beats(jr: Any, pl: Plan) -> list[tuple[float, str, str, str]]:

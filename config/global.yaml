@@ -75,8 +75,10 @@ render:
   logo: true                # small ClipVault logo at the top of the split layout
   sfx: true                 # meme sound effect on every judge beat (assets/sfx/<kind>/, split layout)
   sfx_gain_db: -4           # sound effect level against the -14 LUFS clip
+  jump_cuts: true           # cut pauses without speech (beats and judge action labels are kept)
+  jump_gap_s: 0.8           # a pause this long is dead air
   captions: word            # word (one word on the seam) | pop | classic | bounce | ab; stored in meta.captions
-  cold_open_s: 3.5          # replay the strongest reaction first (0 = off)
+  cold_open_s: 0            # replay the reaction first (0 = off; owner, 18 Nov: none of 20 top clip Shorts does it, they open on the setup line)
   cold_open_lead_s: 2.5     # cold open starts this long before the peak (build-up, not mid-shout)
   cold_open_zoom: 1.15      # punch-in on the facecam during the cold open
   cold_open_audio_fallback: false  # true = without the judge, cold open on a detected shout (unreliable)
@@ -92,7 +94,9 @@ judge:
     claude-haiku-5-5: disabled
     claude-sonnet-5-5: between_tools
   max_tokens: 1024          # output is ~150-250 tokens; headroom is not billed
-  frames: 8                 # 6 evenly spaced + 2 right after the chat peak
+  frames: 8                 # min frames (evenly spaced + 2 right after the chat peak)
+  frames_max: 16            # one frame every frame_every_s, up to this many
+  frame_every_s: 2.5
   frame_size: [480, 270]    # ~173 vision tokens/frame (w*h/750)
   frame_quality: 65
   reject_flags: [sp, mu]  # judge flags that drop a clip (spoiler, music risk); gb is kept in meta only (owner, 17 Nov)

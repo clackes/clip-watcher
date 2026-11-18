@@ -64,6 +64,8 @@ class JudgeResult:
     # editor beats: (t relative to the candidate window, kind hype|fail|shock|funny, label like *FAIL*,
     # meme sound name from clipwatcher.sfx or "")
     beats: list[tuple[float, str, str, str]] = field(default_factory=list)
+    # action labels for stretches nobody talks in: (start, end, "*WATCHING*"), relative to the window
+    actions: list[tuple[float, float, str]] = field(default_factory=list)
 
 
 @dataclass

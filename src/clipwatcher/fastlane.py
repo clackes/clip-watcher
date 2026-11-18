@@ -110,12 +110,15 @@ def _default_judge(
         if s.source == "claude" and (not s.ok and s.score < int(jcfg.get("screen_min", 5))):
             return s
     size = tuple(jcfg.get("frame_size", [480, 270]))
+    from .render import cold_open
+
+    loud = cold_open.loud_moments(cold_open.loudness(Path(src), t0_s, dur))
     frames = fr.keyframes_lowres(
-        src, t0_s, dur, n=int(jcfg.get("frames", 8)), peak_rel=cand.peak_s - cand.start_s,
+        src, t0_s, dur, n=fr.frame_count(dur), peak_rel=cand.peak_s - cand.start_s,
         size=(int(size[0]), int(size[1])), quality=int(jcfg.get("frame_quality", 65)),
         out_dir=Path(src).parent / "frames",  # inside the clip's work dir, removed with it
     )  # fmt: skip
-    return claude.judge_clip(cand, words, chat_lines, frames, game=game, language=language)
+    return claude.judge_clip(cand, words, chat_lines, frames, game=game, language=language, loud=loud)
 
 
 def trim_words(words: list[Word], start: float, end: float) -> list[Word]:
@@ -326,6 +329,7 @@ class FastLane:
 
         pl = cold_open.plan(src, t0_s, dur, cand.peak_s - cand.start_s, jr, words)
         beats = cold_open.clip_beats(jr, pl)
+        actions = cold_open.clip_actions(jr, pl)
         peak_media = t0_s + (pl.reaction if pl.reaction is not None else cand.peak_s - cand.start_s)
         words = trim_words(words, pl.t0, pl.t1)
         t0_s, dur, co = t0_s + pl.t0, pl.t1 - pl.t0, pl.cold_open
@@ -346,7 +350,7 @@ class FastLane:
         short = await self._timed(
             "render_short", timings, self.steps.render_short, src, t0_s, dur, work / "short_9x16.mp4",
             clip_id=cid, streamer=self.streamer, words=words, hook=jr.hook_text,
-            **lay.as_render_kwargs(), profile=prof, cold_open=co, beats=beats,
+            **lay.as_render_kwargs(), profile=prof, cold_open=co, beats=beats, actions=actions,
         )  # fmt: skip
         clean = await self._timed(
             "render_clean",

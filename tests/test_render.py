@@ -335,3 +335,50 @@ def test_beat_snaps_to_the_loudness_rise():
     assert abs(onset(series, 5.8) - 5.2) <= 0.1  # judge said 5.8 from a frame -> moved onto the crash
     flat = [(round(i * 0.1, 1), -20.0) for i in range(100)]
     assert onset(flat, 5.8) == 5.8  # no clear rise: the judge's time stands
+
+
+def test_jump_cuts_drop_dead_air_but_keep_protected_and_edges():
+    from clipwatcher.render import jumpcut
+
+    w = [Word(0.0 + i * 0.3, 0.25 + i * 0.3, "go") for i in range(4)]  # talk 0-1.15
+    w += [Word(4.0 + i * 0.3, 4.25 + i * 0.3, "go") for i in range(4)]  # pause 1.15-4.0, talk 4-5.15
+    w += [Word(9.0, 9.3, "end"), Word(9.4, 9.7, "now")]  # pause 5.15-9.0
+    keep = jumpcut.keep_ranges(w, 11.0, gap=0.8)
+    assert keep == [(0.0, 1.45), (3.85, 5.45), (8.85, 11.0)]
+    assert jumpcut.remap(4.0, keep) == 1.6 and jumpcut.remap(2.0, keep) is None
+    # a beat inside the second pause keeps it
+    keep2 = jumpcut.keep_ranges(w, 11.0, gap=0.8, protect=[(6.0, 7.0)])
+    assert keep2 == [(0.0, 1.45), (3.85, 11.0)]
+    assert jumpcut.keep_ranges(w[:3], 11.0) == [(0.0, 11.0)]  # almost no speech: visual clip, no cuts
+
+
+def test_action_labels_replace_words_on_their_stretch():
+    words = [Word(0.0, 0.3, "hey"), Word(2.0, 2.3, "inside"), Word(5.0, 5.3, "after")]
+    ass = build_ass(words, 6.0, style="word", y=960, actions=[(1.0, 4.0, "*WATCHING*")])
+    events = [ln for ln in ass.splitlines() if ln.startswith("Dialogue")]
+    assert any(e.endswith("*WATCHING*") and ",0:00:01.00,0:00:04.00," in e for e in events)
+    assert not any(e.endswith("INSIDE") for e in events) and any(e.endswith("AFTER") for e in events)
+
+
+@pytest.mark.ffmpeg
+def test_split_short_with_jump_cuts_and_actions(synth_src, tmp_path):
+    out = tmp_path / "jc.mp4"
+    w = [Word(i * 0.2, i * 0.2 + 0.15, "go") for i in range(5)] + [
+        Word(4.0 + i * 0.2, 4.15 + i * 0.2, "go") for i in range(3)
+    ]
+    render_short(
+        synth_src, 2.0, 5.0, out, clip_id="jc", streamer="tester", words=w, hook=None, profile="cpu_live",
+        captions="word", layout="split", actions=[(1.5, 2.5, "*WATCHING*")],
+    )  # fmt: skip
+    check_short(out, 5.0 - 0.0)  # the protected action stretch keeps the pause: nothing cut here
+
+
+def test_cues_move_label_and_sound_off_speech():
+    from clipwatcher.render.template import cue_time, cues
+
+    words = [Word(1.0, 1.3, "did"), Word(1.35, 1.6, "he"), Word(1.65, 2.0, "rob"), Word(2.6, 3.0, "you")]
+    assert cue_time(0.2, words) == 0.2  # nobody talks: stays
+    assert cue_time(1.4, words) == 2.05  # mid-line: first pause after it
+    assert cue_time(1.4, words + [Word(2.05, 2.55, "and"), Word(2.9, 4.0, "on")]) is None
+    beats = [(1.4, "funny", "*ROBBED*", "bruh"), (5.0, "shock", "", "")]
+    assert cues(beats, words) == [(2.05, "funny", "*ROBBED*", "bruh")]  # no label/sound: nothing to cue

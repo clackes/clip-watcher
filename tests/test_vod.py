@@ -39,7 +39,9 @@ def test_main_with_fixture_chat(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(vod, "run_cmd", lambda cmd: calls["dl"].append(cmd))
     jr = JudgeResult(7, 6, "ctx", 2.0, 20.0, "NO WAY", ["t1", "t2"], "setup")
     _fake(monkeypatch, "clipwatcher.judge.transcribe", transcribe=lambda *a, **k: [Word(0, 1, "hi")])
-    _fake(monkeypatch, "clipwatcher.judge.frames", keyframes_lowres=lambda *a, **k: [])
+    _fake(
+        monkeypatch, "clipwatcher.judge.frames", keyframes_lowres=lambda *a, **k: [], frame_count=lambda d: 8
+    )
     _fake(monkeypatch, "clipwatcher.judge.claude", judge_clip=lambda *a, **k: jr)
 
     def short(src, s, d, out, **k):

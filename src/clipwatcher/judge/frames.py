@@ -61,6 +61,14 @@ def frame_times(dur_s: float, n: int = 8, peak_rel: float | None = None, n_peak:
     return out
 
 
+def frame_count(dur_s: float) -> int:
+    """Frames for the judge: one every judge.frame_every_s, between judge.frames and judge.frames_max.
+    Eight frames over a 60 s clip missed a 3 s fail entirely; ~173 tokens per extra frame is cheap."""
+    j = config.global_config().get("judge", {})
+    lo, hi = int(j.get("frames", 8)), int(j.get("frames_max", 16))
+    return max(lo, min(hi, round(dur_s / float(j.get("frame_every_s", 2.5)))))
+
+
 def keyframes_lowres(
     media: str | Path,
     start_s: float,
