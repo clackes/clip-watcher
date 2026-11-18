@@ -213,3 +213,15 @@ def test_global_slots_are_shared_by_every_lane_in_a_loop():
         return peak
 
     assert asyncio.run(go()) == 2
+
+
+def test_same_window_fires_once(tmp_path):
+    log: list = []
+    t0 = 1_700_000_000_000
+    msgs = [ChatMessage(t0, "a", "fire"), ChatMessage(t0, "b", "fire")]  # detector fires twice, same window
+    lane = fastlane.FastLane(
+        "zack", FakeChat(msgs), FakeDetector({"fire"}), FakeRing(log), steps=_steps(log),
+        cfg={"work_dir": str(tmp_path)},
+    )  # fmt: skip
+    out = asyncio.run(lane.run())
+    assert len(out) == 1 and sum(e[0] == "transcribe" for e in log) == 1

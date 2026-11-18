@@ -211,6 +211,7 @@ class FastLane:
         self.outcomes: list[Outcome] = []
         self._sem: asyncio.Semaphore | None = None
         self._tasks: set[asyncio.Task] = set()
+        self._started: set[str] = set()  # clip ids already taken: the detector can fire twice on one window
 
     # -- main loop ----------------------------------------------------------
     async def run(self) -> list[Outcome]:
@@ -221,7 +222,11 @@ class FastLane:
             if cand is not None and cand.chat_score < float(self.cfg["min_score"]):
                 log.info("%s: skip weak moment score=%.1f", self.streamer, cand.chat_score)
                 cand = None
+            if cand is not None and self._clip_id(cand) in self._started:
+                log.info("%s: %s already in progress or done", self.streamer, self._clip_id(cand))
+                cand = None
             if cand is not None:
+                self._started.add(self._clip_id(cand))
                 t = asyncio.create_task(self._guarded(cand))
                 self._tasks.add(t)
                 t.add_done_callback(self._tasks.discard)
