@@ -213,6 +213,9 @@ async def post_card(app: Any, db: ClipDB, clip_id: str, video: Path | None = Non
             await app.bot.send_video(
                 chat_id, f, caption=card_text(row), reply_markup=kb, supports_streaming=True,
                 thumbnail=thumb.read_bytes() if thumb else None, **attrs,
+                # the default few-second write timeout fires mid-upload of a 10-20 MB Short (18 Nov,
+                # Windows server): the card arrived but the lane logged the clip as failed
+                write_timeout=120, read_timeout=120, connect_timeout=30,
             )  # fmt: skip
         if thumb:
             thumb.unlink(missing_ok=True)

@@ -412,7 +412,10 @@ class FastLane:
         pkg = await self._timed("stage", timings, self.steps.stage, cid, short, clean, meta, **kw)
         if self.bot is not None and self.db is not None and self.steps.post_card is not None:
             t1 = time.perf_counter()
-            await self.steps.post_card(self.bot, self.db, cid, short)
+            try:
+                await self.steps.post_card(self.bot, self.db, cid, short)
+            except Exception:  # noqa: BLE001 - the clip is staged; a card error must not mark it failed
+                log.warning("%s: card for %s failed (clip staged)", self.streamer, cid, exc_info=True)
             timings["post"] = round(time.perf_counter() - t1, 2)
         self._unpin(cand)
         self._cleanup(cand)  # staging holds copies; the cut .ts and renders would fill the disk 24/7

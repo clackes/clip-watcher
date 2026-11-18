@@ -263,3 +263,25 @@ def test_keep_rejected_writes_review(tmp_path):
     review = json.loads((tmp_path / out[0].clip_id / "review.json").read_text(encoding="utf-8"))
     assert review["screen"]["reject_reason"] == "dead air" and review["candidate"]["stream"] == "zack"
     assert review["words"][0]["text"] == "wow"
+
+
+def test_card_error_keeps_the_clip_staged(tmp_path):
+    """Regression (18 Nov): the Telegram upload timed out after the card arrived and the clip was logged
+    as failed. A card error is logged; the clip stays staged."""
+    log: list = []
+    t0 = 1_700_000_000_000
+    msgs = [ChatMessage(t0 + i * 1000, f"u{i}", "hi") for i in range(60)]
+    msgs[41] = ChatMessage(t0 + 41_000, "late", "fire")
+    st = _steps(log)
+
+    async def boom(*a, **k):
+        raise TimeoutError("Timed out")
+
+    st.post_card = boom
+    lane = fastlane.FastLane(
+        "zack", FakeChat(msgs), FakeDetector({"fire"}), FakeRing(log), steps=st,
+        cfg={"work_dir": str(tmp_path), "pin_pad_s": 60}, db=object(), bot=object(),
+    )  # fmt: skip
+    out = asyncio.run(lane.run())
+    assert [o.status for o in out] == ["staged"]
+    assert any(e[0] == "unpin" for e in log)
