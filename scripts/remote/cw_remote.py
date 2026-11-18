@@ -192,7 +192,7 @@ def main() -> None:
     sub.add_parser("status").set_defaults(fn=cmd_status)
     sub.add_parser("push").set_defaults(fn=cmd_push)
     t = sub.add_parser("test")
-    t.add_argument("args", nargs=argparse.REMAINDER)
+    t.add_argument("args", nargs="*")
     t.set_defaults(fn=cmd_test)
     lg = sub.add_parser("logs")
     lg.add_argument("-n", type=int, default=40)
@@ -213,7 +213,11 @@ def main() -> None:
     g.add_argument("remote")
     g.add_argument("local", type=Path)
     g.set_defaults(fn=lambda a: get(a.remote, a.local))
-    a = ap.parse_args()
+    a, extra = ap.parse_known_args()
+    if a.cmd == "test":
+        a.args = list(a.args or []) + extra  # pytest options such as -q -k foo
+    elif extra:
+        ap.error("unrecognized arguments: " + " ".join(extra))
     a.fn(a)
 
 
