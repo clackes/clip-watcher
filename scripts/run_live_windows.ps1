@@ -3,7 +3,7 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\run_live_windows.ps1 kaicenat,clix    # a subset
 #   powershell -ExecutionPolicy Bypass -File scripts\run_live_windows.ps1 -YtLogin -Account <username>  # YouTube Studio login
 # Ctrl-C (or closing the window) stops both.
-param([string]$Streamers = "", [switch]$YtLogin, [string]$Account = "")
+param([string[]]$Streamers = @(), [switch]$YtLogin, [string]$Account = "")
 
 Set-Location (Split-Path $PSScriptRoot -Parent)
 if (Test-Path .env) {
@@ -39,7 +39,7 @@ if ($env:TELEGRAM_BOT_TOKEN) {
 powercfg /change standby-timeout-ac 0 2>$null | Out-Null
 try {
     $lane = @("-m", "clipwatcher.live")
-    if ($Streamers) { $lane += @("--streamers", $Streamers) }
+    if ($Streamers) { $lane += @("--streamers", ($Streamers -join ",")) }
     & $py @lane 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath "work\logs\live-$day.log" -Append
 } finally {
     if ($bot -and -not $bot.HasExited) { taskkill /T /F /PID $bot.Id | Out-Null }

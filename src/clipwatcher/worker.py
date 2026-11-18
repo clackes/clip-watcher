@@ -240,6 +240,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--language", default=None)
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO)
+    for name in ("httpx", "httpx2"):  # request URLs carry the Telegram bot token
+        logging.getLogger(name).setLevel(logging.WARNING)
     a.db.parent.mkdir(parents=True, exist_ok=True)
     w = Worker(ClipDB(a.db))
     if a.enqueue_media:

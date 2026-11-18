@@ -14,6 +14,7 @@ import argparse
 import asyncio
 import logging
 import os
+import re
 import signal
 import time
 from pathlib import Path
@@ -142,9 +143,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--minutes", type=float, default=0, help="stop after N minutes (0 = run forever)")
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    logins = [
-        s.strip().lower() for s in (a.streamers or ",".join(config.streamers())).split(",") if s.strip()
-    ]
+    # httpx logs every request URL at INFO, and Telegram's URLs carry the bot token.
+    for name in ("httpx", "httpx2"):
+        logging.getLogger(name).setLevel(logging.WARNING)
+    # commas or spaces (PowerShell turns "a,b" into the array "a b")
+    logins = [s.lower() for s in re.split(r"[,\s]+", a.streamers or ",".join(config.streamers())) if s]
     skipped = [lg for lg in logins if not config.allowed_streamer(lg)]
     for lg in skipped:
         log.warning("%s: skipped, speaks %r but the channel is %r only", lg, config.stream_language(lg),
