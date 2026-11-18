@@ -155,7 +155,7 @@ def test_recorder_ingest_run(tmp_path):
     (rec.dir / "seg_a_00001.ts").write_bytes(b"")
     (rec.dir / "a.csv").write_text("seg_a_00000.ts,0.0,10.0\nseg_a_00001.ts,10.0,20.0\n")
     assert rec.ingest_run("a", 5_000_000) == 1
-    assert rec.ring.segments()[0]["start_ms"] == 5_000_000 and not (rec.dir / "seg_a_00001.ts").exists()
+    assert rec.ring.segments()[0]["start_ms"] == 5_002_000 and not (rec.dir / "seg_a_00001.ts").exists()
     assert rec.newest_segment_age_s(now=5_020) is not None
 
 
@@ -170,6 +170,19 @@ def test_recorder_anchors_run_that_waited_for_the_stream(tmp_path):
     (rec.dir / "b.csv").write_text("seg_b_00000.ts,0.0,10.0\nseg_b_00001.ts,10.0,20.0\n")
     assert rec.ingest_run("b", 5_000_000) == 1  # later polls keep the same anchor
     assert [r["start_ms"] for r in rec.ring.segments()] == [8_600_000, 8_610_000]
+
+
+def test_recorder_times_segments_by_wall_clock_across_missing_stream(tmp_path):
+    """Regression (18 Nov): 2-6 min of media missing per 15 min (ads/stalls) made cuts minutes early."""
+    rec = Recorder("twitch", "foo", "123", tmp_path)
+    for i, mt in enumerate([1_010, 1_020, 1_110]):  # 80 s of stream lost between seg 1 and seg 2
+        (rec.dir / f"seg_c_{i:05d}.ts").write_bytes(b"1")
+        os.utime(rec.dir / f"seg_c_{i:05d}.ts", (mt, mt))
+    rows = ["seg_c_00000.ts,0.0,10.0", "seg_c_00001.ts,10.0,20.0", "seg_c_00002.ts,20.0,30.0"]
+    (rec.dir / "c.csv").write_text("\n".join(rows) + "\n")
+    assert rec.ingest_run("c", 1_000_000) == 3
+    assert [r["start_ms"] for r in rec.ring.segments()] == [1_000_000, 1_010_000, 1_100_000]
+    assert rec.newest_segment_age_s(now=1_112) == 2
 
 
 class FakeHttp:

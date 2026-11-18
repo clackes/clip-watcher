@@ -21,8 +21,8 @@ from .ringbuffer import RingBuffer
 log = logging.getLogger(__name__)
 
 QUALITY_DEFAULT = "720p60,720p,best"
-# A run whose first segment ended more than this after spawn waited for the channel to go live.
-ANCHOR_SLACK_MS = 30_000
+# A hole this long between two segments (ad break, stall) is logged.
+GAP_LOG_MS = 15_000
 _AD_START = re.compile(r"detected advertisement break(?: of (\d+) seconds?)?", re.I)
 _AD_END = re.compile(r"resuming stream output", re.I)
 _AD_ANY = re.compile(r"advertisement", re.I)
@@ -160,7 +160,7 @@ class Recorder:
         self.pdt = PdtMap(segment_s=segment_s)
         self.ads = AdLog(self.dir / "ads.jsonl")
         self._ingested: set[str] = set()
-        self._anchor: dict[str, int] = {}  # run id -> wall-clock ms of the run's first video packet
+        self._last_end: dict[str, int] = {}  # run id -> wall-clock end ms of its newest segment
         self._procs: list[asyncio.subprocess.Process] = []
         self._tasks: list[asyncio.Task] = []
         self._run_start_ms = 0
@@ -180,26 +180,13 @@ class Recorder:
     def ingest_run(self, run_id: str, run_start_ms: int) -> int:
         """Register finished segments from a run's csv into the ring; delete 0-byte files.
 
-        Segment times in the csv count from the first video packet, not from when the pipeline was
-        spawned. streamlink waits for an offline channel (--retry-streams), so a run spawned hours before
-        the stream starts would stamp every segment hours early and every cut would miss the moment. The
-        first finished segment's mtime (= its end, wall clock) re-anchors the run when the two disagree.
+        Each segment is stamped by its own file mtime (= when ffmpeg closed it, wall clock) minus its
+        duration, never by "run start + media time". Media time stops while streamlink filters a Twitch ad
+        break, waits for an offline channel or skips segments after a stall, so summing it drifted minutes
+        early (18 Nov: 2-6 min per 15 min on most streams) and every cut missed the moment.
         """
         n = 0
-        rows = read_segment_list(self.dir / f"{run_id}.csv")
-        if rows and run_id not in self._anchor:
-            name, _s, e = rows[0]
-            f = self.dir / name
-            anchor = run_start_ms
-            if f.exists():
-                from_file = int(f.stat().st_mtime * 1000 - e * 1000)
-                if from_file - run_start_ms > ANCHOR_SLACK_MS:
-                    log.info("%s: run %s started %.0fs after spawn", self.login, run_id,
-                             (from_file - run_start_ms) / 1000)  # fmt: skip
-                    anchor = from_file
-            self._anchor[run_id] = anchor
-        run_start_ms = self._anchor.get(run_id, run_start_ms)
-        for name, s, e in rows:
+        for name, s, e in read_segment_list(self.dir / f"{run_id}.csv"):
             if name in self._ingested:
                 continue
             f = self.dir / name
@@ -207,9 +194,17 @@ class Recorder:
                 f.unlink(missing_ok=True)
                 self._ingested.add(name)
                 continue
-            start = int(run_start_ms + s * 1000)
+            dur_ms = int((e - s) * 1000)
+            start = int(f.stat().st_mtime * 1000) - dur_ms
+            prev = self._last_end.get(run_id)
+            if prev is not None:
+                if start - prev > GAP_LOG_MS:
+                    log.info("%s: %.0fs of stream missing before %s (ad break or stall)", self.login,
+                             (start - prev) / 1000, name)  # fmt: skip
+                start = max(start, prev)  # mtime jitter must not overlap the previous segment
             if self.ring.add_segment(f, start, e - s):
                 self.pdt.add(int(round(s / self.segment_s)) + self._n_runs * 100_000, start)
+                self._last_end[run_id] = start + dur_ms
                 n += 1
             self._ingested.add(name)
         return n
