@@ -1,9 +1,9 @@
 # Windows twin of run_live_mac.sh: Telegram approval bot + live lane, with .env loaded.
 #   powershell -ExecutionPolicy Bypass -File scripts\run_live_windows.ps1                  # every English streamer
 #   powershell -ExecutionPolicy Bypass -File scripts\run_live_windows.ps1 kaicenat,clix    # a subset
-#   powershell -ExecutionPolicy Bypass -File scripts\run_live_windows.ps1 -YtLogin         # one-time YouTube Studio login
+#   powershell -ExecutionPolicy Bypass -File scripts\run_live_windows.ps1 -YtLogin -Account <username>  # YouTube Studio login
 # Ctrl-C (or closing the window) stops both.
-param([string]$Streamers = "", [switch]$YtLogin)
+param([string]$Streamers = "", [switch]$YtLogin, [string]$Account = "")
 
 Set-Location (Split-Path $PSScriptRoot -Parent)
 if (Test-Path .env) {
@@ -16,7 +16,10 @@ $env:PYTHONUTF8 = "1"
 $env:PATH = "$PWD\.venv\Scripts;$env:PATH"
 $py = "$PWD\.venv\Scripts\python.exe"
 
-if ($YtLogin) { & $py scripts\yt_browser_login.py; exit $LASTEXITCODE }
+if ($YtLogin) {
+    $a = @(); if ($Account) { $a = @("--account", $Account) }
+    & $py scripts\yt_browser_login.py @a; exit $LASTEXITCODE
+}
 
 New-Item -ItemType Directory -Force work\logs | Out-Null
 $day = Get-Date -Format yyyyMMdd

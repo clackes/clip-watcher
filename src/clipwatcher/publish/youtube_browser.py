@@ -32,12 +32,20 @@ log = logging.getLogger(__name__)
 
 STUDIO_URL = "https://studio.youtube.com"
 DEFAULT_PROFILE = Path.home() / ".clipwatcher" / "yt-chrome-profile"
+PROFILES_ROOT = Path.home() / ".clipwatcher" / "yt-profiles"  # one saved Chrome session per account username
 _URL_RE = re.compile(r"(?:shorts/|youtu\.be/|watch\?v=)([A-Za-z0-9_-]{6,})")
 
 
-def profile_dir() -> Path:
+def profile_dir(account: str | None = None) -> Path:
+    """YT_BROWSER_PROFILE (explicit dir) wins; else the account's own profile
+    (YT_BROWSER_ACCOUNT=<username> -> ~/.clipwatcher/yt-profiles/<username>); else the legacy shared one."""
     p = os.environ.get("YT_BROWSER_PROFILE")
-    return Path(p).expanduser() if p else DEFAULT_PROFILE
+    if p:
+        return Path(p).expanduser()
+    account = account or os.environ.get("YT_BROWSER_ACCOUNT")
+    if account:
+        return PROFILES_ROOT / re.sub(r"[^A-Za-z0-9._@-]", "_", account.strip())
+    return DEFAULT_PROFILE
 
 
 def _shots_dir() -> Path | None:

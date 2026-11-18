@@ -4,22 +4,24 @@ Opens the user's real Chrome with a dedicated ClipWatcher profile. Sign in with
 the Google account that owns the ClipVault channel, pick that channel, then
 press Enter here to close. The profile is reused by publish/youtube_browser.py.
 
-    python scripts/yt_browser_login.py
+    python scripts/yt_browser_login.py --account <username>     # -> ~/.clipwatcher/yt-profiles/<username>
+    python scripts/yt_browser_login.py --profile-dir D:/profiles/x
 
-Override the profile dir with YT_BROWSER_PROFILE.
+Then set YT_BROWSER_ACCOUNT=<username> in .env so the publisher uploads with that saved session.
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
+from pathlib import Path
 
 from clipwatcher.publish.youtube_browser import STUDIO_URL, profile_dir
 
 
-async def main() -> None:
+async def main(pdir: Path) -> None:
     from patchright.async_api import async_playwright
 
-    pdir = profile_dir()
     pdir.mkdir(parents=True, exist_ok=True)
     print(f"profile: {pdir}")
     async with async_playwright() as p:
@@ -39,4 +41,8 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--account", help="username of the YouTube/Google account (profile per account)")
+    ap.add_argument("--profile-dir", type=Path, help="explicit Chrome profile directory")
+    a = ap.parse_args()
+    asyncio.run(main(a.profile_dir.expanduser() if a.profile_dir else profile_dir(a.account)))
