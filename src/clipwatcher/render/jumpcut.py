@@ -16,6 +16,8 @@ PRE_S = 0.15  # kept before the next line starts
 POST_S = 0.3  # kept after a line ends (the last syllable and a beat of reaction)
 MIN_WORDS = 6  # fewer spoken words than this: a visual clip, no cuts
 PROTECT_S = 1.2  # around a beat nothing is cut
+MAX_GAP_S = 4.0  # a longer silence is the content (watching, a stare, a silent fail), not dead air
+MIN_LEN_S, MIN_SHARE = 12.0, 0.6  # cuts never take the clip below this length or share of its length
 
 
 def settings() -> tuple[bool, float]:
@@ -45,7 +47,17 @@ def keep_ranges(
             continue
         if a == 0.0 or b == dur:  # leading/trailing silence: only trim it, the judge chose the edges
             continue
+        if b - a > MAX_GAP_S:
+            continue
         cuts.append((lo, hi))
+    floor = min(dur, max(MIN_LEN_S, MIN_SHARE * dur))
+    budget = dur - floor  # seconds that may go; shortest pauses first (the dead air between lines)
+    kept_cuts = []
+    for lo, hi in sorted(cuts, key=lambda c: c[1] - c[0]):
+        if hi - lo <= budget:
+            kept_cuts.append((lo, hi))
+            budget -= hi - lo
+    cuts = sorted(kept_cuts)
     keep, t = [], 0.0
     for lo, hi in cuts:
         if lo > t:

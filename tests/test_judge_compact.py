@@ -104,7 +104,7 @@ def test_request_system_prompt_is_static_and_cached(tmp_path):
     content = r1["messages"][0]["content"]
     assert content[0] == {"type": "text", "text": "[t=0.0s]"} and content[1]["type"] == "image"
     assert content[-1]["type"] == "text" and json.loads(content[-1]["text"])["meta"]["s"] == "a"
-    assert r1["thinking"] == {"type": "disabled"} and r2["thinking"] == {"type": "between_tools"}
+    assert r1["thinking"] == {"type": "disabled"} and r2["thinking"] == {"type": "adaptive"}
     assert r1["output_config"]["effort"] == "low"
     assert r1["output_config"]["format"]["schema"] is compact.OUTPUT_SCHEMA
 

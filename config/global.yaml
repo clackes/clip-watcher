@@ -89,11 +89,11 @@ judge:
   screen_model: claude-haiku-5-5
   judge_model: claude-sonnet-5-5
   borderline_model: claude-opus-5-5
-  effort: low               # short structured answer: low effort, no thinking
-  thinking:                 # thinking bills as output tokens; this task does not need it
+  effort: low               # thinking on at low effort: same 7/7/7 as medium, cheaper
+  thinking:                 # off, the same clip scored 5-8 run to run; adaptive at low effort: 7/7/7 (18 Nov)
     claude-haiku-5-5: disabled
-    claude-sonnet-5-5: between_tools
-  max_tokens: 1024          # output is ~150-250 tokens; headroom is not billed
+    claude-sonnet-5-5: adaptive
+  max_tokens: 8000          # thinking counts toward it; the answer is ~300 tokens; headroom is not billed
   frames: 8                 # min frames (evenly spaced + 2 right after the chat peak)
   frames_max: 16            # one frame every frame_every_s, up to this many
   frame_every_s: 2.5

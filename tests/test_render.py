@@ -343,12 +343,16 @@ def test_jump_cuts_drop_dead_air_but_keep_protected_and_edges():
     w = [Word(0.0 + i * 0.3, 0.25 + i * 0.3, "go") for i in range(4)]  # talk 0-1.15
     w += [Word(4.0 + i * 0.3, 4.25 + i * 0.3, "go") for i in range(4)]  # pause 1.15-4.0, talk 4-5.15
     w += [Word(9.0, 9.3, "end"), Word(9.4, 9.7, "now")]  # pause 5.15-9.0
-    keep = jumpcut.keep_ranges(w, 11.0, gap=0.8)
-    assert keep == [(0.0, 1.45), (3.85, 5.45), (8.85, 11.0)]
+    keep = jumpcut.keep_ranges(w, 11.0, gap=0.8)  # 3.85 s pause cut; 11 s clip: floor = its length
+    assert keep == [(0.0, 11.0)]
+    keep = jumpcut.keep_ranges(w + [Word(t, t + 0.25, "go") for t in (11.0, 11.3, 11.6)], 30.0, gap=0.8)
+    assert keep[:2] == [(0.0, 1.45), (3.85, 5.45)]  # the 2.4 s pause goes; the 3.85 s one before 9 s stays
     assert jumpcut.remap(4.0, keep) == 1.6 and jumpcut.remap(2.0, keep) is None
     # a beat inside the second pause keeps it
-    keep2 = jumpcut.keep_ranges(w, 11.0, gap=0.8, protect=[(6.0, 7.0)])
-    assert keep2 == [(0.0, 1.45), (3.85, 11.0)]
+    keep2 = jumpcut.keep_ranges(w, 30.0, gap=0.8, protect=[(6.0, 7.0)])
+    assert keep2 == [(0.0, 1.45), (3.85, 30.0)]
+    talk = [Word(i, i + 0.3, "go") for i in (0, 1, 2, 9, 10, 11)]
+    assert jumpcut.keep_ranges(talk, 30.0) == [(0.0, 30.0)]  # a 6.7 s silence is content: never cut
     assert jumpcut.keep_ranges(w[:3], 11.0) == [(0.0, 11.0)]  # almost no speech: visual clip, no cuts
 
 

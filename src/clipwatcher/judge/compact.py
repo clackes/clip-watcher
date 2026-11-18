@@ -227,7 +227,8 @@ def frame_blocks(frames: list[tuple[float, Path]]) -> list[dict[str, Any]]:
 
 
 def thinking_for(model: str) -> dict[str, Any] | None:
-    """Thinking config per model from judge.thinking (thinking bills as output; this task needs none)."""
+    """Thinking config per model from judge.thinking. Thinking bills as output, but without it the judge
+    scored the same clip anywhere from 5 to 8 (temperature is not settable on these models)."""
     t = (config.global_config().get("judge", {}).get("thinking") or {}).get(model)
     return {"type": t} if t else None
 
