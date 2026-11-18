@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import logging
 import re
 import subprocess
 import sys
@@ -18,6 +19,8 @@ from clipwatcher.chat.convert import read_jsonl, tdl_to_messages, write_jsonl
 from clipwatcher.detect.detector import detect
 from clipwatcher.models import Candidate, ChatMessage
 from clipwatcher.render import cold_open
+
+log = logging.getLogger(__name__)
 
 
 def vod_id(vod: str) -> str:
@@ -109,7 +112,12 @@ def process_candidate(
     quality: str,
     fetch_window: Callable[[float, float, Path], None] | None = None,
     platform: str = "twitch",
-) -> Path:
+    skip_rejected: bool = False,
+    extra_meta: dict | None = None,
+    views: int | None = None,
+) -> Path | None:
+    """Judge, trim, render and stage one candidate. skip_rejected: return None without rendering when the
+    judge says no (clips lane: only publishable clips reach the queue)."""
     scfg = config.streamer(streamer)
     clip_id = f"{streamer}-{vid}-{int(cand.start_s * 1000)}"
     dur = cand.end_s - cand.start_s
@@ -147,6 +155,7 @@ def process_candidate(
             cand, words, _chat_lines(messages, cand.start_s, cand.end_s), frames,
             game=scfg.get("game") or "", platform=platform, language=language,
             loud=cold_open.loud_moments(cold_open.loudness(src, local_start, dur)),
+            views=views,
         )  # fmt: skip
         meta.update(
             hook=jr.hook_text,
@@ -161,6 +170,9 @@ def process_candidate(
         )
         if jr.source == "claude":
             meta.update(why=jr.why, flags=jr.flags, judge_score=jr.score, score=jr.score, ok=jr.ok)
+            if skip_rejected and not jr.ok:
+                log.info("%s: judge rejected (sc=%s): %s", clip_id, jr.score, jr.why)
+                return None
     pl = cold_open.plan(src, local_start, dur, cand.peak_s - cand.start_s, jr or {}, words)
     # media time of the moment: picks the webcam of whoever makes it when several are on screen
     peak_media = local_start + (pl.reaction if pl.reaction is not None else cand.peak_s - cand.start_s)
@@ -209,6 +221,7 @@ def process_candidate(
         out_dir=str(out_dir),
     )
     meta.setdefault("score", cand.final_score)
+    meta.update(extra_meta or {})
     staging = _mod("clipwatcher.queue.staging")
     Path(out_dir).mkdir(parents=True, exist_ok=True)
     db = _mod("clipwatcher.queue.db").ClipDB(Path(out_dir) / "clips.db")
