@@ -85,9 +85,13 @@ async def _upload(
             await file_input.wait_for(state="attached", timeout=30_000)
             await file_input.set_input_files(str(video))
 
+            # Everything after the file is accepted lives inside this one dialog.
+            dialog = page.locator("ytcp-uploads-dialog").first
+            await dialog.wait_for(timeout=60_000)
+
             # Title — Studio uses two ytcp-social-suggestions-textbox widgets.
             # First one is Title, second is Description. Each contains #textbox.
-            boxes = page.locator("ytcp-social-suggestions-textbox #textbox")
+            boxes = dialog.locator("ytcp-social-suggestions-textbox #textbox")
             await boxes.first.wait_for(timeout=120_000)
             await boxes.first.click()
             await page.keyboard.press("Meta+A")
@@ -98,31 +102,35 @@ async def _upload(
             await page.keyboard.type(description[:4900])
 
             # Audience: Not made for kids.
-            await page.get_by_role("radio", name=re.compile(r"No,? it'?s not made for kids", re.I)).click()
+            await dialog.get_by_role("radio", name=re.compile(r"No,? it'?s not made for kids", re.I)).click()
+
+            # The share URL is in this dialog as soon as Studio assigns an id
+            # (well before the upload finishes). Grab it now — it's the only
+            # URL on the page scoped to this upload; the Studio shell's What's
+            # New banner carries unrelated youtube.com/watch anchors.
+            link_loc = dialog.locator('a[href*="youtu.be/"]').first
+            await link_loc.wait_for(timeout=120_000)
+            href = await link_loc.get_attribute("href") or ""
+            if not href:
+                raise RuntimeError("could not read video URL from Studio upload dialog")
 
             # Details → Video elements → Checks → Visibility: three Next clicks.
             for _ in range(3):
-                await page.get_by_role("button", name="Next", exact=True).click()
+                await dialog.get_by_role("button", name="Next", exact=True).click()
                 await asyncio.sleep(0.8)
 
             label = "Private" if private else "Public"
-            await page.get_by_role("radio", name=re.compile(rf"^{label}$")).click()
+            await dialog.get_by_role("radio", name=re.compile(rf"^{label}$")).click()
 
-            # Publish (public) or Save (private).
-            await page.get_by_role("button", name=re.compile(r"^(Publish|Save)$")).click()
+            # Publish (public) or Save (private). Studio applies this even if
+            # the upload is still finishing.
+            await dialog.get_by_role("button", name=re.compile(r"^(Publish|Save)$")).click()
 
-            # Capture the share link from the done dialog.
-            link = page.locator(
-                'a[href*="youtu.be/"], a[href*="youtube.com/shorts/"], a[href*="youtube.com/watch"]'
-            ).first
-            await link.wait_for(timeout=timeout_s * 1000)
-            href = await link.get_attribute("href") or ""
-            if not href:
-                raise RuntimeError("could not read video URL from Studio share dialog")
-
-            # Close the dialog so the next run starts clean.
+            # Dismiss the "done" dialog if one appears.
             try:
-                await page.get_by_role("button", name=re.compile(r"^Close$", re.I)).click(timeout=5000)
+                await page.get_by_role("button", name=re.compile(r"^Close$", re.I)).click(
+                    timeout=timeout_s * 1000
+                )
             except Exception:
                 pass
             return href
