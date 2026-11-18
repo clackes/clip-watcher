@@ -10,6 +10,7 @@ import re
 import shlex
 import shutil
 import signal
+import subprocess
 import time
 from pathlib import Path
 
@@ -223,14 +224,24 @@ class Recorder:
         # One shell pipeline in its own session = one process group holding streamlink and ffmpeg, so
         # stop() and the startup sweep can kill the whole recorder. (Separate processes can't share a
         # group across sessions on macOS, and killing only the Python parent left both recording.)
-        sl_cmd = shlex.join(build_streamlink_cmd(self.platform, self.login, self.quality))
-        ff_cmd = shlex.join(build_ffmpeg_cmd(self.dir, self._run_id, self.segment_s))
-        sl = await asyncio.create_subprocess_exec(
-            "/bin/sh", "-c", f"{sl_cmd} | {ff_cmd} 2>/dev/null",
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-            start_new_session=True,
-        )  # fmt: skip
+        sl_args = build_streamlink_cmd(self.platform, self.login, self.quality)
+        ff_args = build_ffmpeg_cmd(self.dir, self._run_id, self.segment_s)
+        if os.name == "nt":
+            # cmd.exe pipes the two; its new process group is killed as a tree by taskkill (kill_group).
+            line = f"{subprocess.list2cmdline(sl_args)} | {subprocess.list2cmdline(ff_args)} 2>NUL"
+            sl = await asyncio.create_subprocess_shell(
+                line,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+            )
+        else:
+            sl = await asyncio.create_subprocess_exec(
+                "/bin/sh", "-c", f"{shlex.join(sl_args)} | {shlex.join(ff_args)} 2>/dev/null",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+                start_new_session=True,
+            )  # fmt: skip
         (self.dir / "pids.json").write_text(json.dumps({"pgid": sl.pid}))
         self._procs = [sl]
         self._tasks.append(asyncio.create_task(self._read_stderr(sl)))
@@ -243,7 +254,7 @@ class Recorder:
                 try:
                     await asyncio.wait_for(p.wait(), 10)
                 except TimeoutError:
-                    kill_group(self._procs[0].pid, signal.SIGKILL)
+                    kill_group(self._procs[0].pid, _SIGKILL)
         self._procs = []
         (self.dir / "pids.json").unlink(missing_ok=True)
 
@@ -296,7 +307,13 @@ class Recorder:
         await self._kill_pipeline()
 
 
+_SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)  # Windows has no SIGKILL
+
+
 def kill_group(pgid: int, sig: int) -> None:
+    if os.name == "nt":  # no process groups/signals: kill the whole tree under the cmd.exe pipeline
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(pgid)], capture_output=True, check=False)
+        return
     try:
         os.killpg(pgid, sig)
     except (ProcessLookupError, PermissionError):
@@ -317,7 +334,7 @@ def sweep_stale(ring_root: Path, login: str, keep: Path | None = None) -> list[P
         pf = d / "pids.json"
         if pf.exists():
             try:
-                kill_group(int(json.loads(pf.read_text())["pgid"]), signal.SIGKILL)
+                kill_group(int(json.loads(pf.read_text())["pgid"]), _SIGKILL)
             except (ValueError, KeyError):
                 pass
         shutil.rmtree(d, ignore_errors=True)

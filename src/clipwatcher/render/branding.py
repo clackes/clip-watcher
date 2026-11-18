@@ -21,6 +21,8 @@ _FONT_CANDIDATES = [
     FONTS_DIR / "Montserrat-ExtraBold.ttf",
     Path("/System/Library/Fonts/Supplemental/Arial Black.ttf"),
     Path("/System/Library/Fonts/Supplemental/Arial Bold.ttf"),
+    Path("C:/Windows/Fonts/ariblk.ttf"),
+    Path("C:/Windows/Fonts/arialbd.ttf"),
     Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
     Path("DejaVuSans-Bold.ttf"),
 ]

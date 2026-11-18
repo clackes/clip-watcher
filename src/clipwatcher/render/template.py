@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -75,6 +76,8 @@ def default_game(info: SourceInfo) -> Rect:
 
 def esc_filter_path(p: str | Path) -> str:
     out = []
+    if os.name == "nt":  # forward slashes; the drive colon is escaped below
+        p = Path(p).as_posix()
     for ch in str(p):
         if ch in "\\:'[],;":
             out.append("\\")

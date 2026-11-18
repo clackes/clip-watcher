@@ -119,7 +119,10 @@ async def main_async(logins: list[str], minutes: float) -> None:
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, stop.set)
+        try:
+            loop.add_signal_handler(sig, stop.set)
+        except NotImplementedError:  # Windows: Ctrl-C raises KeyboardInterrupt, tasks are cancelled below
+            pass
     try:
         waits = [asyncio.create_task(stop.wait())]
         if minutes > 0:
