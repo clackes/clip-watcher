@@ -36,6 +36,7 @@ def fastlane_config() -> dict[str, Any]:
         "work_dir": str(config.ROOT / "work" / "fastlane"),
         "chat_context_s": 120.0,
         "min_score": 5.0,
+        "keep_rejected": False,  # keep rejected clips' work dir + review.json (what the judge saw)
     }
     base.update(c.get("fastlane", {}))
     base["pin_pad_s"] = c.get("buffer", {}).get("pin_pad_s", 60)
@@ -344,7 +345,7 @@ class FastLane:
                 and max(screen.get("funny_score", 0), screen.get("hype_score", 0)) < min_funny
             ):
                 self._unpin(cand)
-                self._cleanup(cand)
+                self._reject_cleanup(cand, screen=screen, chat=chat_lines, words=words)
                 return Outcome(cid, "rejected", timings, error=str(screen["reject_reason"]))
             jr = self.steps.heuristic(cand, words)
         else:
@@ -352,7 +353,7 @@ class FastLane:
             if jr.source == "claude" and not jr.ok:
                 log.info("%s: judge rejected %s (sc=%s): %s", self.streamer, cid, jr.score, jr.reject_reason)
                 self._unpin(cand)
-                self._cleanup(cand)
+                self._reject_cleanup(cand, judge=jr, chat=chat_lines, words=words)
                 return Outcome(cid, "rejected", timings, error=str(jr.reject_reason or jr.why))
         from .render import cold_open
 
@@ -418,6 +419,28 @@ class FastLane:
         timings["total"] = round(time.perf_counter() - t_all, 2)
         log.info("fastlane %s staged %s timings=%s", self.streamer, cid, timings)
         return Outcome(cid, "staged", timings, path=pkg)
+
+    def _reject_cleanup(self, cand: Candidate, **review: Any) -> None:
+        """Rejected clip: delete its work dir, or with keep_rejected keep it plus review.json (candidate,
+        chat, transcript and the judge's answer) so rejections can be audited against the video."""
+        if not self.cfg.get("keep_rejected"):
+            self._cleanup(cand)
+            return
+        import dataclasses
+        import json
+
+        def plain(v: Any) -> Any:
+            if dataclasses.is_dataclass(v):
+                return dataclasses.asdict(v)
+            if isinstance(v, list):
+                return [plain(x) for x in v]
+            return v
+
+        out = {"candidate": plain(cand), **{k: plain(v) for k, v in review.items()}}
+        d = Path(self.cfg["work_dir"]) / self._clip_id(cand)
+        d.mkdir(parents=True, exist_ok=True)
+        text = json.dumps(out, ensure_ascii=False, indent=1, default=str)
+        (d / "review.json").write_text(text, encoding="utf-8")
 
     def _cleanup(self, cand: Candidate) -> None:
         if self.cfg.get("keep_work"):

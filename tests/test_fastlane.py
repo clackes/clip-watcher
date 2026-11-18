@@ -245,3 +245,21 @@ def test_judge_gets_the_chat_that_reacts_to_the_clip():
     lines = lane._chat_lines(cand)
     assert sum("LMAO" in ln for ln in lines) == 143 - 128 + 1
     assert all(int(ln.split(": ")[0][1:]) >= 108 for ln in lines)
+
+
+def test_keep_rejected_writes_review(tmp_path):
+    import json
+
+    log: list = []
+    st = _steps(log)
+    st.screen = lambda *a: {"funny_score": 1, "hype_score": 1, "reject_reason": "dead air"}
+    msgs = [ChatMessage(1_700_000_000_000, "a", "fire")]
+    lane = fastlane.FastLane(
+        "zack", FakeChat(msgs), FakeDetector({"fire"}), FakeRing(log), steps=st,
+        cfg={"work_dir": str(tmp_path), "keep_rejected": True},
+    )  # fmt: skip
+    out = asyncio.run(lane.run())
+    assert out[0].status == "rejected"
+    review = json.loads((tmp_path / out[0].clip_id / "review.json").read_text(encoding="utf-8"))
+    assert review["screen"]["reject_reason"] == "dead air" and review["candidate"]["stream"] == "zack"
+    assert review["words"][0]["text"] == "wow"
