@@ -409,25 +409,13 @@ def fit_crop(rect: Rect, aspect: float, centre: tuple[float, float] | None = Non
 
 
 def split_game_crop(cam: Rect | None, fw: int, fh: int, aspect: float = 1080 / 960) -> Rect:
-    """Gameplay half of the split Short: the full frame height at the panel's aspect, centred on the action
-    (owner, 18 Nov: the old crop of the strip above/beside the cam showed sky and cut the character).
-    Slides sideways only as far as needed to keep the facecam overlay out of the panel (it is already on
-    top), never trimming height."""
+    """Gameplay half of the split Short: the full frame height at the panel's aspect, centred, where the
+    action is in third-person games (owner, 18 Nov: the old crop of the strip above/beside the cam showed
+    sky and cut the character). The facecam overlay may show in a corner: sliding away from it cut the
+    character instead, which is worse. cam is kept for the signature."""
     cw = min(fw, int(fh * aspect)) // 2 * 2
     ch = fh // 2 * 2 if fw >= fh * aspect else int(cw / aspect) // 2 * 2
-    y = (fh - ch) // 2 // 2 * 2
-    centre_x = (fw - cw) / 2
-    if not cam:
-        return int(centre_x) // 2 * 2, y, cw, ch
-    cx, cy, cwid, chgt = cam
-    area = max(cwid * chgt, 1)
-
-    def cost(x: int) -> float:
-        ov = max(0, min(x + cw, cx + cwid) - max(x, cx)) * max(0, min(y + ch, cy + chgt) - max(y, cy))
-        return ov / area + 0.5 * abs(x - centre_x) / fw  # a cam in view weighs more than leaving centre
-
-    best = min(range(0, fw - cw + 1, 2), key=cost)
-    return best, y, cw, ch
+    return (fw - cw) // 2 // 2 * 2, (fh - ch) // 2 // 2 * 2, cw, ch
 
 
 def zoom_expr(cold_open_s: float, zoom: float, beat_ts: list[float]) -> str | None:
