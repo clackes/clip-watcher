@@ -76,12 +76,14 @@ async def _upload(
                     "YouTube profile is not signed in — run `python scripts/yt_browser_login.py` once."
                 )
 
-            # Create → Upload videos (opens the native file chooser).
-            async with page.expect_file_chooser(timeout=60_000) as fc_info:
-                await page.get_by_role("button", name="Create", exact=True).click()
-                await page.get_by_role("menuitem", name=re.compile(r"Upload videos?", re.I)).click()
-            chooser = await fc_info.value
-            await chooser.set_files(str(video))
+            # Create → Upload videos opens the upload dialog. Push the file into
+            # its hidden <input type="file"> directly: more reliable than the OS
+            # chooser and lets Studio pick it up without a user gesture.
+            await page.get_by_role("button", name="Create", exact=True).click()
+            await page.get_by_role("menuitem", name=re.compile(r"Upload videos?", re.I)).click()
+            file_input = page.locator('input[type="file"]').last
+            await file_input.wait_for(state="attached", timeout=30_000)
+            await file_input.set_input_files(str(video))
 
             # Title — Studio uses two ytcp-social-suggestions-textbox widgets.
             # First one is Title, second is Description. Each contains #textbox.
@@ -100,7 +102,7 @@ async def _upload(
 
             # Details → Video elements → Checks → Visibility: three Next clicks.
             for _ in range(3):
-                await page.get_by_role("button", name="Next").click()
+                await page.get_by_role("button", name="Next", exact=True).click()
                 await asyncio.sleep(0.8)
 
             label = "Private" if private else "Public"
