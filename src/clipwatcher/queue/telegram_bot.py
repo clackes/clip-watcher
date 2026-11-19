@@ -124,7 +124,7 @@ def handle_action(
         ok = db.approve(clip_id, op)
         if ok:
             try:
-                staging.mark_approved(clip_id, op, root)
+                staging.mark_approved(clip_id, op, root, db=db)
             except OSError as e:  # the approval stands; the upload reports the missing package on the card
                 log.warning("approved package of %s not built: %s", clip_id, e)
         row = db.get(clip_id)
@@ -293,7 +293,7 @@ def _upload(db: ClipDB, clip_id: str, root: Path | None) -> str:
     base = Path(root) if root else staging.staging_root()
     if row.get("state") == "APPROVED" and not (base / "approved" / clip_id / "meta.json").exists():
         with failure_recorded(db, clip_id):
-            staging.mark_approved(clip_id, row.get("approved_by") or "", base)
+            staging.mark_approved(clip_id, row.get("approved_by") or "", base, db=db)
     return _publisher().publish_clip(db, clip_id, root)
 
 

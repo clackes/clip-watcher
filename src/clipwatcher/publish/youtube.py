@@ -35,16 +35,19 @@ def build_metadata(meta: dict[str, Any]) -> dict[str, Any]:
     from ..judge.compact import fallback_copy, is_bait
 
     seed = int(float(meta.get("start_s") or 0) * 1000)
+    # The lane that made the clip wrote its credit into the meta. Looking the platform up again here said
+    # twitch.tv for every Kick streamer wherever the publisher runs without streamers.yaml.
+    credit = str(meta.get("credit") or config.credit(name))
+    plat = "kick" if credit.startswith("kick.com/") else "twitch"
     if not meta.get("description"):  # older packages: build the same English 4-line copy the judge writes
-        plat = config.streamer(name).get("platform", "twitch")
         meta = {**meta, "description": fallback_copy(name, plat, meta.get("game"), seed)["ds"]}
     title = meta.get("title") or (meta.get("titles") or [None])[0]
-    title = str(title or fallback_copy(name, "twitch", None, seed)["tt"]).strip()[:60].rstrip()
+    title = str(title or fallback_copy(name, plat, None, seed)["tt"]).strip()[:60].rstrip()
     campaign = meta.get("campaign_link")
     if meta.get("description"):  # judge copy: teaser + credit, question, reason to follow, hashtags
         lines = [ln for ln in str(meta["description"]).split("\n") if ln.strip() and not is_bait(ln)]
-        if config.credit(name) not in meta["description"]:
-            lines.insert(0, f"🎥 {streamer}: {config.credit(name)}")
+        if credit not in meta["description"]:
+            lines.insert(0, f"🎥 {streamer}: {credit}")
         if campaign:
             lines.insert(len(lines) - 1, str(campaign))
         extra = [str(t) for t in meta.get("campaign_tags", []) if str(t) not in lines[-1].split()]
@@ -57,7 +60,7 @@ def build_metadata(meta: dict[str, Any]) -> dict[str, Any]:
             "tags": [t.lstrip("#") for t in tags],
             "paid_promotion": bool(campaign or meta.get("campaign_tags")),
         }
-    lines = [f"🎥 {streamer}: {config.credit(name)}"]
+    lines = [f"🎥 {streamer}: {credit}"]
     if meta.get("setup_line"):
         lines.append(str(meta["setup_line"]))
     if campaign:

@@ -14,5 +14,7 @@ services:
     env_file: ../../.env
     volumes:
       - ${CLIPWATCHER_DATA_DIR:-./data}:/data
+      # the publisher reads platform and campaign settings per streamer, like the live lane
+      - ../../config/streamers.yaml:/app/config/streamers.yaml:ro
       - ../../config/operators.yaml:/app/config/operators.yaml:ro
     command: python -m clipwatcher.queue.telegram_bot

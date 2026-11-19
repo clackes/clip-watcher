@@ -93,15 +93,20 @@ def _link_or_copy(src: Path, dst: Path) -> None:
         shutil.copy2(src, dst)
 
 
-def mark_approved(clip_id: str, approved_by: str, root: Path | None = None) -> Path:
+def mark_approved(clip_id: str, approved_by: str, root: Path | None = None, db: ClipDB | None = None) -> Path:
+    """Build staging/approved/<clip_id>/ (what the publisher uploads and people post by hand from).
+    db: the queue; what an operator edited in Telegram (the title) lives in its row and goes into meta.json.
+    """
     root = Path(root) if root else staging_root()
     src = root / clip_id
     dst = root / "approved" / clip_id
     dst.mkdir(parents=True, exist_ok=True)
     for f in src.iterdir():
-        if f.is_file() and f.name != "meta.json":
+        if f.is_file() and f.name != "meta.json" and f.suffix != ".tmp":
             _link_or_copy(f, dst / f.name)
     meta = json.loads((src / "meta.json").read_text())
+    if db is not None:
+        meta.update(json.loads((db.get(clip_id) or {}).get("meta_json") or "{}"))
     meta.update(state="APPROVED", approved_by=approved_by)
     atomic_write_json(dst / "meta.json", meta)
     atomic_write_json(src / "meta.json", meta)

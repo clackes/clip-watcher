@@ -25,6 +25,17 @@ def test_metadata():
     assert not youtube.build_metadata({"streamer": "x"})["paid_promotion"]
 
 
+def test_kick_clip_keeps_its_kick_credit_without_streamers_yaml():
+    """The publisher container has no streamers.yaml, so the platform lookup says twitch for everyone: the
+    credit the lane wrote into the clip's meta is what counts."""
+    copy = "He did it 🎥 kick.com/kickguy\nLuck or skill? 👇\nDaily clips 🔔\n#Kickguy #Shorts"
+    judged = {"streamer": "kickguy", "credit": "kick.com/kickguy", "description": copy}
+    for meta in (judged, {"streamer": "kickguy", "credit": "kick.com/kickguy"}):
+        text = youtube.build_metadata(meta)["description"]
+        assert "kick.com/kickguy" in text and "twitch.tv" not in text
+    assert youtube.build_metadata(judged)["description"] == judged["description"]
+
+
 def test_refuses_non_approved(db, tmp_path):
     for fn in (
         lambda: youtube.upload("c1", META, db, tmp_path / "v.mp4"),

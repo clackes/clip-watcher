@@ -150,6 +150,22 @@ def test_restaging_never_resets_a_decided_clip(tmp_path, db, monkeypatch):
 OPS = {"manu": {"telegram_id": 11, "label": "Manu"}, "samu": {"telegram_id": 22, "label": "Samu"}}
 
 
+def test_approved_package_carries_the_edited_title(tmp_path, db):
+    """The title an operator typed in Telegram lives in the queue row; approved/meta.json is what the people
+    posting to TikTok and the campaign forms read."""
+    root = tmp_path / "staging"
+    s, c = _videos(tmp_path)
+    staging.stage_package("c9", s, c, {"streamer": "x", "title": "judge title", "hook": "h"}, root, db=db)
+    telegram_bot.handle_action(db, 11, "claim:c9:manu", operators=OPS, root=root)
+    assert telegram_bot.handle_edit_reply(db, 11, "c9", " Operator title ", operators=OPS)
+    assert telegram_bot.handle_action(db, 11, "approve:c9", operators=OPS, root=root)[0] == "Approved."
+    for folder in (root / "approved" / "c9", root / "c9"):
+        meta = json.loads((folder / "meta.json").read_text())
+        assert (meta["title"], meta["hook"], meta["state"], meta["approved_by"]) == (
+            "Operator title", "h", "APPROVED", "manu",
+        )  # fmt: skip
+
+
 def test_bot_logic(db, tmp_path, monkeypatch):
     monkeypatch.delenv("CLIPWATCHER_STAGING", raising=False)
     monkeypatch.setattr(staging, "DEFAULT_ROOT", tmp_path / "staging")
