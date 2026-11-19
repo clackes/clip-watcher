@@ -179,6 +179,8 @@ def gameplay_avoiding(cam: Rect | None, fw: int, fh: int) -> Rect:
     regions = [full]
     if cam:
         cx, cy, cw, ch = cam
+        pad = _even(0.012 * fw)  # cam borders are soft: keep a sliver of the cam out of the gameplay
+        cx, cy, cw, ch = max(0, cx - pad), max(0, cy - pad), cw + 2 * pad, ch + 2 * pad
         regions = [
             (0, 0, cx, fh),  # left
             (cx + cw, 0, fw - cx - cw, fh),  # right
