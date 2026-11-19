@@ -63,14 +63,26 @@ def _prompt(name: str) -> str:
     return (PROMPTS / name).read_text()
 
 
-def _client() -> Any:
-    import anthropic
-
-    return anthropic.Anthropic()
-
-
 def _jcfg() -> dict[str, Any]:
     return config.global_config().get("judge", {})
+
+
+TIMEOUT_S = 60.0  # judge.timeout_s: one attempt; a judge call normally answers in well under 30 s
+MAX_RETRIES = 1  # judge.max_retries: retries after the first attempt (timeouts are retried too)
+
+
+def _client() -> Any:
+    """SDK client on a short leash. Left alone the SDK waits 10 minutes per attempt and makes 3: one hung
+    call held one of the machine's two render slots for up to half an hour. With judge.timeout_s and
+    judge.max_retries a call is over after about two minutes at worst, and the heuristic answers."""
+    import anthropic
+
+    j = _jcfg()
+    timeout, retries = j.get("timeout_s"), j.get("max_retries")
+    return anthropic.Anthropic(
+        timeout=float(TIMEOUT_S if timeout is None else timeout),
+        max_retries=int(MAX_RETRIES if retries is None else retries),
+    )
 
 
 def _call(client: Any, model: str, system: str, content: list[dict], schema: dict, max_tokens: int) -> dict:
