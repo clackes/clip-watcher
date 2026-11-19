@@ -234,7 +234,7 @@ def cmd_bootstrap(a: argparse.Namespace) -> None:
     ps(f"New-Item -ItemType Directory -Force {STAGE} | Out-Null")
     if a.freeze:
         put(Path(a.freeze), rf"{STAGE}\freeze.txt")
-    if not ps(f"Test-Path '{SRV}\\.git'").strip().startswith("True"):
+    if not a.tools_only and not ps(f"Test-Path '{SRV}\\.git'").strip().startswith("True"):
         bundle = REPO / ".git" / "cw-full.bundle"
         git("bundle", "create", str(bundle), "main")
         try:
@@ -257,6 +257,7 @@ def main() -> None:
     sub.add_parser("install").set_defaults(fn=cmd_install)
     b = sub.add_parser("bootstrap")
     b.add_argument("--freeze", help="pip freeze of a working box, used as constraints")
+    b.add_argument("--tools-only", action="store_true", help="skip the repo upload (Chrome etc. first)")
     b.set_defaults(fn=cmd_bootstrap)
     sub.add_parser("push").set_defaults(fn=cmd_push)
     t = sub.add_parser("test")
