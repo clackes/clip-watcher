@@ -16,23 +16,41 @@ buffer:
   quality: 720p,720p30,720p60,best
   lag_alert_s: 60           # recording this far behind live -> log + Telegram alert (line too slow)
 
-detector:                   # D3
-  weights: {U: 0.5, E: 0.35, S: 0.15}
+detector:                   # D3 + D13
+  # chat_score = sum of weight * z over a 10 s window: U unique chatters, M messages, E keyword energy,
+  # S share of short / repeated messages. z = (value - level) / scale, with the scale taken from every
+  # second of the stream so far (detect/session.py).
+  weights: {U: 0.3, M: 0.25, E: 0.3, S: 0.15}
   window_s: 10
-  baseline_min: 15
-  fire_z: 3.0
-  pre_z: 2.0
+  level_min: 60             # "normal right now" = part whole-stream median, part median of the last N minutes
+  level_session_share: 0.5  # the whole-stream part: 1 = whole stream only, 0 = last level_min minutes only
+  session_max_h: 24         # marathons: statistics cover the last N hours (the chat log on disk keeps everything)
+  # Gate, once the stream has session_min_s of chat history: a spike fires in the top (1 - fire_q) of all
+  # seconds of this stream and is clipped when its peak reaches the top (1 - keep_q). 0.98 / 0.99 gave
+  # 3.1 clips/h over six real chats from 0.4 to 8 msg/s (0.8-5/h each); 0.97 / 0.985 about a fifth more.
+  # fire_q: 0 = always use the fixed thresholds below. Per streamer: fire_q / keep_q in streamers.yaml.
+  fire_q: 0.98
+  keep_q: 0.99
+  floor_z: 2.0              # never fire below this score, however quiet the stream has been
+  max_per_hour: 8           # past this many clips in an hour a spike must beat the hour's typical one
+  session_min_s: 900
+  fire_z: 3.0               # fixed thresholds for the first session_min_s of a stream
+  keep_z: 5.0
+  pre_z: 2.0                # run start = score above pre_z / fire_z of the fire threshold
+  onset_max_s: 15           # a burst builds in at most this long: the moment is not searched further back
+  before_s: 40              # live clip window around the moment: 59 s of footage for the judge to trim
+  after_s: 19
   min_unique: 8
-  live_mature_s: 15         # live: emit a fire after 15 s with its peak score
+  live_mature_s: 15         # live: decide on a fire after 15 s, on its peak score
   min_unique_floor: 3       # small channels: adaptive floor (99.5th pct of unique chatters per window)
   min_unique_viewer_pct: 0.01
-  mute_after_notice_s: 75   # raid / sub-bomb / giveaway mute window (60-90 s)
-  cooldown_s: 45
+  mute_after_notice_s: 75   # raid / sub-bomb (5+ gifts) / giveaway mute window (60-90 s)
+  cooldown_s: 45            # between kept spikes (live: at least one clip window)
   prompt_share: 0.4         # one keyword-less message from >= 40% of chatters = prompted copy-paste, not a moment
-  keep_final: 4.5
+  keep_final: 4.5           # D3 viewer-clip / loudness confirmation; not wired into any lane yet
   default_delay_s: 8        # chat reacts ~5-15 s after the moment
   bots: [nightbot, streamelements, moobot, fossabot, sery_bot, streamlabs, wizebot, soundalerts]
-  keywords:                 # weights for E (case-insensitive; emotes match whole tokens)
+  keywords:                 # weights for E (case-insensitive whole tokens; held keys match too: LMAOOO, WWWW)
     "clip it": 3
     clip: 3
     KEKW: 2
@@ -120,7 +138,7 @@ publish:
   youtube_mode: browser     # browser: real Chrome via patchright (scripts/yt_browser_login.py); api: Data API (publish/youtube.py)
 
 fastlane:                   # live lane (python -m clipwatcher.live)
-  min_score: 5              # peak chat score gate; replay of 4 VODs: ~3-5 clips/h/streamer, keeps most top moments
+  min_score: 0              # extra fixed floor on the chat score; the gate is detector.keep_q / keep_z (D13)
   max_parallel: 2            # per streamer
   max_parallel_total: 2      # across all streamers on this machine (renders queue, segments stay pinned)
   profile: cpu_live

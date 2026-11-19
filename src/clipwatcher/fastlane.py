@@ -35,7 +35,7 @@ def fastlane_config() -> dict[str, Any]:
         "profile": "cpu_live",
         "work_dir": str(config.ROOT / "work" / "fastlane"),
         "chat_context_s": 120.0,
-        "min_score": 5.0,
+        "min_score": 0.0,  # extra floor on the chat score; the real gate is the detector's (D13)
     }
     base.update(c.get("fastlane", {}))
     base["pin_pad_s"] = c.get("buffer", {}).get("pin_pad_s", 60)
@@ -389,6 +389,9 @@ class FastLane:
             "start_s": cand.start_s, "end_s": cand.end_s, "funny_score": screen.get("funny_score"),
             "hype_score": screen.get("hype_score"), "layout": lay.source,
             "captions": caption_style(cid),
+            # the spike's standing in its own stream: share of seconds that scored lower, rank so far
+            "chat_pct": cand.signals.get("session_pct"), "chat_rank": cand.signals.get("session_rank"),
+            "unique_chatters": cand.unique_chatters, "x_normal": round(cand.x_normal, 2),
         }  # fmt: skip
         meta.update(title=jr.title_options[0], description=jr.description)  # heuristic copy too
         if jr.source == "claude":
