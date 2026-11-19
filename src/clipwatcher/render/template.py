@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import subprocess
 import tempfile
@@ -18,6 +19,8 @@ from clipwatcher.render.branding import ACCENTS, BRANDING_DIR, FONTS_DIR, ensure
 from clipwatcher.render.captions import caption_style, write_ass
 from clipwatcher.render.cold_open import settings as co_settings
 from clipwatcher.render.encoders import video_args
+
+log = logging.getLogger(__name__)
 
 STYLES = ("ambient", "gradient")
 Rect = tuple[int, int, int, int]  # x, y, w, h in source pixels
@@ -99,6 +102,54 @@ def _run(cmd: list[str]) -> None:
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         raise RuntimeError(f"ffmpeg failed ({r.returncode}): {r.stderr[-2000:]}")
+
+
+LENGTH_TOL_S = 0.5  # frame and audio-packet rounding is a few hundredths of a second
+
+
+def _verify(out: Path, want_s: float) -> None:
+    """Raise RuntimeError unless out is the clip that was asked for. ffmpeg exits 0 when the source ends
+    early: 6 s asked for 2 s before the end gave a 2 s file, a start past the end a file without streams,
+    and both were staged as clips.
+
+    The file must hold a picture and a sound stream, each want_s long. One case is let through with a
+    warning: the recording ended before the clip did (the live lane cuts what exists when the buffer never
+    fills, a VOD ends) and what is left still reaches the shortest clip allowed (render.clip_min_s, D14).
+    A rejected file is removed so nothing can stage it."""
+    from clipwatcher.judge.snap import clip_bounds
+
+    try:
+        r = subprocess.run(
+            [ffprobe_bin(), "-v", "error", "-show_entries", "stream=codec_type,duration:format=duration",
+             "-of", "json", str(out)],
+            capture_output=True, text=True, timeout=60,
+        )  # fmt: skip
+        info = json.loads(r.stdout or "{}")
+    except (OSError, subprocess.SubprocessError, ValueError):
+        info = {}
+
+    def seconds(v) -> float:
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0.0
+
+    whole = seconds(info.get("format", {}).get("duration"))
+    got, problem = want_s, None
+    for kind, name in (("video", "picture"), ("audio", "sound")):
+        st = next((x for x in info.get("streams", []) if x.get("codec_type") == kind), None)
+        if st is None:
+            problem = f"no {kind} stream"
+            break
+        got = min(got, seconds(st.get("duration")) or whole)
+        if got < min(want_s, clip_bounds()[0]) - LENGTH_TOL_S:
+            problem = f"{got:.1f} s of {name} for a {want_s:.1f} s clip"
+            break
+    if problem:
+        out.unlink(missing_ok=True)
+        raise RuntimeError(f"render failed, {problem} (does the recording end before the clip?): {out.name}")
+    if got < want_s - LENGTH_TOL_S:
+        log.warning("%s: %.1f s of %.1f s rendered, the recording ends there", out.name, got, want_s)
 
 
 LOUDNORM = "loudnorm=I=-14:TP=-1.5:LRA=11"
@@ -625,6 +676,7 @@ def render_short(
         cmd += ["-fps_mode", "cfr", "-r", f"{fps:g}", "-c:a", "aac", "-b:a", "192k", "-ar", "48000"]
         cmd += ["-t", f"{total:.3f}", "-movflags", "+faststart", str(out)]
         _run(cmd)
+    _verify(out, total)
     return out
 
 
@@ -691,6 +743,7 @@ def _render_split(
         cmd += ["-fps_mode", "cfr", "-r", f"{fps:g}", "-c:a", "aac", "-b:a", "192k", "-ar", "48000"]
         cmd += ["-t", f"{total:.3f}", "-movflags", "+faststart", str(out)]
         _run(cmd)
+    _verify(out, total)
     return out
 
 
@@ -709,4 +762,5 @@ def render_clean(src: Path, start_s: float, dur_s: float, out: Path, *, profile:
     cmd += ["-fps_mode", "cfr", "-r", f"{fps:g}", "-c:a", "aac", "-b:a", "192k", "-ar", "48000"]
     cmd += ["-t", f"{dur_s:.3f}", "-movflags", "+faststart", str(out)]
     _run(cmd)
+    _verify(out, dur_s)
     return out

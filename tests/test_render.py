@@ -512,3 +512,53 @@ def test_jump_cuts_keep_picture_and_sound_together(flash_src, tmp_path, monkeypa
     v = next(s for s in info["streams"] if s["codec_type"] == "video")
     assert abs(int(v["nb_read_frames"]) / FLASH_FPS - (dur - cuts * 0.39)) <= 0.35  # ~12.6 s left
     assert abs(float(info["format"]["duration"]) - int(v["nb_read_frames"]) / FLASH_FPS) <= 0.05
+
+
+# -- a render that came out wrong must not pass for a clip -----------------------------------------------
+@pytest.mark.ffmpeg
+@pytest.mark.parametrize("layout", ["split", "stack"])
+def test_render_raises_when_the_source_ends_long_before_the_clip(synth_src, tmp_path, layout):
+    """6 s asked for 2 s before the end of the recording: ffmpeg exits 0 with a 2 s file."""
+    out = tmp_path / "short.mp4"
+    with pytest.raises(RuntimeError, match="2.0 s"):
+        render_short(
+            synth_src, SRC_SECONDS - 2.0, 6.0, out, clip_id="cut", streamer="tester", words=[], hook=None,
+            profile="cpu_live", layout=layout,
+        )  # fmt: skip
+    assert not out.exists()  # nothing left to stage
+    with pytest.raises(RuntimeError, match="2.0 s"):
+        render_clean(synth_src, SRC_SECONDS - 2.0, 6.0, tmp_path / "clean.mp4", profile="cpu_live")
+
+
+@pytest.mark.ffmpeg
+def test_render_raises_when_the_clip_starts_after_the_recording_ends(synth_src, tmp_path):
+    """ffmpeg exits 0 and writes a few hundred bytes without a single frame."""
+    with pytest.raises(RuntimeError, match="no video"):
+        render_clean(synth_src, SRC_SECONDS + 5.0, 3.0, tmp_path / "clean.mp4", profile="cpu_live")
+    with pytest.raises(RuntimeError, match="no video"):
+        render_short(
+            synth_src, SRC_SECONDS + 5.0, 3.0, tmp_path / "s.mp4", clip_id="gone", streamer="tester",
+            words=[], hook=None, profile="cpu_live",
+        )  # fmt: skip
+
+
+@pytest.mark.ffmpeg
+def test_render_keeps_a_clip_the_recording_cut_short_when_it_is_still_long_enough(
+    synth_src, tmp_path, monkeypatch, caplog
+):
+    """The stream ended 5 s into an 8 s clip. With render.clip_min_s at 4 that is still a clip (and it is
+    logged); at the configured 30 s it is not."""
+    import copy
+
+    from clipwatcher import config
+
+    out = tmp_path / "clean.mp4"
+    with pytest.raises(RuntimeError, match="5.0 s"):
+        render_clean(synth_src, SRC_SECONDS - 5.0, 8.0, out, profile="cpu_live")
+    cfg = copy.deepcopy(config.global_config())
+    cfg.setdefault("render", {})["clip_min_s"] = 4
+    monkeypatch.setattr(config, "global_config", lambda: cfg)
+    with caplog.at_level("WARNING"):
+        render_clean(synth_src, SRC_SECONDS - 5.0, 8.0, out, profile="cpu_live")
+    assert abs(float(probe(out)["format"]["duration"]) - 5.0) <= 0.1
+    assert "5.0 s of 8.0 s" in caplog.text
