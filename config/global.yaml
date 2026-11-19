@@ -122,7 +122,7 @@ judge:
 publish:
   auto_approve: false        # per clip, at once (18 Nov); replaced by schedule below
   schedule:                  # owner, 19 Nov: the channel posts by itself, best judged clip first
-    enabled: true            # owner signed YouTube in again on the server, 19 Nov 15:35
+    enabled: false           # owner, 19 Nov 15:40: only clips an operator approves in Telegram go to YouTube
     max_per_day: 6           # all uploads in any 24 h, operator Publish included
     min_gap_min: 180         # spread over the day
     min_score: 6             # judge score (0-10); heuristic-only clips never go out unattended
