@@ -1,0 +1,340 @@
+{
+ "template": "punch",
+ "params": {
+  "title": "Punch",
+  "description": "The viral standard: fat geometric caps with a thick outline; the phrase pops in, the spoken word punches up in the highlight colour, shouted words shake.",
+  "font": {
+   "family": "Poppins",
+   "file": "captions/Poppins-Black.ttf",
+   "weight": 900,
+   "style": "normal",
+   "variations": {}
+  },
+  "size": 92,
+  "minSize": 56,
+  "lineHeight": 1.1,
+  "letterSpacing": -0.01,
+  "wordGap": 0.3,
+  "case": "upper",
+  "emphScale": 1,
+  "grow": 0.08,
+  "tilt": 0,
+  "margin": {
+   "x": 30,
+   "y": 32
+  },
+  "paging": {
+   "mode": "page",
+   "maxWords": 3,
+   "maxLines": 2,
+   "gapS": 0.6,
+   "holdS": 0.5,
+   "lingerS": 0.25,
+   "minShowS": 0.14,
+   "leadS": 0.03,
+   "overlapS": 0
+  },
+  "timing": {
+   "enterS": 0.22,
+   "exitS": 0.14,
+   "activeInS": 0.1,
+   "activeOutS": 0.16,
+   "colorS": 0.25,
+   "staggerS": 0
+  },
+  "colors": {
+   "text": "#FFFFFF",
+   "active": "#FFE600",
+   "emph": "#FF6B5E",
+   "stroke": "#000000",
+   "shadow": "#000000",
+   "plate": "#000000",
+   "plateText": "#FFFFFF",
+   "accent": "#FFE600",
+   "accent2": "#00E5FF",
+   "cycle": [
+    "#FFE600"
+   ]
+  },
+  "auto": {
+   "candidates": {
+    "text": [
+     "white"
+    ],
+    "active": [
+     "yellow",
+     "lime",
+     "cyan",
+     "pink",
+     "orange"
+    ],
+    "emph": [
+     "red",
+     "orange",
+     "pink",
+     "yellow"
+    ],
+    "stroke": [
+     "black"
+    ],
+    "shadow": [
+     "black"
+    ]
+   },
+   "pairs": [
+    [
+     "text",
+     "stroke"
+    ],
+    [
+     "active",
+     "stroke"
+    ],
+    [
+     "emph",
+     "stroke"
+    ]
+   ],
+   "avoidHue": [
+    "active",
+    "emph"
+   ],
+   "distinct": [
+    [
+     "active",
+     "emph"
+    ]
+   ]
+  },
+  "label": {
+   "size": 96,
+   "enterS": 0.18,
+   "exitS": 0.12,
+   "rotate": -3
+  },
+  "fx": {
+   "halo": 0.1,
+   "shadowY": 0.08,
+   "enterScale": 0.62,
+   "enterFreq": 4.5,
+   "enterDamp": 0.55,
+   "enterRise": 0.3,
+   "activeScale": 1.14,
+   "activeLift": 0.05,
+   "activeOvershoot": 2.2,
+   "emphScale": 1.16,
+   "emphShakeDeg": 4,
+   "emphShakeS": 0.4,
+   "emphShakeHz": 6,
+   "exitDrop": 0.35
+  }
+ },
+ "fps": 60,
+ "width": 1080,
+ "height": 400,
+ "durationInFrames": 300,
+ "region": {
+  "x0": 60,
+  "y0": 60,
+  "x1": 1020,
+  "y1": 340,
+  "anchorY": 200
+ },
+ "pages": [
+  {
+   "id": 0,
+   "start": 0.3,
+   "end": 1.2,
+   "exit": 0,
+   "words": [
+    {
+     "text": "NO",
+     "start": 0.3,
+     "end": 0.58,
+     "activeEnd": 0.6,
+     "emph": true
+    },
+    {
+     "text": "WAY",
+     "start": 0.6,
+     "end": 0.88,
+     "activeEnd": 0.9,
+     "emph": false
+    },
+    {
+     "text": "DID",
+     "start": 0.9,
+     "end": 1.18,
+     "activeEnd": 1.2,
+     "emph": false
+    }
+   ],
+   "colors": {
+    "text": "#FFFFFF",
+    "active": "#FFE600",
+    "emph": "#FF6B5E",
+    "stroke": "#000000",
+    "shadow": "#000000",
+    "plate": "#000000",
+    "plateText": "#FFFFFF",
+    "accent": "#FFE600",
+    "accent2": "#00E5FF",
+    "cycle": [
+     "#FFE600"
+    ]
+   },
+   "from": null
+  },
+  {
+   "id": 1,
+   "start": 1.2,
+   "end": 2.1,
+   "exit": 0,
+   "words": [
+    {
+     "text": "YOU",
+     "start": 1.2,
+     "end": 1.48,
+     "activeEnd": 1.5,
+     "emph": false
+    },
+    {
+     "text": "SEE",
+     "start": 1.5,
+     "end": 1.78,
+     "activeEnd": 1.8,
+     "emph": false
+    },
+    {
+     "text": "THAT!",
+     "start": 1.8,
+     "end": 2.08,
+     "activeEnd": 2.1,
+     "emph": true
+    }
+   ],
+   "colors": {
+    "text": "#FFFFFF",
+    "active": "#FFE600",
+    "emph": "#FF6B5E",
+    "stroke": "#000000",
+    "shadow": "#000000",
+    "plate": "#000000",
+    "plateText": "#FFFFFF",
+    "accent": "#FFE600",
+    "accent2": "#00E5FF",
+    "cycle": [
+     "#FFE600"
+    ]
+   },
+   "from": null
+  },
+  {
+   "id": 2,
+   "start": 2.1,
+   "end": 3.0,
+   "exit": 0,
+   "words": [
+    {
+     "text": "HE",
+     "start": 2.1,
+     "end": 2.38,
+     "activeEnd": 2.4,
+     "emph": false
+    },
+    {
+     "text": "JUST",
+     "start": 2.4,
+     "end": 2.68,
+     "activeEnd": 2.7,
+     "emph": false
+    },
+    {
+     "text": "WENT",
+     "start": 2.7,
+     "end": 2.98,
+     "activeEnd": 3.0,
+     "emph": false
+    }
+   ],
+   "colors": {
+    "text": "#FFFFFF",
+    "active": "#FFE600",
+    "emph": "#FF6B5E",
+    "stroke": "#000000",
+    "shadow": "#000000",
+    "plate": "#000000",
+    "plateText": "#FFFFFF",
+    "accent": "#FFE600",
+    "accent2": "#00E5FF",
+    "cycle": [
+     "#FFE600"
+    ]
+   },
+   "from": null
+  },
+  {
+   "id": 3,
+   "start": 3.0,
+   "end": 4.1,
+   "exit": 0.14,
+   "words": [
+    {
+     "text": "ALL",
+     "start": 3.0,
+     "end": 3.28,
+     "activeEnd": 3.3,
+     "emph": false
+    },
+    {
+     "text": "IN",
+     "start": 3.3,
+     "end": 3.58,
+     "activeEnd": 3.83,
+     "emph": false
+    }
+   ],
+   "colors": {
+    "text": "#FFFFFF",
+    "active": "#FFE600",
+    "emph": "#FF6B5E",
+    "stroke": "#000000",
+    "shadow": "#000000",
+    "plate": "#000000",
+    "plateText": "#FFFFFF",
+    "accent": "#FFE600",
+    "accent2": "#00E5FF",
+    "cycle": [
+     "#FFE600"
+    ]
+   },
+   "from": null
+  }
+ ],
+ "labels": [
+  {
+   "id": 0,
+   "start": 4.0,
+   "end": 4.9,
+   "exit": 0.12,
+   "text": "*FAIL*",
+   "kind": "fail",
+   "colors": {
+    "text": "#FF6B5E",
+    "active": "#FFE600",
+    "emph": "#FF6B5E",
+    "stroke": "#000000",
+    "shadow": "#000000",
+    "plate": "#000000",
+    "plateText": "#FFFFFF",
+    "accent": "#FFE600",
+    "accent2": "#00E5FF",
+    "cycle": [
+     "#FFE600"
+    ]
+   }
+  }
+ ],
+ "emojiFamily": "",
+ "debug": false
+}

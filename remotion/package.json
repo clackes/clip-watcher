@@ -1,0 +1,31 @@
+{
+  "name": "clipwatcher-captions",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Animated caption overlays for Clip Watcher Shorts, rendered with Remotion.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "bundle": "node scripts/bundle.mjs",
+    "render": "node scripts/render.mjs",
+    "studio": "remotion studio src/index.ts --public-dir ../assets/fonts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@remotion/bundler": "4.0.545",
+    "@remotion/cli": "4.0.545",
+    "@remotion/renderer": "4.0.545",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "remotion": "4.0.545",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "typescript": "7.0.2"
+  }
+}

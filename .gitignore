@@ -18,3 +18,7 @@ config/streamers.yaml
 config/operators.yaml
 *.db
 models/
+remotion/node_modules/
+remotion/build/
+remotion/build.*/
+!remotion/src/**/*.ts
