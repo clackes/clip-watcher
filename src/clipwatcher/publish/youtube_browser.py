@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import re
+import sys
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -44,6 +45,12 @@ def profile_dir() -> Path:
 def _shots_dir() -> Path | None:
     s = os.environ.get("YT_BROWSER_SHOTS")
     return Path(s).expanduser() if s else None
+
+
+def _select_all_key() -> str:
+    """Select-all in the focused text box: Cmd+A on macOS, Ctrl+A on Windows and Linux (Meta+A selects
+    nothing there, so Studio's prefilled title stayed and ours was typed behind it)."""
+    return "Meta+A" if sys.platform == "darwin" else "Control+A"
 
 
 async def _upload(
@@ -92,7 +99,7 @@ async def _upload(
             boxes = page.locator("ytcp-social-suggestions-textbox #textbox")
             await boxes.first.wait_for(timeout=120_000)
             await boxes.first.click()
-            await page.keyboard.press("Meta+A")
+            await page.keyboard.press(_select_all_key())
             await page.keyboard.press("Delete")
             await page.keyboard.type(title[:95])
 

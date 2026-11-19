@@ -167,3 +167,96 @@ def test_browser_upload_keeps_the_id_of_a_video_that_did_not_finish(approved, tm
     row = approved.get("c1")
     assert (row["state"], row["youtube_id"], row["publish_error"]) == ("PUBLISHED", "dQw4w9WgXcQ", None)
     assert _audit(approved, "state:PUBLISHED") == ["youtube_id=dQw4w9WgXcQ"]
+
+
+def _fake_patchright(monkeypatch, log):
+    """A stand-in for patchright driving YouTube Studio: records clicks and keys, hands out a video id."""
+    import sys
+    import types
+
+    class Locator:
+        def __init__(self, name):
+            self.name = name
+            self.first = self.last = self
+
+        def nth(self, i):
+            return Locator(f"{self.name}[{i}]")
+
+        async def wait_for(self, **kw):
+            pass
+
+        async def click(self, **kw):
+            log.append(("click", self.name))
+
+        async def set_input_files(self, path):
+            log.append(("file", path))
+
+        async def get_attribute(self, name):
+            return "aBcDeFgHiJk"
+
+    class Keyboard:
+        async def press(self, key):
+            log.append(("press", key))
+
+        async def type(self, text):
+            log.append(("type", text))
+
+    class Page:
+        url, keyboard = "https://studio.youtube.com/channel/UC1", Keyboard()
+
+        async def goto(self, url, **kw):
+            pass
+
+        def get_by_role(self, role, name=None, **kw):
+            return Locator(f"{role}:{getattr(name, 'pattern', name)}")
+
+        def locator(self, selector):
+            return Locator(selector)
+
+    class Context:
+        pages = [Page()]
+
+        async def close(self):
+            log.append(("closed", ""))
+
+    class Playwright:
+        async def __aenter__(self):
+            async def launch(**kw):
+                return Context()
+
+            return types.SimpleNamespace(chromium=types.SimpleNamespace(launch_persistent_context=launch))
+
+        async def __aexit__(self, *exc):
+            return False
+
+    module = types.ModuleType("patchright.async_api")
+    module.async_playwright = Playwright
+    monkeypatch.setitem(sys.modules, "patchright", types.ModuleType("patchright"))
+    monkeypatch.setitem(sys.modules, "patchright.async_api", module)
+
+
+@pytest.mark.parametrize(("platform", "select_all"), [("win32", "Control+A"), ("linux", "Control+A"),
+                                                      ("darwin", "Meta+A")])  # fmt: skip
+def test_browser_upload_replaces_the_prefilled_title(tmp_path, monkeypatch, platform, select_all):
+    """Studio prefills the title with the file name. Meta+A selects nothing on Windows, so the real title
+    was typed behind 'short_9x16'."""
+    import asyncio
+    import sys
+
+    from clipwatcher.publish import youtube_browser
+
+    async def no_wait(_):
+        return None
+
+    log, ids = [], []
+    _fake_patchright(monkeypatch, log)
+    monkeypatch.setattr(sys, "platform", platform)
+    monkeypatch.setenv("YT_BROWSER_PROFILE", str(tmp_path / "profile"))
+    monkeypatch.delenv("YT_BROWSER_SHOTS", raising=False)
+    monkeypatch.setattr(youtube_browser.asyncio, "sleep", no_wait)
+    upload = youtube_browser._upload(tmp_path / "short_9x16.mp4", "Real title", "Line 1", private=True,
+                                     on_video_id=ids.append)  # fmt: skip
+    assert asyncio.run(upload) == "https://youtube.com/shorts/aBcDeFgHiJk" and ids == ["aBcDeFgHiJk"]
+    keys = [entry for entry in log if entry[0] in ("press", "type")]
+    assert keys == [("press", select_all), ("press", "Delete"), ("type", "Real title"), ("type", "Line 1")]
+    assert ("click", "radio:^Private$") in log and log[-1] == ("closed", "")

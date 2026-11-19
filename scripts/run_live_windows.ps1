@@ -7,8 +7,18 @@ param([string]$Streamers = "", [switch]$YtLogin)
 
 Set-Location (Split-Path $PSScriptRoot -Parent)
 if (Test-Path .env) {
-    Get-Content .env | Where-Object { $_ -match '^\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$' } | ForEach-Object {
-        [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2].Trim().Trim('"'), "Process")
+    # Read KEY=value lines the way the shell does in run_live_mac.sh: a value may be quoted, and an unquoted
+    # value ends where a comment starts (" #", or "#" right after the "="). Without that, .env.example's
+    # "TELEGRAM_BOT_TOKEN=     # from @BotFather" became a token made of the comment and the live lane died
+    # at start. An empty value leaves the variable unset.
+    foreach ($line in Get-Content .env) {
+        if ($line -match '^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$') {
+            $name = $Matches[1]
+            $value = $Matches[2].Trim()
+            if ($value -match '^"([^"]*)"' -or $value -match "^'([^']*)'") { $value = $Matches[1] }
+            else { $value = ($value -replace '(^|\s+)#.*$', '').Trim() }
+            [Environment]::SetEnvironmentVariable($name, $value, "Process")
+        }
     }
 }
 if (-not $env:CLIPWATCHER_FFMPEG -and (Test-Path C:\ffmpeg\bin\ffmpeg.exe)) { $env:CLIPWATCHER_FFMPEG = "C:\ffmpeg\bin\ffmpeg.exe" }
