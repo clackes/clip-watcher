@@ -68,7 +68,7 @@ if (Test-Path "C:\clip-watcher\.git") {
     }
     $c = if (Test-Path "C:\cw-up\freeze.txt") { @("-c", "C:\cw-up\freeze.txt") } else { @() }
     & .venv\Scripts\python.exe -m pip install -q --upgrade pip 2>&1 | Out-Null
-    & .venv\Scripts\python.exe -m pip install -q @c -e ".[judge,telegram,publish,publish-browser,live,dev]" "streamlink==8.6.3" 2>&1 | Select-Object -Last 3
+    & .venv\Scripts\python.exe -m pip install -q @c -e ".[judge,telegram,publish,publish-browser,live,calibrate,dev]" "streamlink==8.6.3" 2>&1 | Select-Object -Last 3
     New-Item -ItemType Directory -Force work\logs, staging | Out-Null
     "app: " + (& $git log --oneline -1)
     "pip: " + ((& .venv\Scripts\python.exe -m pip freeze) | Measure-Object).Count + " packages"

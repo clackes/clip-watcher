@@ -104,6 +104,7 @@ def put(local: Path, remote: str) -> None:
     try:
         script = (
             "$t = [Console]::In.ReadToEnd();"
+            f" [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName('{remote}')) | Out-Null;"
             f" [IO.File]::WriteAllBytes('{remote}', [Convert]::FromBase64String($t));"
             f" (Get-Item '{remote}').Length"
         )
@@ -122,7 +123,7 @@ def put(local: Path, remote: str) -> None:
         proto.close_shell(shell)
     n = out.decode("utf-8", "replace").strip().splitlines()[-1:] or [""]
     if n[0] != str(len(data)):
-        tail = err.decode(errors="replace")[-800:]
+        tail = err.decode(errors="replace")[-3000:]
         sys.exit(f"put {local}: server has {n[0]!r} bytes, expected {len(data)}\n{tail}")
     print(f"{local} -> {remote} ({n[0]} bytes)")
 
