@@ -33,6 +33,17 @@ class FakeBot:
     async def send_video(self, chat_id, video, caption=None, **kw):
         return self._send("video", chat_id, caption, kw)
 
+    def _edit(self, kind, chat_id, message_id, text, kw):
+        self.edits.append(
+            SimpleNamespace(kind=kind, chat_id=chat_id, message_id=message_id, text=text, kw=kw)
+        )
+
+    async def edit_message_text(self, text, chat_id=None, message_id=None, **kw):
+        self._edit("text", chat_id, message_id, text, kw)
+
+    async def edit_message_caption(self, chat_id=None, message_id=None, caption=None, **kw):
+        self._edit("caption", chat_id, message_id, caption, kw)
+
 
 class FakeApp:
     def __init__(self):
@@ -144,6 +155,24 @@ def test_clips_queued_before_cards_were_tracked_are_not_posted_again(tmp_path):
     db.add_clip("new", "x")
     assert ClipDB(path).get("new")["card_message_id"] is None  # opening the file again marks nothing
     assert [r["id"] for r in db.cardless(grace_s=0)] == ["new"]
+
+
+def test_card_of_an_expired_claim_goes_back_to_the_claim_buttons(env):
+    asyncio.run(telegram_bot.post_card(env.app, env.db, "c1", env.stage("c1")))
+    asyncio.run(telegram_bot.post_card(env.app, env.db, "c2", env.stage("c2")))
+    assert env.db.claim("c1", "manu", ttl_min=0.001)[0] and env.db.claim("c2", "samu")[0]
+    time.sleep(0.1)
+    asyncio.run(telegram_bot.sweep(env.app, env.db, env.root))
+    row = env.db.get("c1")
+    assert (row["state"], row["claimed_by"]) == ("READY", None) and env.db.state("c2") == "CLAIMED"
+    (edit,) = env.app.bot.edits  # only the expired one, on the card the queue recorded
+    assert (edit.kind, edit.chat_id, edit.message_id) == ("caption", CHAT, 101)
+    assert [b[0] for b in edit.kw["reply_markup"][0]] == ["Claim: Manu", "Claim: Samu"]
+    assert "State: READY" in edit.text and "manu" not in edit.text
+    assert "claim_expired" in [r["action"] for r in env.db.audit_rows("c1")]
+    assert not env.db.approve("c1", "manu")  # the old holder lost the lock
+    asyncio.run(telegram_bot.sweep(env.app, env.db, env.root))
+    assert len(env.app.bot.edits) == 1 and len(env.app.bot.sent) == 2
 
 
 def test_housekeeping_keeps_sweeping_after_a_failed_pass(env, monkeypatch):

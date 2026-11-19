@@ -167,9 +167,6 @@ def build_application(db: ClipDB, token: str | None = None, root: Path | None = 
     token = token or os.environ["TELEGRAM_BOT_TOKEN"]
     app = Application.builder().token(token).post_init(started).post_stop(stopping).build()
 
-    def markup(row: dict[str, Any]) -> Any:
-        return _markup(buttons_for(row))
-
     async def on_button(update: Any, context: Any) -> None:
         q = update.callback_query
         text, row = handle_action(db, q.from_user.id, q.data, root=root)
@@ -178,17 +175,8 @@ def build_application(db: ClipDB, token: str | None = None, root: Path | None = 
         await q.answer(text)
         if row is None:
             return
-        from telegram.error import BadRequest
-
-        try:
-            # Video cards carry the text as a caption; text-only cards as message text.
-            if q.message is not None and q.message.text is None:
-                await q.edit_message_caption(card_text(row), reply_markup=markup(row))
-            else:
-                await q.edit_message_text(card_text(row), reply_markup=markup(row))
-        except BadRequest as e:
-            if "not modified" not in str(e):  # pressing a button that changes nothing is fine
-                raise
+        _remember_card(db, row, q.message)
+        await refresh_card(context.application, db, row["id"], query=q)
         if q.data.startswith("approve:") and text == "Approved." and _youtube_on_approve():
             context.application.create_task(_publish(q.message, db, row["id"], root))
         if q.data.startswith("edit:") and text.startswith("Reply"):
@@ -313,8 +301,55 @@ async def post_missing_cards(app: Any, db: ClipDB, root: Path | None = None) -> 
     return posted
 
 
+async def refresh_card(app: Any, db: ClipDB, clip_id: str, *, query: Any = None) -> bool:
+    """Redraw a clip's card (text and buttons) from its queue row.
+
+    query: the button press being answered, whose message is edited; without it the card recorded by
+    post_card. Never raises: a card that cannot be edited must not stop a claim, an approval or an upload.
+    """
+    row = db.get(clip_id)
+    if not row:
+        return False
+    text, kb = card_text(row), _markup(buttons_for(row))
+    try:
+        if query is not None:
+            # Video cards carry the text as a caption; text-only cards as message text.
+            if query.message is not None and query.message.text is None:
+                await query.edit_message_caption(_fit(text, CAPTION_MAX), reply_markup=kb)
+            else:
+                await query.edit_message_text(_fit(text, TEXT_MAX), reply_markup=kb)
+        elif row.get("card_message_id"):  # None: no card yet; LEGACY_CARD (0): posted before ids were kept
+            at = {"chat_id": row["card_chat_id"], "message_id": row["card_message_id"]}
+            if row.get("card_video"):
+                await app.bot.edit_message_caption(caption=_fit(text, CAPTION_MAX), reply_markup=kb, **at)
+            else:
+                await app.bot.edit_message_text(_fit(text, TEXT_MAX), reply_markup=kb, **at)
+        else:
+            return False
+    except Exception as e:  # noqa: BLE001
+        if "not modified" in str(e).lower():  # the card already shows this
+            return True
+        log.warning("card of %s not updated: %s", clip_id, e)
+        return False
+    return True
+
+
+def _remember_card(db: ClipDB, row: dict[str, Any], message: Any) -> None:
+    """A card posted before the queue kept card ids tells us where it is when a button on it is pressed."""
+    if row.get("card_message_id") or message is None:
+        return
+    try:
+        video = getattr(message, "text", None) is None
+        db.set_card(row["id"], message.chat.id, message.message_id, video)
+    except Exception:  # noqa: BLE001 - only a convenience for later redraws
+        log.warning("card of %s not recorded", row["id"])
+
+
 async def sweep(app: Any, db: ClipDB, root: Path | None = None) -> None:
-    """One housekeeping pass of the approval bot."""
+    """One housekeeping pass of the approval bot: cards of claims that ran out go back to the Claim buttons,
+    READY clips without a card get one."""
+    for clip_id in db.release_expired():
+        await refresh_card(app, db, clip_id)
     await post_missing_cards(app, db, root)
 
 

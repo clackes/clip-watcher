@@ -173,6 +173,25 @@ class ClipDB:
         self.log(operator, "release" if ok else "release_denied", clip_id)
         return ok
 
+    def release_expired(self) -> list[str]:
+        """Put clips whose claim ran out back to READY and return their ids. One guarded UPDATE per clip: a
+        take-over by another operator at the same moment either happens before it or after it, never half."""
+        now = time.time()
+        rows = self._conn().execute(
+            "SELECT id, claimed_by FROM clips WHERE state='CLAIMED' AND claim_until<?", (now,)
+        )
+        freed = []
+        for r in rows.fetchall():
+            cur = self._conn().execute(
+                "UPDATE clips SET state='READY', claimed_by=NULL, claim_until=NULL, updated_at=? "
+                "WHERE id=? AND state='CLAIMED' AND claimed_by=? AND claim_until<?",
+                (now, r["id"], r["claimed_by"], now),
+            )
+            if cur.rowcount == 1:
+                self.log("system", "claim_expired", r["id"], f"holder={r['claimed_by']}")
+                freed.append(r["id"])
+        return freed
+
     def edit(self, clip_id: str, operator: str, changes: dict[str, Any]) -> bool:
         row = self.get(clip_id)
         if not row:
