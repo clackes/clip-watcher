@@ -94,6 +94,10 @@ def test_held_keys_count_as_the_keyword():
         hit("kkkkkk") == {"kkkk"} and not hit("kkk") and not hit("k")
     )  # repeats in the keyword are a minimum
     assert hit("??????") == {"?????"} and not hit("????")
+    assert hit("looool") == {"lol"} and hit("broo") == {"bro"} and hit("nahhh") == {"nah"}
+    god = _kw_patterns({"god": 1.0, "bot": 1.0})  # a letter typed twice inside a word is another word
+    assert [k for k, p, _ in god if p.search("oh my goood")] == ["god"]
+    assert not [k for k, p, _ in god if p.search("good boot")]
 
 
 def test_a_burst_of_plain_messages_is_a_spike_without_any_keyword():

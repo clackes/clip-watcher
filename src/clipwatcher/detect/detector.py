@@ -60,13 +60,22 @@ def _norm(text: str) -> str:
 def _held_keys(keyword: str) -> str:
     """Regex for a keyword that also matches it typed with held keys: LMAOOO, KEKWW, WWWW, LETS GOOO.
 
-    A letter repeated in the keyword itself keeps its count as the minimum (kkkk needs four, ????? five).
+    The last letter of a word may repeat any number of times (lmaoo, nahh) and so may a keyword that is one
+    letter throughout (W, kkkk, ?????: its own count is the minimum). A letter inside a word counts as held
+    only from three on (loool): twice is usually another word (god / good, bot / boot).
     """
-    parts = []
-    for ch, run in groupby(keyword):
-        n = len(list(run))
-        parts.append(r"\s+" if ch.isspace() else re.escape(ch) + (f"{{{n},}}" if n > 1 else "+"))
-    return "".join(parts)
+    words = []
+    for word in keyword.split():
+        runs = [(ch, len(list(run))) for ch, run in groupby(word)]
+        parts = []
+        for i, (ch, n) in enumerate(runs):
+            c = re.escape(ch)
+            if len(runs) == 1 or i == len(runs) - 1:
+                parts.append(f"{c}{{{n},}}" if n > 1 else f"{c}+")
+            else:
+                parts.append(f"{c}{{{n}}}(?:{c}{{2,}})?")
+        words.append("".join(parts))
+    return r"\s+".join(words)
 
 
 def _kw_patterns(keywords: dict[str, float]) -> list[tuple[str, re.Pattern[str], float]]:
