@@ -110,7 +110,9 @@ def test_sequence_and_pins(tmp_path):
         "stage",
         "post",
         "unpin",
+        "pin",  # kept for Telegram's Redo
     ]
+    assert [e for e in log if e[0] == "pin"][-1][3] == fastlane.REDO_KEEP_S
     peak = t0 / 1000 + 41
     pin = next(e for e in log if e[0] == "pin")
     assert pin[1] == int((peak - 30 - 60) * 1000) and pin[2] == int((peak + 10 + 60) * 1000)

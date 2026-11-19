@@ -38,8 +38,7 @@ def test_claim_race(tmp_path):
 def test_lock_expiry_and_holder_only(db):
     assert db.claim("c1", "manu", ttl_min=0.001)[0]
     assert not db.approve("c1", "samu")
-    assert db.claim("c1", "samu")[1] == "manu" or True
-    time.sleep(0.1)
+    time.sleep(0.2)
     assert db.claim("c1", "samu") == (True, "samu")
     assert not db.approve("c1", "manu")
     assert db.edit("c1", "samu", {"title": "new"})

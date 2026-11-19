@@ -243,7 +243,7 @@ class FastLane:
     # -- main loop ----------------------------------------------------------
     async def run(self) -> list[Outcome]:
         self._sem = asyncio.Semaphore(int(self.cfg["max_parallel"]))
-        redo = asyncio.create_task(self._redo_loop()) if self.db is not None else None
+        redo = asyncio.create_task(self._redo_loop()) if hasattr(self.db, "claim_job") else None
         async for msg in self.chat:
             self._remember(msg)
             cand = self.detector.feed(msg)
