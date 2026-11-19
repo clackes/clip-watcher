@@ -15,6 +15,11 @@ scripts/run_live_mac.sh illojuan,teegrizzley      # stops the Mac sleeping while
 Clips land in `staging/<clip_id>/` (`short_9x16.mp4`, `clean_16x9.mp4`, `meta.json`). Streamers don't need
 to be in `streamers.yaml`: each clip's layout (webcam / gameplay / full-cam) is detected from its own frames.
 
+The whole chat of every broadcast is kept in `work/chat/<login>/<stream id>.jsonl` (never deleted, unlike the
+video). Starting mid-stream, the bot first reads what was said before it joined from Twitch's chat replay, so
+a spike is measured against the whole stream. Try the detector on any VOD:
+`python scripts/replay_chat.py --vod <id> --login <channel>`.
+
 Past broadcasts (Day-0 VOD lane): `python -m clipwatcher.vod --vod <twitch VOD url> --streamer NAME`.
 Check one live stream end to end without waiting for a spike:
 `python scripts/force_clip.py work/ring/<login>/<stream_id> <login>`.

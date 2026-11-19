@@ -26,6 +26,9 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 ## Testing against reality
 - Replay real VOD chats through `LiveDetector` and compare with batch `detect()` top-10 (see git log
   81afd37). Keep >= 8/10 matches on clix/zackrawrr/tfue/kaicenat VODs when changing the detector.
+  `python scripts/replay_chat.py --vod <id> --login <channel>` does it: downloads the chat replay, replays it
+  as the live lane would, prints clips/h, the top-10 match and how many of the channel's most viewed
+  viewer-made clips the detector fired on (the ground truth D13 was tuned against; old detector 18/180).
 - `scripts/force_clip.py` pushes one forced moment through the live pipeline on a running ring buffer.
 
 ## Decision log (v2.1, binding)
@@ -35,7 +38,8 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   after render or 48 h. Pruning stops and alerts below 15% free disk.
 - D3 Spike trigger: chat_score = 0.5*z(U) + 0.35*z(E) + 0.15*z(S), median/MAD over 15 min. E uses
   config/global.yaml keywords merged with per-streamer extras. Bot/spam/giveaway/raid filters. Confirm with
-  viewer clips + audio loudness (final >= 4.5).
+  viewer clips + audio loudness (final >= 4.5; `confirm()` exists, no lane calls it yet). Formula, baseline
+  and gate are superseded by D13; window, keywords, filters and the 8 s chat delay stand.
 - D4 Dual export: clean_16x9.mp4 (trimmed, no overlays, -14 LUFS) + short_9x16.mp4. Profiles cpu_batch,
   cpu_live, nvenc, mac_preview.
 - D5 One 9:16 template (1080x1920; owner 17 Nov: no CTA banner, stack moved down 125 px, see template.STACK_SHIFT):
@@ -60,6 +64,27 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   action labels (*WATCHING*) on silent stretches; labels and sounds only in pauses (template.cues); no-webcam
   full-camera / IRL clips reframed to a full-screen 9:16 window that follows the face (render/reframe.py).
   Judge: thinking on at low effort (off, the same clip scored 5-8), a frame every 2.5 s (8-16), audio peaks `au`.
+- D13 Whole-stream chat baseline (owner, 19 Nov: keep the whole chat, read it from the start, baseline from
+  all of it, count message volume and not only keywords; supersedes the 15 min median/MAD, the weights and
+  the fixed gate of D3; the level blend and gate quantiles were tuned on real chats, see below). The chat of
+  a broadcast is kept whole in work/chat/<login>/<stream id>.jsonl and never pruned; only the video stays a
+  rolling window. On joining (start, restart, crash) `session.StreamSession` reads the
+  saved log, fetches the rest from Twitch's chat replay from the first second of the stream (anonymous GQL by
+  VOD offset, `chat/twitch_replay.py`; up to `chat.backfill_max_h` 12; needs VODs on; no Kick backfill),
+  primes the detector with it and holds live chat meanwhile; a new broadcast gets a new log and detector.
+  `detect/session.SessionTable` is the stream as a table, one row (U, M, E, S) per second:
+  chat_score = 0.3*z(U) + 0.25*z(M messages) + 0.3*z(E) + 0.15*z(S). Level = half whole-stream median, half
+  last-60-min median; scale = MAD of every second of the stream around its level. Gate once 15 min of history
+  exist: fire in the top 2% of the stream's seconds, clip when the peak reaches the top 1% (`fire_q`/`keep_q`;
+  fixed fire_z 3 / keep_z 5 before that; `max_per_hour` 8). Keywords also match held keys (LMAOOO, WWWW).
+  The cooldown starts at kept spikes only and a spike 1.5x the last kept one overrides it. Candidates carry
+  session_pct / session_rank (meta chat_pct / chat_rank). Replay of 6 real chats (55 h) against 180 viewer
+  clips: 34 hit at 3.1 clips/h (before: 18 at 2.2/h, none on the two biggest chats).
+- D14 Clips run 30-59 s (owner, 19 Nov, as read from "at least 30 seconds up to 59"; replaces the 12-30 s of
+  D6/D12; `render.clip_min_s: 12` brings the short clips back): the candidate window is 59 s of
+  footage (`detector.before_s` 40 / `after_s` 19, same in `vod`), the judge trims inside 30-59 s (prompt) and
+  `snap.fit_length` enforces it in code (too short: start earlier, then end later; too long: the oldest part
+  goes). Jump cuts never go below `render.clip_min_s`.
 - D6 Judge (v2, 17 Nov): one static cached system prompt (prompts/judge_v2.md, no per-clip variables) + 8
   labelled 480x270 JPEG q65 frames + compact JSON {meta,tr,ch,task}; short-key output {ok,sc,t0,t1,hk,tt,ds,
   fl{sp,mu,gb},why}, caps/credit enforced in code (judge/compact.py). Thinking off, effort low (judge.* in
@@ -80,7 +105,9 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 ## Module map and interfaces (keep signatures stable)
 - `models.py` ChatMessage, Candidate, JudgeResult, Word. `config.py` loaders + tool paths.
 - `chat/convert.py` `tdl_to_messages(path) -> list[ChatMessage]`, `read_jsonl/write_jsonl`.
-- `detect/detector.py` `detect(messages, *, streamer, viewers=None, top, before_s, after_s, gap_s) -> list[Candidate]`.
+- `detect/detector.py` `detect(messages, *, streamer, viewers=None, top, before_s, after_s, gap_s) -> list[Candidate]`
+  (whole chat known: scored against all of it), `settings(streamer)`, `gate(table, settings)`.
+  `detect/session.py` `SessionTable` (D13: per-second rows, level/scale/gate statistics).
   `detect/baseline.py` `x_normal_series(messages, bucket_s) / x_normal_top(...)`.
 - `render/template.py` `render_short(src, start_s, dur_s, out, *, clip_id, streamer, words, hook,
   platform="youtube", style=None, accent=None, cam=None, game=None, has_webcam=True, profile="cpu_batch") -> Path`
@@ -99,7 +126,11 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   `pin(start_ms, end_ms, ttl_s)`, `prune()`, `cut(start_ms, end_ms, out) -> Path` (wall-clock epoch ms via
   #EXT-X-PROGRAM-DATE-TIME map). `watcher.py` live polling (Helix / Kick), `recorder.py` streamlink supervisor.
 - Live chat (`chat/twitch_irc.py`, `chat/kick.py`): async iterators yielding ChatMessage with epoch-ms ts.
-  `detect/live.py` `LiveDetector(streamer, viewers=None).feed(msg) -> Candidate | None` (epoch seconds).
+  `chat/twitch_replay.py` `live_session(login) -> Session | None`, `fetch(vod_id, start_s, end_s) -> list[ChatMessage]`
+  (chat from before the bot joined). `chat/live_log.py` `LiveLog(login, stream_id, root)` `.write/.read/.rewrite`.
+  `session.py` `StreamSession(login, root=, platform=)`: `.feed(msg)` like a detector, `.watch()` task (D13).
+  `detect/live.py` `LiveDetector(streamer, viewers=None).feed(msg) -> Candidate | None` (epoch seconds),
+  `.prime(history) -> int` loads earlier chat as baseline without emitting clips.
   `detect/viewer_clips.py` Helix Get Clips poller.
 - `fastlane.py` live lane orchestrator; `calibrate.py` facecam/gameplay rect suggestion + Telegram still.
 - `layout.py` `resolve(media, streamer) -> Layout`: per-clip scene detection. Streamers use different layouts and
