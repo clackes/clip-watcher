@@ -236,6 +236,37 @@ def cmd_install(_: argparse.Namespace) -> None:
     )
 
 
+def cmd_asuser(a: argparse.Namespace) -> None:
+    """Run a .ps1 as Administrator in a password-logon task (not WinRM's network logon): Chrome can only
+    decrypt the YouTube cookies there. Waits for it and prints its output."""
+    import tempfile
+
+    log = rf"{STAGE}\oneoff.log"
+    put(Path(a.file), rf"{STAGE}\oneoff_body.ps1")
+    with tempfile.NamedTemporaryFile("w", suffix=".ps1", delete=False) as f:
+        f.write(f"& '{STAGE}\\oneoff_body.ps1' *> '{log}'\n")
+    put(Path(f.name), rf"{STAGE}\oneoff.ps1")
+    Path(f.name).unlink()
+    pw = password().replace("'", "''")
+    arg = rf"-ExecutionPolicy Bypass -File {STAGE}\oneoff.ps1"
+    print(
+        ps(
+            f"Remove-Item '{log}' -EA SilentlyContinue;"
+            " $act = New-ScheduledTaskAction -Execute powershell.exe"
+            f" -WorkingDirectory {SRV} -Argument '{arg}';"
+            " Unregister-ScheduledTask cw-oneoff -Confirm:$false -EA SilentlyContinue;"
+            " Register-ScheduledTask cw-oneoff -Action $act -RunLevel Highest"
+            f" -User {USER} -Password '{pw}' | Out-Null; Start-ScheduledTask cw-oneoff; Start-Sleep 3;"
+            f" $end = (Get-Date).AddMinutes({a.minutes});"
+            " while ((Get-ScheduledTask cw-oneoff).State -eq 'Running' -and (Get-Date) -lt $end)"
+            " { Start-Sleep 3 };"
+            " 'state: ' + (Get-ScheduledTask cw-oneoff).State;"
+            f" Get-Content '{log}' -Tail 80 -EA SilentlyContinue",
+            check=False,
+        )
+    )
+
+
 def cmd_stop(_: argparse.Namespace) -> None:
     print(
         ps(
@@ -272,6 +303,10 @@ def main() -> None:
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status").set_defaults(fn=cmd_status)
     sub.add_parser("install").set_defaults(fn=cmd_install)
+    u = sub.add_parser("asuser")
+    u.add_argument("file")
+    u.add_argument("--minutes", type=int, default=12)
+    u.set_defaults(fn=cmd_asuser)
     b = sub.add_parser("bootstrap")
     b.add_argument("--freeze", help="pip freeze of a working box, used as constraints")
     b.add_argument("--tools-only", action="store_true", help="skip the repo upload (Chrome etc. first)")
