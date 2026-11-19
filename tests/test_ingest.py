@@ -456,3 +456,27 @@ def test_recorder_reusing_a_ring_drops_segments_the_last_run_never_indexed(tmp_p
     again = Recorder("twitch", "x", "s", tmp_path)  # the lane restarted into the same folder
     assert again.drop_unindexed() == ["seg_r1_00001.ts"]
     assert kept.exists() and not orphan.exists() and len(again.ring.segments()) == 1
+
+
+def test_sweep_does_not_kill_a_pid_that_is_no_longer_the_recorder(tmp_path, monkeypatch):
+    import json
+    import os
+
+    from clipwatcher.ingest import recorder
+
+    old = tmp_path / "x" / "20260101-000000"
+    old.mkdir(parents=True)
+    (old / "pids.json").write_text(json.dumps({"pgid": os.getpid()}))  # reused by this very test process
+    killed = []
+    monkeypatch.setattr(recorder, "kill_group", lambda pgid, sig: killed.append(pgid))
+    assert recorder.sweep_stale(tmp_path, "x") == [old] and not old.exists()
+    assert killed == []  # pytest is not a streamlink pipeline
+    assert recorder.still_recorder(2**22 + 12345)  # nothing has that pid: a kill would be a no-op anyway
+
+
+def test_read_jsonl_skips_a_line_torn_by_a_crash(tmp_path):
+    from clipwatcher.chat.convert import read_jsonl
+
+    p = tmp_path / "chat.jsonl"
+    p.write_text('{"ts_ms": 1, "user": "a", "text": "hi"}\n{"ts_ms": 2, "user": "b", "te')
+    assert [m.text for m in read_jsonl(p)] == ["hi"]

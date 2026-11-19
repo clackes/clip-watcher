@@ -78,10 +78,16 @@ def write_jsonl(messages: Iterable[ChatMessage], path: str | Path) -> Path:
 
 
 def read_jsonl(path: str | Path) -> list[ChatMessage]:
+    """Chat log -> messages. A line torn by a crash mid-write (live logs are appended while the stream runs)
+    is skipped instead of failing the whole file."""
     out: list[ChatMessage] = []
     with Path(path).open(encoding="utf-8") as f:
         for line in f:
             line = line.strip()
-            if line:
+            if not line:
+                continue
+            try:
                 out.append(ChatMessage(**json.loads(line)))
+            except (ValueError, TypeError):
+                continue
     return out

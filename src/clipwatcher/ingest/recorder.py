@@ -370,6 +370,22 @@ def kill_group(pgid: int, sig: int) -> None:
         pass
 
 
+def still_recorder(pid: int) -> bool:
+    """Is this pid, written down by an earlier run, still its recorder pipeline? After a reboot the number
+    may belong to any process, and the sweep kills what it finds with SIGKILL. Unknown (no ps, Windows)
+    counts as yes: an orphaned recorder fills the disk."""
+    if os.name == "nt":
+        return True
+    try:
+        out = subprocess.run(
+            ["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True, timeout=5
+        )
+    except (OSError, subprocess.SubprocessError):
+        return True
+    cmd = out.stdout.strip()
+    return not cmd or "streamlink" in cmd  # gone already: killing the group is a no-op
+
+
 def sweep_stale(ring_root: Path, login: str, keep: Path | None = None) -> list[Path]:
     """Kill recorders left by a previous run of this login and delete their ring folders.
 
@@ -384,7 +400,9 @@ def sweep_stale(ring_root: Path, login: str, keep: Path | None = None) -> list[P
         pf = d / "pids.json"
         if pf.exists():
             try:
-                kill_group(int(json.loads(pf.read_text())["pgid"]), _SIGKILL)
+                pgid = int(json.loads(pf.read_text())["pgid"])
+                if still_recorder(pgid):
+                    kill_group(pgid, _SIGKILL)
             except (ValueError, KeyError):
                 pass
         shutil.rmtree(d, ignore_errors=True)
