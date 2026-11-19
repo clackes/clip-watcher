@@ -42,6 +42,7 @@ def test_judge_ok_validates_and_clamps():
     assert "twitch.tv/gamer" in r.description  # credit enforced even when the model forgets it
     assert "subscribe" not in r.description.lower()  # generic engagement bait is dropped
     assert "Skill or luck? 👇" in r.description
+    assert len(r.description.split("\n")) == 4  # the begging line is replaced, the description stays whole
     assert c.kwargs["output_config"]["format"]["type"] == "json_schema"
     assert c.kwargs["system"][0]["cache_control"] == {"type": "ephemeral"}
 
