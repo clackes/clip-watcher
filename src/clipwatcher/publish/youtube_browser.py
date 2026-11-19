@@ -22,11 +22,12 @@ import logging
 import os
 import re
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 from .. import config
 from ..queue.db import APPROVED, ClipDB
-from .youtube import NotApproved, build_metadata
+from .youtube import NotApproved, build_metadata, failure_recorded, record_url
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +53,7 @@ async def _upload(
     *,
     private: bool,
     timeout_s: int = 900,
+    on_video_id: Callable[[str], None] | None = None,
 ) -> str:
     from patchright.async_api import async_playwright
 
@@ -110,6 +112,8 @@ async def _upload(
             vid = await dialog_with_id.get_attribute("video-id") or ""
             if not vid:
                 raise RuntimeError("Studio did not assign a video-id")
+            if on_video_id is not None:
+                on_video_id(vid)
             href = f"https://youtube.com/shorts/{vid}"
 
             # Details → Video elements → Checks → Visibility: three Next clicks.
@@ -154,23 +158,31 @@ def publish_clip(db: ClipDB, clip_id: str, root: Path | None = None) -> str:
         raise NotApproved(f"{clip_id} is {state}, not APPROVED")
 
     root = Path(root) if root else staging.staging_root()
-    folder = root / "approved" / clip_id
-    meta = json.loads((folder / "meta.json").read_text())
-    row = db.get(clip_id) or {}
-    meta.update(json.loads(row.get("meta_json") or "{}"))
-    md = build_metadata(meta)
-    video = folder / "short_9x16.mp4"
+    with failure_recorded(db, clip_id):
+        folder = root / "approved" / clip_id
+        meta = json.loads((folder / "meta.json").read_text())
+        row = db.get(clip_id) or {}
+        meta.update(json.loads(row.get("meta_json") or "{}"))
+        md = build_metadata(meta)
+        video = folder / "short_9x16.mp4"
 
-    force = os.environ.get("YT_BROWSER_FORCE") == "1"
-    if config.dry_run() and not force:
-        vid = f"dryrun-{uuid.uuid4().hex[:8]}"
-        db.log("publisher", "youtube_browser_dry_run", clip_id, f"would upload {video.name}")
-        return vid
+        force = os.environ.get("YT_BROWSER_FORCE") == "1"
+        if config.dry_run() and not force:
+            vid = f"dryrun-{uuid.uuid4().hex[:8]}"
+            db.log("publisher", "youtube_browser_dry_run", clip_id, f"would upload {video.name}")
+            return vid
 
-    private = config.dry_run()  # under DRY_RUN with force, still upload private
-    url = asyncio.run(_upload(video, md["title"], md["description"], private=private))
-    m = _URL_RE.search(url)
-    yt_id = m.group(1) if m else url
-    db.set_state(clip_id, "PUBLISHED", actor="publisher", youtube_id=yt_id)
-    staging.update_published(clip_id, "youtube", url, root)
+        private = config.dry_run()  # under DRY_RUN with force, still upload private
+        url = asyncio.run(
+            _upload(
+                video, md["title"], md["description"], private=private,
+                # Studio hands out the id long before the dialog is through: keep it, so a video that got
+                # stuck half way can be found instead of blindly uploaded again
+                on_video_id=lambda yt_id: db.note_upload(clip_id, yt_id),
+            )
+        )  # fmt: skip
+        m = _URL_RE.search(url)
+        yt_id = m.group(1) if m else url
+        db.set_state(clip_id, "PUBLISHED", actor="publisher", youtube_id=yt_id)
+    record_url(db, clip_id, url, root)
     return url

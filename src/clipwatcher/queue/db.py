@@ -39,6 +39,8 @@ COLUMNS = {
     "card_video": "INTEGER",
     "card_lease_until": "REAL",
     "card_attempts": "INTEGER",
+    # why the last upload of an APPROVED clip did not finish (shown on the card); NULL once it is published
+    "publish_error": "TEXT",
 }
 LEGACY_CARD = 0  # card_message_id of clips queued before cards were tracked: taken as posted, never re-posted
 CARD_MAX_ATTEMPTS = 3
@@ -235,8 +237,26 @@ class ClipDB:
                 raise ValueError(k)
             sets.append(f"{k}=?")
             args.append(v)
+        if state == PUBLISHED:
+            sets.append("publish_error=NULL")
         self._conn().execute(f"UPDATE clips SET {', '.join(sets)} WHERE id=?", (*args, clip_id))
-        self.log(actor, f"state:{state}", clip_id)
+        self.log(actor, f"state:{state}", clip_id, " ".join(f"{k}={v}" for k, v in fields.items()))
+
+    # -- publishing --------------------------------------------------------
+    def note_upload(self, clip_id: str, youtube_id: str) -> None:
+        """YouTube has given an upload in progress its video id. The clip stays APPROVED until the upload is
+        through; if it never is, the id says which video to look for before anyone uploads again."""
+        self._conn().execute("UPDATE clips SET youtube_id=? WHERE id=?", (youtube_id, clip_id))
+        self.log("publisher", "youtube_video_id", clip_id, youtube_id)
+
+    def publish_failed(self, clip_id: str, error: str) -> None:
+        """Keep the reason on the clip and in the audit log. updated_at stays the time of the approval."""
+        self._conn().execute("UPDATE clips SET publish_error=? WHERE id=?", (error[:500], clip_id))
+        self.log("publisher", "youtube_failed", clip_id, error[:500])
+
+    def publish_ok(self, clip_id: str) -> None:
+        """The last upload attempt went through (a dry run leaves the clip APPROVED): forget the old error."""
+        self._conn().execute("UPDATE clips SET publish_error=NULL WHERE id=?", (clip_id,))
 
     # -- approval cards ----------------------------------------------------
     def reserve_card(self, clip_id: str, lease_s: float = 300) -> int:
