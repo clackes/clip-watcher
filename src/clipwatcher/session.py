@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from collections import deque
 from collections.abc import Callable
@@ -27,6 +28,16 @@ from clipwatcher.chat.live_log import LiveLog
 from clipwatcher.models import Candidate, ChatMessage
 
 log = logging.getLogger(__name__)
+
+
+def helix_clip_poller(s: twitch_replay.Session) -> Any:
+    """Viewer-made clips of this broadcast (D3 confirmation), or None: Helix needs an app registered with
+    Twitch (TWITCH_CLIENT_ID / TWITCH_CLIENT_SECRET), which the live lane does not otherwise require."""
+    if not (s.user_id and os.environ.get("TWITCH_CLIENT_ID") and os.environ.get("TWITCH_CLIENT_SECRET")):
+        return None
+    from clipwatcher.detect.viewer_clips import ViewerClipPoller
+
+    return ViewerClipPoller(s.user_id, s.started_ms / 1000)
 
 
 def chat_config() -> dict[str, Any]:
@@ -47,6 +58,7 @@ class StreamSession:
         fetch: Callable[..., list[ChatMessage]] | None = None,
         cfg: dict[str, Any] | None = None,
         clock: Callable[[], float] = time.time,
+        make_poller: Callable[[twitch_replay.Session], Any] = helix_clip_poller,
     ):
         self.login, self.root, self.clock = login.lower(), root, clock
         self.cfg = {**chat_config(), **(cfg or {})}
@@ -65,6 +77,10 @@ class StreamSession:
         self._loading = False
         self._held: list[ChatMessage] = []
         self._ready: deque[Candidate] = deque()
+        self.on_rescue: Callable[[Candidate], None] | None = None  # the lane: clip a spike a viewer confirmed
+        self._make_poller = make_poller
+        self._poller: Any = None
+        self._poll_task: asyncio.Task | None = None
 
     # -- the detector interface the fast lane uses ------------------------------------------------
     def feed(self, msg: ChatMessage) -> Candidate | None:
@@ -88,8 +104,30 @@ class StreamSession:
         return out
 
     def close(self) -> None:
+        if self._poll_task is not None:
+            self._poll_task.cancel()
         if self.log is not None:
             self.log.close()
+
+    # -- viewer clips (D3 confirmation) -------------------------------------------------------------
+    def moment_times(self) -> list[float]:
+        """Moments of this broadcast viewers have clipped so far (epoch seconds); [] without Helix access."""
+        return self._poller.moment_times() if self._poller is not None else []
+
+    def _on_clip(self, clip: Any) -> None:
+        """A viewer just clipped something: a spike that fired there but stayed under the keep threshold is
+        clipped after all."""
+        rescue = getattr(self.detector, "rescue", None)
+        for cand in rescue(clip.moment_s) if rescue else []:
+            log.info("%s: viewer clip %s confirms the spike at %.0f", self.login, clip.id, cand.peak_s)
+            if self.on_rescue is not None:
+                self.on_rescue(cand)
+
+    def _watch_clips(self, s: twitch_replay.Session) -> None:
+        if self._poll_task is not None:
+            self._poll_task.cancel()
+        self._poller = self._make_poller(s)
+        self._poll_task = asyncio.create_task(self._poller.run(self._on_clip)) if self._poller else None
 
     # -- following the broadcast ---------------------------------------------------------------------
     async def watch(self) -> None:
@@ -117,6 +155,7 @@ class StreamSession:
                 self.primed = await asyncio.to_thread(det.prime, history)
                 last_ms = history[-1].ts_ms if history else 0
                 self._open(found.stream_id, [m for m in self._held if m.ts_ms > last_ms], new_log, det)
+                self._watch_clips(found)
                 log.info(
                     "%s: broadcast %s, baseline from %d messages of history (%.1f h), %d earlier spikes",
                     self.login, found.stream_id, self.primed,

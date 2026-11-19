@@ -32,7 +32,9 @@ log = logging.getLogger(__name__)
 
 GQL_URL = "https://gql.twitch.tv/gql"
 WEB_CLIENT_ID = "kimne78kx3ncx6brgo4mv6wki5h1ko"  # twitch.tv's own public player id, not a secret
-_SESSION_Q = "query($login: String!) { user(login: $login) { stream { id createdAt archiveVideo { id } } } }"
+_SESSION_Q = (
+    "query($login: String!) { user(login: $login) { id stream { id createdAt archiveVideo { id } } } }"
+)
 _PAGE_Q = (
     "query($id: ID!, $off: Int) { video(id: $id) { lengthSeconds comments(contentOffsetSeconds: $off) {"
     " edges { node { id contentOffsetSeconds createdAt commenter { login } message { fragments { text } } } }"
@@ -55,6 +57,7 @@ class Session:
     stream_id: str
     started_ms: int
     vod_id: str | None
+    user_id: str | None = None  # the broadcaster, for Helix (viewer clips)
 
 
 def _post(payload: dict[str, Any]) -> dict[str, Any]:
@@ -77,11 +80,13 @@ def _iso_ms(s: str) -> int:
 def live_session(login: str, *, post: Post | None = None) -> Session | None:
     """The broadcast ``login`` is running right now, or None when offline / unknown."""
     d = (post or _post)({"query": _SESSION_Q, "variables": {"login": login.lower()}})
-    stream = ((d.get("data") or {}).get("user") or {}).get("stream")
+    user = (d.get("data") or {}).get("user") or {}
+    stream = user.get("stream")
     if not stream:
         return None
     vod = (stream.get("archiveVideo") or {}).get("id")
-    return Session(str(stream["id"]), _iso_ms(stream["createdAt"]), str(vod) if vod else None)
+    uid = str(user["id"]) if user.get("id") else None
+    return Session(str(stream["id"]), _iso_ms(stream["createdAt"]), str(vod) if vod else None, uid)
 
 
 def node_to_message(node: dict[str, Any], bots: set[str] | frozenset[str] = frozenset()) -> ChatMessage:

@@ -134,3 +134,34 @@ def test_chat_lines_keep_the_reaction_at_the_end_of_the_window():
     msgs = [ChatMessage(t * 10, f"u{t}", f"line {t}") for t in range(5000)]  # 100 messages a second
     lines = vod._chat_lines(msgs, 0, 50)
     assert len(lines) == 2000 and lines[-1] == "u4999: line 4999"  # was: the first 60, all before the moment
+
+
+def test_viewer_clips_confirm_and_reorder_vod_candidates():
+    from clipwatcher.detect.viewer_clips import vod_clip_moments
+    from clipwatcher.models import Candidate
+
+    def post(payload):
+        assert payload["variables"] == {"login": "foo"}
+        nodes = [
+            {"videoOffsetSeconds": 1000, "durationSeconds": 30, "video": {"id": "42"}},
+            {"videoOffsetSeconds": 50, "durationSeconds": 30, "video": {"id": "another vod"}},
+            {"videoOffsetSeconds": None, "durationSeconds": 30, "video": {"id": "42"}},
+            {"videoOffsetSeconds": 77, "durationSeconds": 20, "video": None},
+        ]
+        return {"data": {"user": {"clips": {"edges": [{"node": n} for n in nodes]}}}}
+
+    assert vod_clip_moments("Foo", "42", post=post) == [1015.0]
+    assert vod_clip_moments("foo", "42", post=lambda p: {"errors": ["nope"]}) == []
+    assert vod_clip_moments("foo", "42") == []  # offline (tests never reach Twitch): no clips, no error
+
+    a, b, c = (
+        Candidate("foo", p, p - 40, p + 19, sc, sc) for p, sc in ((500, 9.0), (1020, 8.0), (3000, 7.0))
+    )
+    top = vod.confirmed_top([a, b, c], [1015.0], 2)
+    assert (
+        [x.peak_s for x in top] == [1020, 500] and top[0].final_score == 9.5 and top[0].signals["viewer_clip"]
+    )
+    assert vod.confirmed_top([a, b, c], [], 2) == [a, b]
+    loud = [(i / 10, -8.0 if 400 <= i < 410 else -30.0 + (i % 5) * 0.5) for i in range(590)]
+    both = vod.with_loudness(top[0], loud)  # the loudness bonus is added to the clip bonus, not instead of it
+    assert both.final_score == 8.0 + 1.5 + 1.5 and both.signals["viewer_clip"] and both.signals["loud_z"] > 5

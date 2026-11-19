@@ -52,7 +52,7 @@ detector:                   # D3 + D13
   mute_after_notice_s: 75   # raid / sub-bomb (5+ gifts) / giveaway mute window (60-90 s)
   cooldown_s: 45            # between kept spikes (live: at least one clip window)
   prompt_share: 0.4         # one keyword-less message from >= 40% of chatters = prompted copy-paste, not a moment
-  keep_final: 4.5           # D3 viewer-clip / loudness confirmation; not wired into any lane yet
+  rescue_s: 600             # D3: a viewer clip confirms a spike that fired under the keep gate in the last N s
   default_delay_s: 8        # chat reacts ~5-15 s after the moment
   bots: [nightbot, streamelements, moobot, fossabot, sery_bot, streamlabs, wizebot, soundalerts]
   keywords:                 # weights for E (case-insensitive whole tokens; held keys match too: LMAOOO, WWWW)

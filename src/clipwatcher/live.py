@@ -76,7 +76,8 @@ async def run_streamer(
     watch = asyncio.create_task(session.watch())
     try:
         lane = FastLane(login, chat_src, session, rec.ring, steps=steps, db=db, bot=bot,
-                        staging_root=staging_root)  # fmt: skip
+                        staging_root=staging_root, clips=session)  # fmt: skip
+        session.on_rescue = lane._start  # a spike under the gate that a viewer then clipped
         await lane.run()
     finally:
         watch.cancel()

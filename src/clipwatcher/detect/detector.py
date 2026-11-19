@@ -94,6 +94,7 @@ def settings(streamer: str) -> dict[str, Any]:
         "floor_z": float(cfg.get("floor_z", 2.0)),
         "session_min_s": int(cfg.get("session_min_s", 900)),
         "max_per_hour": int(sc.get("max_per_hour", cfg.get("max_per_hour", 8))),
+        "rescue_s": float(cfg.get("rescue_s", 600)),
         "onset_max_s": float(cfg.get("onset_max_s", 15)),
         "min_unique": int(sc.get("min_unique", cfg.get("min_unique", 8))),
         "min_unique_floor": int(cfg.get("min_unique_floor", 3)),
@@ -339,6 +340,23 @@ def detect(
     for rank, c in enumerate(sorted(found, key=lambda c: -c.chat_score), 1):
         c.signals["session_rank"] = float(rank)
     return kept
+
+
+def loud_z(
+    series: Sequence[tuple[float, float]], peak_rel: float, before_s: float = 5.0, after_s: float = 12.0
+) -> float | None:
+    """How far the loudest instant around the moment stands above the clip's usual level, as a robust z.
+
+    series = [(seconds from the window start, loudness in dB)], peak_rel = the moment in the same seconds.
+    None without audio. A scream or a crash where chat spiked is D3's second confirmation of a moment.
+    """
+    levels = sorted(v for _, v in series if v > -70.0)  # below that is digital silence, not a level
+    near = [v for t, v in series if peak_rel - before_s <= t <= peak_rel + after_s and v > -70.0]
+    if len(levels) < 20 or not near:
+        return None
+    med = _median(levels)
+    mad = _median(sorted(abs(v - med) for v in levels))
+    return (max(near) - med) / max(1.4826 * mad, 1.0)
 
 
 def confirm(

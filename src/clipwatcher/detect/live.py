@@ -86,6 +86,7 @@ class LiveDetector:
         self._live_from = -1e9  # spikes fired up to this second are history: recorded, not emitted
         self._out: deque[Candidate] = deque()
         self._maturing: list[tuple[Candidate, Row, Row]] = []  # with the peak row and its medians
+        self.near: deque[Candidate] = deque()  # fired, peaked under the keep threshold: see rescue()
 
     # -- public ---------------------------------------------------------------------------------
     def feed(self, msg: ChatMessage) -> Candidate | None:
@@ -108,6 +109,15 @@ class LiveDetector:
         self._out.clear()
         self._maturing = []
         return out
+
+    def rescue(self, moment_s: float, tol_s: float = 30.0) -> list[Candidate]:
+        """A viewer clipped ``moment_s`` (D3 confirmation): hand out the spikes of the last minutes that
+        fired there but stayed under the keep threshold. Each is returned once."""
+        hit = [c for c in self.near if abs(c.peak_s - moment_s) <= tol_s]
+        for c in hit:
+            self.near.remove(c)
+            c.signals["viewer_clip"] = 1.0
+        return hit
 
     def prime(self, history: Iterable[ChatMessage]) -> int:
         """Load the chat from before now (oldest first) as baseline. Nothing in it is emitted as a clip:
@@ -338,5 +348,9 @@ class LiveDetector:
                 self.spikes.append((c.signals["fire_s"], peak_row, peak_recent))
                 if self._is_live(c):
                     self._out.append(c)
+            elif self._is_live(c):
+                self.near.append(c)
+        while self.near and self.near[0].signals["fire_s"] < t - self.p["rescue_s"]:
+            self.near.popleft()
         self._maturing = still
         tab.push(*row, scorable=warm and not muted, sec=t)

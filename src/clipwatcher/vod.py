@@ -11,12 +11,13 @@ import logging
 import re
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from dataclasses import replace
 from pathlib import Path
 
 from clipwatcher import config
 from clipwatcher.chat.convert import read_jsonl, tdl_to_messages, write_jsonl
-from clipwatcher.detect.detector import detect
+from clipwatcher.detect.detector import confirm, detect, loud_z
 from clipwatcher.models import Candidate, ChatMessage
 from clipwatcher.render import cold_open
 
@@ -80,6 +81,20 @@ def heuristic_meta(streamer: str, platform: str = "twitch", seed: int = 0) -> di
 
 def _mod(name: str):
     return importlib.import_module(name)
+
+
+def with_loudness(cand: Candidate, series: Sequence[tuple[float, float]]) -> Candidate:
+    """D3 confirmation by audio: add the loudness bonus to whatever the final score already holds."""
+    lz = loud_z(series, cand.peak_s - cand.start_s)
+    c = confirm(cand, (), lz)
+    return replace(c, final_score=cand.final_score + c.final_score - cand.chat_score)
+
+
+def confirmed_top(cands: list[Candidate], clip_times: Sequence[float], top: int) -> list[Candidate]:
+    """D3 confirmation by viewer clips: candidates viewers clipped move up; the best ``top`` are kept."""
+    if not clip_times:
+        return cands[:top]
+    return sorted((confirm(c, clip_times) for c in cands), key=lambda c: -c.final_score)[:top]
 
 
 def _screened_out(jr, jcfg: dict) -> bool:
@@ -167,7 +182,9 @@ def process_candidate(
                     size=(int(size[0]), int(size[1])), quality=int(jcfg.get("frame_quality", 65)),
                     out_dir=work / f"frames_{n}",
                 )  # fmt: skip
-                loud = cold_open.loud_moments(cold_open.loudness(src, local_start, dur))
+                series = cold_open.loudness(src, local_start, dur)
+                loud = cold_open.loud_moments(series)
+                cand = with_loudness(cand, series)
             except Exception as e:  # noqa: BLE001
                 log.warning("%s: frames/loudness for the judge failed (%s); judging without", clip_id, e)
             jr = claude.judge_clip(
@@ -230,6 +247,8 @@ def process_candidate(
         final_score=cand.final_score,
         x_normal=cand.x_normal,
         unique_chatters=cand.unique_chatters,
+        loud_z=cand.signals.get("loud_z"),
+        viewer_clip=bool(cand.signals.get("viewer_clip")),
         peak_s=cand.peak_s,
         start_s=cand.start_s,
         end_s=cand.end_s,
@@ -262,6 +281,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", type=Path, default=Path("staging"))
     ap.add_argument("--work", type=Path, default=Path("work"))
     ap.add_argument("--no-judge", action="store_true")
+    ap.add_argument("--no-viewer-clips", action="store_true", help="skip the viewer-clip confirmation (D3)")
     ap.add_argument("--language", help="spoken language (default: streamers.yaml, then en)")
     a = ap.parse_args(argv)
 
@@ -287,7 +307,16 @@ def main(argv: list[str] | None = None) -> int:
         messages = tdl_to_messages(chat_path)
         write_jsonl(messages, work / "chat.jsonl")
 
-    cands = detect(messages, streamer=streamer, top=a.top, before_s=a.before, after_s=a.after, gap_s=a.gap)
+    # D3: moments viewers clipped themselves are confirmed. With clips to check against, twice as many
+    # chat spikes are considered and the best after confirmation are kept.
+    clip_times = (
+        [] if a.no_viewer_clips else _mod("clipwatcher.detect.viewer_clips").vod_clip_moments(streamer, vid)
+    )
+    cands = detect(
+        messages, streamer=streamer, top=a.top * (2 if clip_times else 1), before_s=a.before, after_s=a.after,
+        gap_s=a.gap,
+    )  # fmt: skip
+    cands = confirmed_top(cands, clip_times, a.top)
     print_table(cands)
     if not cands:
         print("no candidates")

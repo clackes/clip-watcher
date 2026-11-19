@@ -53,3 +53,13 @@ def _no_face_detection_in_pipeline_tests(request, monkeypatch):
     from clipwatcher import layout
 
     monkeypatch.setattr(layout, "resolve", lambda *a, **k: layout.Layout(False, None, None, "test"))
+
+
+@pytest.fixture(autouse=True)
+def _no_twitch_calls(monkeypatch):
+    """Tests never touch the network: anything that would ask Twitch gets an error, as when offline."""
+
+    def offline(payload):
+        raise OSError("tests do not touch the network")
+
+    monkeypatch.setattr("clipwatcher.chat.twitch_replay._post", offline)

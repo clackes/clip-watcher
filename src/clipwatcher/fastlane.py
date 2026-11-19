@@ -136,6 +136,16 @@ def _default_heuristic(cand: Candidate, words: list[Word]) -> JudgeResult:
     return claude.heuristic_judge(cand, words, game=config.streamer(cand.stream).get("game"))
 
 
+def _default_loudness(src: Path, t0_s: float, dur: float) -> list[tuple[float, float]]:
+    try:
+        from .render import cold_open
+
+        return cold_open.loudness(Path(src), t0_s, dur)
+    except Exception as e:  # noqa: BLE001 - confirmation is a bonus: no audio read, no bonus
+        log.warning("loudness read failed (%s)", e)
+        return []
+
+
 def _default_render_short(*a: Any, **k: Any) -> Path:
     from .render.template import render_short
 
@@ -176,6 +186,7 @@ class Steps:
     stage: Callable[..., Path] = _default_stage
     post_card: Callable[..., Any] | None = None  # async (app, db, clip_id, video)
     judge: Callable[..., JudgeResult | None] = _default_judge  # None -> screen + heuristic path
+    loudness: Callable[..., list[tuple[float, float]]] = _default_loudness  # [(t, dB)] of the cut window
 
 
 @dataclass
@@ -202,6 +213,7 @@ class FastLane:
         staging_root: Path | None = None,
         clock: Callable[[], float] = time.time,
         sleep: Callable[[float], Any] = asyncio.sleep,
+        clips: Any = None,
     ):
         self.streamer = streamer
         self.chat = chat
@@ -216,24 +228,47 @@ class FastLane:
         self._sem: asyncio.Semaphore | None = None
         self._tasks: set[asyncio.Task] = set()
         self._started: set[str] = set()  # clip ids already taken: the detector can fire twice on one window
+        self.clips = clips  # viewer-made clips of this broadcast: anything with moment_times() (D3)
+        self._lines: dict[str, list[str]] = {}  # chat of a moment, taken when it fired
+        self._last: tuple[float, float] | None = None  # (chat time, our clock) of the newest message
 
     # -- main loop ----------------------------------------------------------
     async def run(self) -> list[Outcome]:
         self._sem = asyncio.Semaphore(int(self.cfg["max_parallel"]))
+        ticker = asyncio.create_task(self._tick()) if hasattr(self.detector, "tick") else None
         try:
             async for msg in self.chat:
+                self._last = (msg.ts_ms / 1000, self.clock())
                 self._remember(msg)
                 self._start(self.detector.feed(msg))
+            for cand in getattr(self.detector, "drain", list)():  # chat over: decide the spike in progress
+                self._start(cand)
         except asyncio.CancelledError:
             for t in self._tasks:  # shutdown: do not hold it up for renders
                 t.cancel()
             raise
         finally:
+            if ticker is not None:
+                ticker.cancel()
             # Chat ended or crashed: the clips already being made are finished first. The caller stops the
             # recorder right after this returns, and they still need its ring buffer.
             if self._tasks:
                 await asyncio.gather(*list(self._tasks), return_exceptions=True)
         return self.outcomes
+
+    async def _tick(self) -> None:
+        """A spike is decided when a later message moves the detector's clock, so in a chat that goes quiet
+        right after it the clip waited for the next message. After 5 s of silence the clock is moved in chat
+        time (last message + the silence, less a margin for late messages); after a minute it is left alone,
+        so a dropped connection is not filled in as silence."""
+        while True:
+            await asyncio.sleep(1.0)
+            if self._last is None:
+                continue
+            ts, at = self._last
+            quiet = self.clock() - at
+            if 5.0 < quiet <= 60.0:
+                self._start(self.detector.tick(ts + quiet - 5.0))
 
     def _start(self, cand: Candidate | None) -> None:
         if cand is None:
@@ -245,6 +280,9 @@ class FastLane:
             log.info("%s: %s already in progress or done", self.streamer, self._clip_id(cand))
             return
         self._started.add(self._clip_id(cand))
+        # now, while the chat of the moment is still in memory: a clip waiting for a render slot used to
+        # reach the judge with no chat at all
+        self._lines[self._clip_id(cand)] = self._chat_lines(cand)
         t = asyncio.create_task(self._guarded(cand))
         self._tasks.add(t)
         t.add_done_callback(self._tasks.discard)
@@ -294,6 +332,17 @@ class FastLane:
             await self.sleep(1.0)
         log.warning("buffer wait timed out for %s; cutting what exists", self.streamer)
 
+    async def _confirmed(
+        self, cand: Candidate, src: Path, t0_s: float, dur: float, timings: dict[str, float]
+    ) -> Candidate:
+        """D3 confirmation: a loud instant where chat spiked, and a viewer who clipped the moment, raise the
+        final score (and are shown to the operators). The chat score is left as the detector gave it."""
+        from .detect.detector import confirm, loud_z
+
+        series = await self._timed("loudness", timings, self.steps.loudness, src, t0_s, dur)
+        times = self.clips.moment_times() if self.clips is not None else ()
+        return confirm(cand, times, loud_z(series, cand.peak_s - cand.start_s))
+
     async def _timed(self, name: str, timings: dict[str, float], fn: Callable[..., Any], *a: Any, **k: Any):
         t0 = time.perf_counter()
         out = await asyncio.to_thread(fn, *a, **k)
@@ -331,8 +380,9 @@ class FastLane:
         # segments. Treating it as a bare path would start every clip at the segment boundary instead.
         src, t0_s = cut if isinstance(cut, tuple) else (cut, 0.0)
 
+        cand = await self._confirmed(cand, src, t0_s, dur, timings)
         words = await self._timed("transcribe", timings, self.steps.transcribe, src, t0_s, dur, lang)
-        chat_lines = self._chat_lines(cand)
+        chat_lines = self._lines.pop(cid, None) or self._chat_lines(cand)
         title, game = scfg.get("title", f"{self.streamer} live"), scfg.get("game", "")
         jr = await self._timed(
             "judge", timings, self.steps.judge, cand, words, src, t0_s, dur, chat_lines, game, lang,
@@ -407,6 +457,8 @@ class FastLane:
             # the spike's standing in its own stream: share of seconds that scored lower, rank so far
             "chat_pct": cand.signals.get("session_pct"), "chat_rank": cand.signals.get("session_rank"),
             "unique_chatters": cand.unique_chatters, "x_normal": round(cand.x_normal, 2),
+            # D3 confirmation, already counted in final_score
+            "loud_z": cand.signals.get("loud_z"), "viewer_clip": bool(cand.signals.get("viewer_clip")),
         }  # fmt: skip
         meta.update(title=jr.title_options[0], description=jr.description)  # heuristic copy too
         if jr.source == "claude":

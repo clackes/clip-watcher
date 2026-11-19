@@ -19,7 +19,7 @@ def _vod(comments, length):
             if v["login"] != "streamer":
                 return {"data": {"user": None}}
             stream = {"id": "777", "createdAt": "2026-11-19T18:00:00Z", "archiveVideo": {"id": "42"}}
-            return {"data": {"user": {"stream": stream}}}
+            return {"data": {"user": {"id": "4242", "stream": stream}}}
         if v["id"] != "42":
             return {"data": {"video": None}}
         if v["off"] > length:
@@ -49,7 +49,7 @@ def _vod(comments, length):
 def test_replay_session_lookup():
     post = _vod([], 0)
     s = twitch_replay.live_session("Streamer", post=post)
-    assert s == twitch_replay.Session("777", 1_795_111_200_000, "42")
+    assert s == twitch_replay.Session("777", 1_795_111_200_000, "42", user_id="4242")
     assert twitch_replay.live_session("offline_or_unknown", post=post) is None
 
 

@@ -3,7 +3,7 @@
 import random
 
 from clipwatcher import config
-from clipwatcher.detect.detector import _FLOORS, _kw_patterns, detect
+from clipwatcher.detect.detector import _FLOORS, _kw_patterns, confirm, detect, loud_z
 from clipwatcher.detect.live import LiveDetector
 from clipwatcher.detect.session import SessionTable
 from clipwatcher.models import ChatMessage
@@ -185,3 +185,25 @@ def test_batch_and_live_agree_on_a_long_chat():
         assert any(abs(c.peak_s - (BASE + t - 8)) <= 12 for c in batch), t
         assert near(live, t), t
     assert batch[0].signals["session_rank"] == 1 and abs(batch[0].peak_s - (BASE + 4992)) <= 12
+
+
+# ------------------------------------------------------------------------ confirmation (D3)
+def test_loud_z_measures_the_scream_at_the_moment():
+    talk = [(i / 10, -30.0 + (i % 5) * 0.5) for i in range(590)]  # 59 s of talking around -29 dB
+    scream = [(t, -8.0 if 40.0 <= t < 41.0 else v) for t, v in talk]
+    assert loud_z(scream, 38.0) > 10 and loud_z(scream, 5.0) < 2  # at the moment, not anywhere in the clip
+    assert abs(loud_z(talk, 38.0)) < 2 and loud_z([], 38.0) is None
+    silent = [(i / 10, -120.0) for i in range(590)]
+    assert loud_z(silent, 38.0) is None  # digital silence is no audio, not a quiet level
+
+
+def test_viewer_clip_rescues_a_spike_that_fired_under_the_keep_gate():
+    rng = random.Random(11)
+    # six more chatters, half of them laughing: over the fire threshold (3.0), under the keep threshold (5.0)
+    det, out = run(steady(rng, 0, 900) + burst(rng, 700, 6, ["lol", "nice one man that was good"], span=6))
+    assert out == [] and len(det.near) == 1
+    near = det.near[0]
+    assert det.rescue(near.peak_s + 400) == []  # a clip of some other moment
+    saved = det.rescue(near.peak_s + 12)  # a viewer clipped this one
+    assert saved == [near] and saved[0].signals["viewer_clip"] == 1.0 and not det.near  # handed out once
+    assert confirm(saved[0], [near.peak_s + 12]).final_score == near.chat_score + 1.5

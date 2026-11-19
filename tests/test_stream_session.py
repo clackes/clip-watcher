@@ -122,3 +122,59 @@ def test_session_without_twitch_still_detects_and_saves(tmp_path):
     assert len(list((tmp_path / "streamer").glob("offline-*.jsonl"))) == 1
     s.close()
     kick.close()
+
+
+def test_session_viewer_clip_of_a_near_miss_reaches_the_lane(tmp_path):
+    from clipwatcher.detect.viewer_clips import ViewerClip
+    from clipwatcher.models import Candidate
+
+    near = Candidate("streamer", 2000.0, 1960.0, 2019.0, 3.5, 3.5)
+
+    class Det(_Det):
+        def rescue(self, moment_s):
+            return [near] if abs(moment_s - 2000.0) < 30 else []
+
+    class Poller:
+        def __init__(self, s):
+            self.session = s
+
+        async def run(self, on_clip):
+            on_clip(ViewerClip("other", 5000.0))
+            on_clip(ViewerClip("abc", 2020.0))  # created at 2020: covers 1985-2020, the near miss
+
+        def moment_times(self):
+            return [2002.5]
+
+    made, rescued = [], []
+    live = twitch_replay.Session("777", 1_000_000, None, "4242")
+
+    def make(s):
+        made.append(s.user_id)
+        return Poller(s)
+
+    s = StreamSession(
+        "streamer", root=tmp_path, make_detector=Det, lookup=lambda login: live, fetch=None, make_poller=make
+    )
+    s.on_rescue = rescued.append
+
+    async def go():
+        await s.refresh()
+        await asyncio.sleep(0)  # let the poller task run
+
+    asyncio.run(go())
+    assert made == ["4242"] and rescued == [near] and s.moment_times() == [2002.5]
+    s.close()
+
+
+def test_session_has_no_clip_poller_without_helix_credentials(tmp_path, monkeypatch):
+    from clipwatcher.session import helix_clip_poller
+
+    live = twitch_replay.Session("777", 1_000_000, None, "4242")
+    monkeypatch.delenv("TWITCH_CLIENT_ID", raising=False)
+    monkeypatch.delenv("TWITCH_CLIENT_SECRET", raising=False)
+    assert helix_clip_poller(live) is None
+    monkeypatch.setenv("TWITCH_CLIENT_ID", "id")
+    monkeypatch.setenv("TWITCH_CLIENT_SECRET", "secret")
+    poller = helix_clip_poller(live)
+    assert poller.broadcaster_id == "4242" and poller.started_at == 1000.0
+    assert helix_clip_poller(twitch_replay.Session("777", 1_000_000, None)) is None  # broadcaster unknown

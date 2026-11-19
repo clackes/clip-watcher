@@ -252,3 +252,88 @@ def test_clip_in_flight_is_finished_when_chat_crashes(tmp_path):
     else:
         raise AssertionError("the crash must still reach the supervisor")
     assert [o.status for o in lane.outcomes] == ["staged"] and any(e[0] == "stage" for e in log)
+
+
+def test_confirmation_raises_the_final_score_and_reaches_the_card(tmp_path):
+    """D3: loudness where chat spiked and a viewer clip of the moment were computed nowhere."""
+    log: list = []
+    staged = {}
+    t0 = 1_700_000_000_000
+    steps = _steps(log)
+    # the window is 40 s, the moment (peak) 20 s in: quiet talk at -30 dB with a scream to -8 dB at 21-22 s
+    steps.loudness = lambda src, st, dur: [(i / 10, -8.0 if 210 <= i < 220 else -30.0) for i in range(400)]
+    steps.stage = lambda cid, short, clean, meta, **kw: staged.update(meta) or Path("/staged") / cid
+
+    class Clips:
+        def moment_times(self):
+            return [t0 / 1000 - 10 + 12]  # a viewer clipped 12 s from the peak
+
+    lane = fastlane.FastLane(
+        "zack", FakeChat([ChatMessage(t0, "u", "fire")]), FakeDetector({"fire"}), FakeRing(log), steps=steps,
+        cfg={"work_dir": str(tmp_path)}, clips=Clips(),
+    )  # fmt: skip
+    assert [o.status for o in asyncio.run(lane.run())] == ["staged"]
+    assert staged["viewer_clip"] is True and staged["loud_z"] > 5
+    assert (
+        staged["chat_score"] == 5.0 and staged["final_score"] == 5.0 + 1.5 + 5 * 0.3
+    )  # clip + capped loudness
+
+
+def test_chat_of_the_moment_is_taken_when_it_fires(tmp_path):
+    """A clip that waited for a render slot read the chat buffer minutes later, after the moment's lines had
+    been pruned from it, and the judge got no chat."""
+    log: list = []
+    t0 = 1_700_000_000_000
+    msgs = [ChatMessage(t0 + i * 1000, f"u{i}", "KEKW") for i in range(20)]
+    msgs.append(ChatMessage(t0 + 20_000, "late", "fire"))
+    msgs += [ChatMessage(t0 + 21_000 + i * 60_000, "x", "later") for i in range(1, 30)]  # half an hour passes
+    lane = fastlane.FastLane(
+        "zack", FakeChat(msgs), FakeDetector({"fire"}), FakeRing(log), steps=_steps(log),
+        cfg={"work_dir": str(tmp_path), "max_parallel": 1},
+    )  # fmt: skip
+    asyncio.run(lane.run())
+    seen = next(e[1] for e in log if e[0] == "screen")
+    assert sum("KEKW" in line for line in seen) == 20
+
+
+def test_quiet_chat_is_ticked_and_the_last_spike_is_drained(tmp_path):
+    log: list = []
+    t0 = 1_700_000_000_000
+
+    class SlowDetector:
+        """Decides only when its clock moves (tick) or at the end (drain), like LiveDetector."""
+
+        def __init__(self):
+            self.ticks = []
+
+        def feed(self, msg):
+            return None
+
+        def tick(self, now_s):
+            self.ticks.append(now_s)
+            return (
+                Candidate("zack", now_s - 10, now_s - 30, now_s + 10, 5.0, 6.0)
+                if len(self.ticks) == 1
+                else None
+            )
+
+        def drain(self):
+            return [Candidate("zack", 500.0, 480.0, 520.0, 7.0, 7.0)]
+
+    class QuietChat:
+        def __aiter__(self):
+            return self._gen()
+
+        async def _gen(self):
+            yield ChatMessage(t0, "u", "the moment")
+            await asyncio.sleep(1.3)  # nobody types; the lane's ticker runs once meanwhile
+
+    now = iter([1000.0])  # our clock when the message arrived; every later reading is 10 s on
+    det = SlowDetector()
+    lane = fastlane.FastLane(
+        "zack", QuietChat(), det, FakeRing(log), steps=_steps(log), cfg={"work_dir": str(tmp_path)},
+        clock=lambda: next(now, 1010.0),
+    )  # fmt: skip
+    out = asyncio.run(lane.run())
+    assert det.ticks == [t0 / 1000 + 10.0 - 5.0]  # chat time: last message + the silence, less the margin
+    assert len(out) == 2 and {o.status for o in out} == {"staged"}  # the ticked spike and the drained one

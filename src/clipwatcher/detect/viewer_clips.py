@@ -124,6 +124,35 @@ class ViewerClipPoller:
         return [c.moment_s for c in self.seen.values()]
 
 
+_VOD_CLIPS_Q = (
+    "query($login: String!) { user(login: $login) { clips(first: 100, criteria: {period: LAST_WEEK,"
+    " sort: VIEWS_DESC}) { edges { node { videoOffsetSeconds durationSeconds video { id } } } } } }"
+)
+
+
+def vod_clip_moments(
+    login: str, vod_id: str, post: Callable[[dict[str, Any]], dict[str, Any]] | None = None
+) -> list[float]:
+    """Where in a VOD viewers made their clips: the middle of each, in seconds from the VOD start.
+
+    The channel's 100 most viewed clips of the last week, without a login (the page Twitch shows anyone),
+    so an old VOD or a channel with more clips than that returns few or none. [] on any error: confirmation
+    is a bonus, never a requirement.
+    """
+    from clipwatcher.chat import twitch_replay
+
+    try:
+        d = (post or twitch_replay._post)({"query": _VOD_CLIPS_Q, "variables": {"login": login.lower()}})
+        edges = (((d.get("data") or {}).get("user") or {}).get("clips") or {}).get("edges") or []
+        return [
+            float(n["videoOffsetSeconds"]) + float(n.get("durationSeconds") or 0) / 2
+            for n in (e["node"] for e in edges)
+            if (n.get("video") or {}).get("id") == str(vod_id) and n.get("videoOffsetSeconds") is not None
+        ]
+    except Exception:  # noqa: BLE001 - offline, schema change, anything
+        return []
+
+
 def confirm(
     candidate: Candidate,
     clips: Sequence[ViewerClip],
