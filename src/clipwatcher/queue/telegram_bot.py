@@ -110,8 +110,8 @@ def handle_edit_reply(
     return db.edit(clip_id, op, {"title": text.strip()[:60]})
 
 
-def build_application(db: ClipDB, token: str | None = None) -> Any:
-    """Create the python-telegram-bot Application (lazy import)."""
+def build_application(db: ClipDB, token: str | None = None, root: Path | None = None) -> Any:
+    """Create the python-telegram-bot Application (lazy import). root: staging folder (staging_root())."""
     from telegram import ForceReply, InlineKeyboardButton, InlineKeyboardMarkup
     from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
@@ -125,7 +125,7 @@ def build_application(db: ClipDB, token: str | None = None) -> Any:
 
     async def on_button(update: Any, context: Any) -> None:
         q = update.callback_query
-        text, row = handle_action(db, q.from_user.id, q.data)
+        text, row = handle_action(db, q.from_user.id, q.data, root=root)
         if not text:
             return
         await q.answer(text)
@@ -143,7 +143,7 @@ def build_application(db: ClipDB, token: str | None = None) -> Any:
             if "not modified" not in str(e):  # pressing a button that changes nothing is fine
                 raise
         if q.data.startswith("approve:") and text == "Approved." and _youtube_on_approve():
-            context.application.create_task(_publish(q.message, db, row["id"]))
+            context.application.create_task(_publish(q.message, db, row["id"], root))
         if q.data.startswith("edit:") and text.startswith("Reply"):
             await q.message.reply_text(f"Edit {row['id']}: send the new title.", reply_markup=ForceReply())
             context.user_data["editing"] = row["id"]
@@ -172,7 +172,7 @@ def _youtube_mode() -> str:
     return str(config.global_config().get("publish", {}).get("youtube_mode", "browser")).lower()
 
 
-async def _publish(message: Any, db: ClipDB, clip_id: str) -> None:
+async def _publish(message: Any, db: ClipDB, clip_id: str, root: Path | None = None) -> None:
     """Upload right after Approve and reply under the card with the link (or the error)."""
     import asyncio
 
@@ -182,7 +182,7 @@ async def _publish(message: Any, db: ClipDB, clip_id: str) -> None:
         from clipwatcher.publish import youtube_browser as pub
 
     try:
-        res = await asyncio.to_thread(pub.publish_clip, db, clip_id)
+        res = await asyncio.to_thread(pub.publish_clip, db, clip_id, root)
     except Exception as e:  # noqa: BLE001 - report every failure to the operators
         log.exception("youtube upload failed for %s", clip_id)
         await message.reply_text(f"YouTube upload failed for {clip_id}: {e}")
@@ -269,9 +269,9 @@ async def alert(app: Any, text: str) -> None:
 
 def main() -> None:
     """Run the approval bot (button presses, title edits). The live lane posts cards with its own client."""
-    root = Path(os.environ.get("CLIPWATCHER_STAGING", config.ROOT / "staging"))
+    root = staging.staging_root()
     root.mkdir(parents=True, exist_ok=True)
-    build_application(ClipDB(root / "clips.db")).run_polling()
+    build_application(ClipDB(root / "clips.db"), root=root).run_polling()
 
 
 if __name__ == "__main__":

@@ -153,7 +153,7 @@ def publish_clip(db: ClipDB, clip_id: str, root: Path | None = None) -> str:
     if state != APPROVED:
         raise NotApproved(f"{clip_id} is {state}, not APPROVED")
 
-    root = Path(root) if root else staging.DEFAULT_ROOT
+    root = Path(root) if root else staging.staging_root()
     folder = root / "approved" / clip_id
     meta = json.loads((folder / "meta.json").read_text())
     row = db.get(clip_id) or {}

@@ -99,6 +99,7 @@ OPS = {"manu": {"telegram_id": 11, "label": "Manu"}, "samu": {"telegram_id": 22,
 
 
 def test_bot_logic(db, tmp_path, monkeypatch):
+    monkeypatch.delenv("CLIPWATCHER_STAGING", raising=False)
     monkeypatch.setattr(staging, "DEFAULT_ROOT", tmp_path / "staging")
     assert telegram_bot.handle_action(db, 999, "claim:c1:manu", operators=OPS) == ("", None)
     assert len(telegram_bot.buttons_for(db.get("c1"), OPS)[0]) == 2
@@ -108,6 +109,38 @@ def test_bot_logic(db, tmp_path, monkeypatch):
     assert telegram_bot.handle_action(db, 22, "approve:c1", operators=OPS)[0].startswith("Only")
     assert [b[0] for b in telegram_bot.buttons_for(db.get("c1"), OPS)[0]] == ["Approve", "Edit"]
     assert telegram_bot.handle_action(db, 11, "approve:c1", operators=OPS)[0] == "Approved."
+
+
+def _videos(tmp_path):
+    s, c = tmp_path / "s.mp4", tmp_path / "c.mp4"
+    s.write_bytes(b"short")
+    c.write_bytes(b"clean")
+    return s, c
+
+
+def test_approve_and_publish_follow_clipwatcher_staging(db, tmp_path, monkeypatch):
+    """Docker sets CLIPWATCHER_STAGING: Approve builds the approved package there, the publishers read it."""
+    from clipwatcher.publish import youtube, youtube_browser
+
+    monkeypatch.setattr(staging, "DEFAULT_ROOT", tmp_path / "repo" / "staging")
+    root = tmp_path / "data" / "staging"
+    monkeypatch.setenv("CLIPWATCHER_STAGING", str(root))
+    monkeypatch.setenv("DRY_RUN", "1")
+    monkeypatch.delenv("YOUTUBE_CREDENTIALS", raising=False)
+    monkeypatch.delenv("YT_BROWSER_FORCE", raising=False)
+    assert staging.staging_root() == root
+    s, c = _videos(tmp_path)
+    assert staging.stage_package("c1", s, c, {"streamer": "x"}, db=db) == root / "c1"
+    telegram_bot.handle_action(db, 11, "claim:c1:manu", operators=OPS)
+    assert telegram_bot.handle_action(db, 11, "approve:c1", operators=OPS)[0] == "Approved."
+    assert (root / "approved" / "c1" / "short_9x16.mp4").read_bytes() == b"short"
+    for pub in (youtube, youtube_browser):
+        assert pub.publish_clip(db, "c1").startswith("dryrun-")
+    staging.update_published("c1", "youtube", "https://y/1")
+    assert (root / "published_clips.json").exists()
+    assert not (tmp_path / "repo").exists()
+    monkeypatch.setenv("CLIPWATCHER_STAGING", "")  # an empty value in .env means "not set"
+    assert staging.staging_root() == tmp_path / "repo" / "staging"
 
 
 @pytest.mark.ffmpeg

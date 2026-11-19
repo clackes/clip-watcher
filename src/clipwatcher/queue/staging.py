@@ -14,6 +14,13 @@ from .db import ClipDB
 DEFAULT_ROOT = config.ROOT / "staging"
 
 
+def staging_root() -> Path:
+    """The one staging folder the lanes, the approval bot and the publishers share:
+    CLIPWATCHER_STAGING when set (Docker, VPS), else <repo>/staging."""
+    env = os.environ.get("CLIPWATCHER_STAGING")
+    return Path(env).expanduser() if env else DEFAULT_ROOT
+
+
 def atomic_write_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
@@ -29,7 +36,7 @@ def stage_package(
     root: Path | None = None,
     db: ClipDB | None = None,
 ) -> Path:
-    root = Path(root) if root else DEFAULT_ROOT
+    root = Path(root) if root else staging_root()
     d = root / clip_id
     d.mkdir(parents=True, exist_ok=True)
     shutil.copy2(short, d / "short_9x16.mp4")
@@ -51,7 +58,7 @@ def _link_or_copy(src: Path, dst: Path) -> None:
 
 
 def mark_approved(clip_id: str, approved_by: str, root: Path | None = None) -> Path:
-    root = Path(root) if root else DEFAULT_ROOT
+    root = Path(root) if root else staging_root()
     src = root / clip_id
     dst = root / "approved" / clip_id
     dst.mkdir(parents=True, exist_ok=True)
@@ -66,7 +73,7 @@ def mark_approved(clip_id: str, approved_by: str, root: Path | None = None) -> P
 
 
 def update_published(clip_id: str, platform: str, url: str, root: Path | None = None) -> dict[str, Any]:
-    root = Path(root) if root else DEFAULT_ROOT
+    root = Path(root) if root else staging_root()
     p = root / "published_clips.json"
     data: dict[str, Any] = json.loads(p.read_text()) if p.exists() else {}
     data.setdefault(clip_id, {})[platform] = url
