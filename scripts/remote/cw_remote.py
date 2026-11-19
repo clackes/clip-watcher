@@ -25,8 +25,10 @@ import base64
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
+import requests
 import winrm
 
 HOST = os.environ.get("CW_WINRM_HOST", "207.148.28.168")
@@ -75,8 +77,17 @@ def session() -> winrm.Session:
 
 
 def ps(script: str, *, check: bool = True) -> str:
+    global _session
     pre = f"$ProgressPreference='SilentlyContinue'; Set-Location {SRV} -ErrorAction SilentlyContinue; "
-    r = session().run_ps(pre + script)
+    for attempt in range(6):  # a long put is hundreds of calls; one network hiccup must not end it
+        try:
+            r = session().run_ps(pre + script)
+            break
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            if attempt == 5:
+                raise
+            _session = None
+            time.sleep(5 * (attempt + 1))
     out = r.std_out.decode("utf-8", "replace")
     if r.status_code and check:
         err = r.std_err.decode("utf-8", "replace")
@@ -94,6 +105,8 @@ def put(local: Path, remote: str) -> None:
         f"[IO.File]::WriteAllBytes('{remote}', [Convert]::FromBase64String((Get-Content '{tmp}' -Raw)));"
         f"Remove-Item '{tmp}'; (Get-Item '{remote}').Length"
     ).strip()
+    if n != str(local.stat().st_size):  # a retried chunk may have landed twice
+        sys.exit(f"put {local}: server has {n} bytes, expected {local.stat().st_size}; run it again")
     print(f"{local} -> {remote} ({n} bytes)")
 
 
