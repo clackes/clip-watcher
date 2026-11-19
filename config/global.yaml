@@ -20,6 +20,7 @@ detector:                   # D3
   weights: {U: 0.5, E: 0.35, S: 0.15}
   window_s: 10
   baseline_min: 15
+  warmup_s: 600             # owner, 19 Nov: learn each chat 10 min before the first clip (restarts prime it from the chat log)
   fire_z: 3.0
   pre_z: 2.0
   min_unique: 8
@@ -80,7 +81,7 @@ render:
   default_cam: "480:213:1400:743"
   default_game: "1920:960:0:60"
   layout: split             # split = webcam 1080x960 over gameplay 1080x960, no on-screen hook | stack (old)
-  logo: true                # small ClipVault logo at the top of the split layout
+  logo: true                # small CapybarasKing logo at the top of the split layout
   credit_on_screen: false   # owner, 18 Nov: no twitch.tv/<name> tag on the video (credit stays in the description)
   sfx: true                 # meme sound effect on every judge beat (assets/sfx/<kind>/, split layout)
   sfx_gain_db: -4           # sound effect level against the -14 LUFS clip
@@ -118,7 +119,7 @@ judge:
     claude-sonnet-5-5: {input: 2.00, output: 10.00, cache_read: 0.10, cache_write: 2.50}
 
 publish:
-  auto_approve: true        # owner, 18 Nov: the bot approves + uploads clips with judge score >= auto_approve_min
+  auto_approve: false        # owner, 19 Nov: publish only after an operator approves in Telegram
   auto_approve_min: 7       # the 7/10 clips of 18 Nov were the ones the owner liked
   claim_ttl_min: 15
   youtube_on_approve: true  # Approve in Telegram uploads at once (browser mode + DRY_RUN=1: private, needs YT_BROWSER_FORCE=1)

@@ -24,6 +24,8 @@ from .models import Candidate, ChatMessage, JudgeResult, Word
 log = logging.getLogger(__name__)
 
 PIN_TTL_S = 48 * 3600
+REDO_KEEP_S = 6 * 3600  # a staged clip keeps its segments this long so Telegram's Redo can re-cut it
+REDO_PAD_S = (12.0, 8.0)  # a redo widens the window: more before ("start earlier") and after
 
 
 def fastlane_config() -> dict[str, Any]:
@@ -241,6 +243,7 @@ class FastLane:
     # -- main loop ----------------------------------------------------------
     async def run(self) -> list[Outcome]:
         self._sem = asyncio.Semaphore(int(self.cfg["max_parallel"]))
+        redo = asyncio.create_task(self._redo_loop()) if self.db is not None else None
         async for msg in self.chat:
             self._remember(msg)
             cand = self.detector.feed(msg)
@@ -255,9 +258,59 @@ class FastLane:
                 t = asyncio.create_task(self._guarded(cand))
                 self._tasks.add(t)
                 t.add_done_callback(self._tasks.discard)
+        if redo is not None:
+            redo.cancel()
         if self._tasks:
             await asyncio.gather(*list(self._tasks))
         return self.outcomes
+
+    async def _redo_loop(self, every_s: float = 15.0) -> None:
+        """Telegram's Redo button queues a job per streamer; this lane re-cuts the clip with a wider window
+        and hands the operator's note to the judge. The new version arrives as a new card."""
+        while True:
+            await asyncio.sleep(every_s)
+            try:
+                job = self.db.claim_job(f"redo:{self.streamer}", lease_s=3600)
+            except Exception:  # noqa: BLE001 - a locked db must not end the loop
+                log.warning("%s: redo poll failed", self.streamer, exc_info=True)
+                continue
+            if job is not None:
+                await self.redo(job)
+
+    async def redo(self, job: dict[str, Any]) -> Outcome | None:
+        import json
+
+        p = job["payload"]
+        row = self.db.get(p.get("clip_id", ""))
+        meta = json.loads(row.get("meta_json") or "{}") if row else {}
+        if not row or "start_s" not in meta:
+            self.db.finish_job(job["id"], "clip not found")
+            return None
+        start, end = float(meta["start_s"]), float(meta["end_s"])
+        segs = getattr(self.ring, "segments", lambda: [])()
+        lo = start - REDO_PAD_S[0]
+        if segs and lo * 1000 < segs[0]["start_ms"]:  # widen only as far as the recording goes back
+            lo = min(start, segs[0]["start_ms"] / 1000)
+        cand = Candidate(
+            stream=self.streamer, peak_s=float(meta.get("peak_s", (start + end) / 2)),
+            start_s=lo, end_s=end + REDO_PAD_S[1],
+            chat_score=float(meta.get("chat_score") or 0), final_score=float(meta.get("final_score") or 0),
+            signals={"orig_ms": start * 1000}, note=str(p.get("note") or ""), tag=f"-r{job['id']}",
+        )  # fmt: skip
+        log.info("%s: redo %s as %s, note=%r", self.streamer, row["id"], self._clip_id(cand), cand.note)
+        self._started.add(self._clip_id(cand))
+        await self._guarded(cand)
+        out = self.outcomes[-1] if self.outcomes else None
+        ok = out is not None and out.clip_id == self._clip_id(cand) and out.status == "staged"
+        self.db.finish_job(job["id"], None if ok else (out.error if out else "failed"))
+        if not ok and self.bot is not None:
+            why = out.error if out and out.error else "it failed"
+            if "before recording start" in str(why):
+                why = "the recording of that moment is gone (too old, or the bot restarted)"
+            from .queue.telegram_bot import alert
+
+            await alert(self.bot, f"🔁 Couldn't redo {row['id']}: {why}")
+        return out
 
     def _remember(self, msg: ChatMessage) -> None:
         self.recent.append(msg)
@@ -280,6 +333,10 @@ class FastLane:
 
     # -- helpers ------------------------------------------------------------
     def _clip_id(self, cand: Candidate) -> str:
+        if cand.tag:  # a redo keeps its original id plus -r<n>
+            return (
+                f"{self.streamer}-live-{cand.signals.get('orig_ms', int(cand.start_s * 1000)):.0f}{cand.tag}"
+            )
         return f"{self.streamer}-live-{int(cand.start_s * 1000)}"
 
     def _pin(self, cand: Candidate) -> None:
@@ -443,6 +500,8 @@ class FastLane:
             "hype_score": screen.get("hype_score"), "layout": lay.source,
             "captions": caption_style(cid), "timing": _timing(cand, jr),
         }  # fmt: skip
+        if cand.tag:
+            meta.update(redo_note=cand.note or "as it was", redo_of=cid[: -len(cand.tag)])
         meta.update(title=jr.title_options[0], description=jr.description)  # heuristic copy too
         if jr.source == "claude":
             meta.update(why=jr.why, flags=jr.flags, judge_score=jr.score)
@@ -461,6 +520,7 @@ class FastLane:
             # in the background: an upload takes minutes and must not hold this lane's render slot
             asyncio.get_running_loop().create_task(self._auto_publish(cid))
         self._unpin(cand)
+        self._keep_for_redo(cand)
         self._cleanup(cand)  # staging holds copies; the cut .ts and renders would fill the disk 24/7
         timings["total"] = round(time.perf_counter() - t_all, 2)
         log.info("fastlane %s staged %s timings=%s", self.streamer, cid, timings)
@@ -492,6 +552,13 @@ class FastLane:
         if self.cfg.get("keep_work"):
             return
         shutil.rmtree(Path(self.cfg["work_dir"]) / self._clip_id(cand), ignore_errors=True)
+
+    def _keep_for_redo(self, cand: Candidate) -> None:
+        pin = getattr(self.ring, "pin", None)
+        if pin:
+            pad = float(self.cfg["pin_pad_s"])
+            lo, hi = cand.start_s - pad - REDO_PAD_S[0], cand.end_s + pad + REDO_PAD_S[1]
+            pin(int(lo * 1000), int(hi * 1000), REDO_KEEP_S)
 
     def _unpin(self, cand: Candidate) -> None:
         unpin = getattr(self.ring, "unpin", None)

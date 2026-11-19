@@ -189,6 +189,7 @@ def build_payload(
     chat: Iterable[Any],
     task: str = "judge",
     loud: list[tuple[float, float]] | None = None,
+    note: str = "",
 ) -> dict[str, Any]:
     meta = {
         "s": streamer.lower(),
@@ -199,6 +200,8 @@ def build_payload(
     }
     if peak_s is not None:
         meta["pk"] = round(float(peak_s), 1)
+    if note:  # operator's note on a redo ("start earlier", "cut the ending")
+        meta["note"] = note[:300]
     out = {
         "meta": meta,
         "tr": serialize_transcript_compact(transcript),

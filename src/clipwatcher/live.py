@@ -28,6 +28,31 @@ def data_root() -> Path:
     return Path(os.environ.get("CLIPWATCHER_DATA", config.ROOT / "work"))
 
 
+def _recent_chat(login: str, exclude: str, max_age_s: float = 600) -> list:
+    """Chat logged in the last baseline_min before this run (a restart), oldest first. Nothing when the
+    newest line is older than max_age_s: the stream was off and its old chat says nothing about now."""
+    import json
+
+    from clipwatcher.models import ChatMessage
+
+    base_s = float(config.global_config().get("detector", {}).get("baseline_min", 15)) * 60
+    now_ms = int(time.time() * 1000)
+    files = sorted((data_root() / "chat" / login.lower()).glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
+    out: list = []
+    for f in [f for f in files if f.stem != exclude][-2:]:
+        try:
+            for ln in f.read_text(encoding="utf-8").splitlines():
+                d = json.loads(ln)
+                if d["ts_ms"] >= now_ms - base_s * 1000:
+                    out.append(ChatMessage(**d))
+        except (OSError, ValueError, TypeError, KeyError):
+            continue
+    out.sort(key=lambda m: m.ts_ms)
+    if not out or out[-1].ts_ms < now_ms - max_age_s * 1000:
+        return []
+    return out
+
+
 async def run_streamer(login: str, *, db, bot=None, staging_root: Path | None = None) -> None:
     from clipwatcher.chat.live_log import LiveLog, logged
     from clipwatcher.chat.twitch_irc import TwitchChat
@@ -71,7 +96,11 @@ async def run_streamer(login: str, *, db, bot=None, staging_root: Path | None = 
     log.info("%s: recording to %s", login, rec.dir)
     try:
         chat = logged(chat_src, LiveLog(login, stream_id, data_root() / "chat"))
-        lane = FastLane(login, chat, LiveDetector(login), rec.ring, steps=steps, db=db, bot=bot,
+        det = LiveDetector(login)
+        n = det.prime(_recent_chat(login, exclude=stream_id))
+        if n:
+            log.info("%s: chat baseline primed with %d logged messages", login, n)
+        lane = FastLane(login, chat, det, rec.ring, steps=steps, db=db, bot=bot,
                         staging_root=staging_root)  # fmt: skip
         await lane.run()
     finally:

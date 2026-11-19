@@ -25,36 +25,61 @@ def operator_for(telegram_id: int, operators: dict[str, Any] | None = None) -> s
     return None
 
 
+STATE_LINE = {
+    "READY": "🟡 Waiting for someone to check it",
+    "CLAIMED": "👀 {who} is checking it",
+    "APPROVED": "✅ Approved, uploading to YouTube",
+    "SCHEDULED": "🕒 Scheduled",
+    "PUBLISHED": "📺 Live on YouTube",
+    "REJECTED": "🗑 Discarded",
+}
+FLAG_TEXT = {"sp": "story spoiler", "mu": "music (may get a copyright claim)", "gb": "gambling"}
+APPROVED = "✅ Approved! Uploading to YouTube…"
+REDO_ASK = "🔁 Redo: what should change?"
+
+
 def card_text(row: dict[str, Any]) -> str:
+    """Short card: who, how good, what it is, why. Plain words an operator gets at a glance."""
     import json
 
     meta = json.loads(row.get("meta_json") or "{}")
-    lines = [f"Clip {row['id']} - {row['streamer']}", f"State: {row['state']}"]
-    if row.get("claimed_by"):
-        lines.append(f"Held by: {row['claimed_by']}")
-    for k in ("title", "hook", "why"):
-        if meta.get(k):
-            lines.append(f"{k}: {meta[k]}")
-    if meta.get("judge_score"):
-        lines.append(f"score: {meta['judge_score']}/10")
-    flagged = [k for k, v in (meta.get("flags") or {}).items() if v]
+    score = meta.get("judge_score") or meta.get("score")
+    head = f"🎬 {row['streamer']}"
+    if isinstance(score, (int, float)) and score <= 10:
+        head += f"  ·  ⭐ {round(score)}/10"
+    lines = [head]
+    if meta.get("title"):
+        lines.append(f"📌 {meta['title']}")
+    if meta.get("why"):
+        lines.append(f"💬 {meta['why']}")
+    flagged = [FLAG_TEXT.get(k, k) for k, v in (meta.get("flags") or {}).items() if v]
     if flagged:
-        lines.append("⚠️ flags: " + ", ".join(flagged))
+        lines.append("⚠️ Careful: " + ", ".join(flagged))
+    if meta.get("redo_note"):
+        lines.append(f"🔁 Redone: {meta['redo_note']}")
+    state = STATE_LINE.get(row["state"], row["state"]).format(who=row.get("claimed_by") or "someone")
+    lines.append(state)
     if meta.get("description"):
-        lines.append("\n" + str(meta["description"]))
+        lines.append("\n📝 Description:\n" + str(meta["description"]))
+    lines.append(f"\n🆔 {row['id']}")
     return "\n".join(lines)
 
 
 def buttons_for(row: dict[str, Any], operators: dict[str, Any] | None = None) -> list[list[tuple[str, str]]]:
-    """Rows of (label, callback_data). READY -> one Claim button per operator; CLAIMED -> holder actions."""
+    """Rows of (label, callback_data). READY: one "I'll check it" button per operator, and Redo.
+    CLAIMED: the holder's actions."""
     cid = row["id"]
     if row["state"] == "READY":
         ops = config.operators() if operators is None else operators
-        return [[(f"Claim: {o.get('label', n)}", f"claim:{cid}:{n}") for n, o in ops.items()]]
+        return [
+            [(f"🙋 {o.get('label', n)}", f"claim:{cid}:{n}") for n, o in ops.items()],
+            [("🔁 Redo", f"redo:{cid}")],
+        ]
     if row["state"] == "CLAIMED":
         return [
-            [("Approve", f"approve:{cid}"), ("Edit", f"edit:{cid}")],
-            [("Reject", f"reject:{cid}"), ("Release", f"release:{cid}")],
+            [("✅ Publish", f"approve:{cid}"), ("✏️ Change title", f"edit:{cid}")],
+            [("🔁 Redo", f"redo:{cid}"), ("🗑 Discard", f"reject:{cid}")],
+            [("↩️ Not mine", f"release:{cid}")],
         ]
     return []
 
@@ -76,9 +101,9 @@ def handle_action(
     if action == "claim":
         who = parts[2] if len(parts) > 2 else op
         if who != op:
-            return "That claim button is not yours.", db.get(clip_id)
+            return "✋ That button is for someone else.", db.get(clip_id)
         ok, holder = db.claim(clip_id, op)
-        return ("Claimed." if ok else f"Already held by {holder}."), db.get(clip_id)
+        return ("👍 It's yours, check it out." if ok else f"✋ {holder} is already on it."), db.get(clip_id)
     if action == "approve":
         ok = db.approve(clip_id, op)
         if ok:
@@ -86,19 +111,40 @@ def handle_action(
                 staging.mark_approved(clip_id, op, root)
             except FileNotFoundError:
                 log.warning("staging folder missing for %s", clip_id)
-        return ("Approved." if ok else "Only the holder can approve."), db.get(clip_id)
+        return (APPROVED if ok else "✋ Only the person checking it can publish."), db.get(clip_id)
     if action == "reject":
         ok = db.reject(clip_id, op)
-        return ("Rejected." if ok else "Only the holder can reject."), db.get(clip_id)
+        return ("🗑 Discarded." if ok else "✋ Only the person checking it can discard."), db.get(clip_id)
     if action == "release":
         ok = db.release(clip_id, op)
-        return ("Released." if ok else "Only the holder can release."), db.get(clip_id)
+        return ("↩️ Back in the queue." if ok else "✋ It isn't yours."), db.get(clip_id)
     if action == "edit":
         row = db.get(clip_id)
         if not row or row["claimed_by"] != op:
-            return "Only the holder can edit.", row
-        return "Reply with the new title.", row
-    return "Unknown action.", db.get(clip_id)
+            return "✋ Only the person checking it can change the title.", row
+        return "✏️ Send the new title.", row
+    if action == "redo":
+        row = db.get(clip_id)
+        if not row or row["state"] not in ("READY", "CLAIMED"):
+            return "✋ This clip can't be redone any more.", row
+        return REDO_ASK, row
+    if action == "redogo":  # Redo without a note
+        return request_redo(db, telegram_id, clip_id, "", operators), db.get(clip_id)
+    return "🤷 Unknown button.", db.get(clip_id)
+
+
+def request_redo(
+    db: ClipDB, telegram_id: int, clip_id: str, note: str, operators: dict[str, Any] | None = None
+) -> str:
+    """Queue a redo for the streamer's live lane (it re-cuts, re-judges and re-renders with the note)."""
+    op = operator_for(telegram_id, operators)
+    row = db.get(clip_id)
+    if op is None or not row:
+        return ""
+    note = note.strip()[:300]
+    db.enqueue_job(f"redo:{row['streamer']}", {"clip_id": clip_id, "operator": op, "note": note})
+    db.log(op, "redo", clip_id, note)
+    return "🔁 Got it, redoing it. The new version arrives here in a few minutes."
 
 
 def handle_edit_reply(
@@ -131,6 +177,10 @@ def build_application(db: ClipDB, token: str | None = None) -> Any:
         await q.answer(text)
         if row is None:
             return
+        if q.data.startswith("redogo:"):  # pressed under the redo question, not on the card
+            context.user_data.pop("redo", None)
+            await q.edit_message_text(text)
+            return
         from telegram.error import BadRequest
 
         try:
@@ -142,16 +192,32 @@ def build_application(db: ClipDB, token: str | None = None) -> Any:
         except BadRequest as e:
             if "not modified" not in str(e):  # pressing a button that changes nothing is fine
                 raise
-        if q.data.startswith("approve:") and text == "Approved." and _youtube_on_approve():
+        if q.data.startswith("approve:") and text == APPROVED and _youtube_on_approve():
             context.application.create_task(_publish(q.message, db, row["id"]))
-        if q.data.startswith("edit:") and text.startswith("Reply"):
-            await q.message.reply_text(f"Edit {row['id']}: send the new title.", reply_markup=ForceReply())
+        if q.data.startswith("edit:") and text.startswith("✏️"):
+            await q.message.reply_text(f"✏️ New title for {row['id']}:", reply_markup=ForceReply())
             context.user_data["editing"] = row["id"]
+        if q.data.startswith("redo:") and text == REDO_ASK:
+            skip = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔁 Just redo it", callback_data=f"redogo:{row['id']}")]]
+            )
+            await q.message.reply_text(
+                '🔁 Write what to change (e.g. "start earlier", "end on the laugh", "focus on the crash"), '
+                "or tap the button to redo it as it is.",
+                reply_markup=skip,
+            )
+            context.user_data["redo"] = row["id"]
 
     async def on_text(update: Any, context: Any) -> None:
         cid = context.user_data.pop("editing", None)
         if cid and handle_edit_reply(db, update.effective_user.id, cid, update.message.text):
-            await update.message.reply_text("Title updated.")
+            await update.message.reply_text("✏️ Title changed.")
+            return
+        rid = context.user_data.pop("redo", None)
+        if rid:
+            msg = request_redo(db, update.effective_user.id, rid, update.message.text)
+            if msg:
+                await update.message.reply_text(msg)
 
     async def on_id(update: Any, context: Any) -> None:
         u = update.effective_user
@@ -185,7 +251,7 @@ async def _publish(message: Any, db: ClipDB, clip_id: str) -> None:
         res = await asyncio.to_thread(pub.publish_clip, db, clip_id)
     except Exception as e:  # noqa: BLE001 - report every failure to the operators
         log.exception("youtube upload failed for %s", clip_id)
-        await message.reply_text(f"YouTube upload failed for {clip_id}: {e}")
+        await message.reply_text(f"❌ YouTube upload failed ({clip_id}): {e}")
         return
     if res.startswith("dryrun-"):
         why = (
@@ -193,10 +259,10 @@ async def _publish(message: Any, db: ClipDB, clip_id: str) -> None:
             if _youtube_mode() != "api"
             else "DRY_RUN=1 or no YouTube API credentials"
         )
-        await message.reply_text(f"DRY RUN: {clip_id} not uploaded ({why}).")
+        await message.reply_text(f"🧪 Test mode: {clip_id} not uploaded ({why}).")
     else:
-        privacy = "private (DRY_RUN=1)" if config.dry_run() else "public"
-        await message.reply_text(f"YouTube {privacy}: {res}")
+        what = "🔒 Uploaded as private (test mode)" if config.dry_run() else "📺 It's live on YouTube"
+        await message.reply_text(f"{what}: {res}")
 
 
 async def post_card(app: Any, db: ClipDB, clip_id: str, video: Path | None = None) -> None:

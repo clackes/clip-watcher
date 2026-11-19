@@ -36,6 +36,8 @@ class Candidate:
     x_normal: float = 0.0  # baseline "x normal" ratio (Chat Clip Finder)
     unique_chatters: int = 0
     signals: dict[str, float] = field(default_factory=dict)
+    note: str = ""  # operator's request when a clip is redone from Telegram, passed to the judge
+    tag: str = ""  # clip id suffix of a redo ("-r1")
 
     @property
     def duration(self) -> float:

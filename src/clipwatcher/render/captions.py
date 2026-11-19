@@ -38,7 +38,7 @@ POP_ACTIVE = "\\fscx100\\fscy100\\t(0,70,\\fscx135\\fscy135)\\t(70,150,\\fscx125
 # #FFE600 yellow, #00F0FF cyan, #7CFF3A lime, #FF8A1E orange (BGR)
 BOUNCE_COLOURS = ("&H00E6FF&", "&HFFF000&", "&H3AFF7C&", "&H1E8AFF&")
 BOUNCE_POP = "\\fscx70\\fscy70\\t(0,90,\\fscx118\\fscy118)\\t(90,180,\\fscx100\\fscy100)"
-WORD_SIZE = 175  # ~87 px caps
+WORD_SIZE = 130  # ~65 px caps, as the reference split Shorts (owner, 19 Nov)
 WORD_POP = "\\fscx80\\fscy80\\t(0,60,\\fscx110\\fscy110)\\t(60,130,\\fscx100\\fscy100)"
 LABEL_POP = "\\fscx60\\fscy60\\t(0,80,\\fscx120\\fscy120)\\t(80,180,\\fscx105\\fscy105)"
 LABEL_S = 0.9

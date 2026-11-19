@@ -228,6 +228,7 @@ def judge_clip(
         payload = compact.build_payload(
             streamer=login, platform=plat, game=game, language=language, dur=cand.duration,
             peak_s=cand.peak_s - cand.start_s, transcript=words, chat=chat_lines, task=task, loud=loud,
+            note=getattr(cand, "note", ""),
         )  # fmt: skip
         jcfg = _jcfg()
         mdl = model or (jcfg.get("screen_model") if task == "screen" else jcfg.get("judge_model", ""))

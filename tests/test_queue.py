@@ -110,13 +110,26 @@ OPS = {"manu": {"telegram_id": 11, "label": "Manu"}, "samu": {"telegram_id": 22,
 def test_bot_logic(db, tmp_path, monkeypatch):
     monkeypatch.setattr(staging, "DEFAULT_ROOT", tmp_path / "staging")
     assert telegram_bot.handle_action(db, 999, "claim:c1:manu", operators=OPS) == ("", None)
-    assert len(telegram_bot.buttons_for(db.get("c1"), OPS)[0]) == 2
+    rows = telegram_bot.buttons_for(db.get("c1"), OPS)
+    assert len(rows[0]) == 2 and rows[1] == [("🔁 Redo", "redo:c1")]
     text, _ = telegram_bot.handle_action(db, 11, "claim:c1:manu", operators=OPS)
-    assert text == "Claimed."
+    assert text.startswith("👍")
     assert "manu" in telegram_bot.handle_action(db, 22, "claim:c1:samu", operators=OPS)[0]
-    assert telegram_bot.handle_action(db, 22, "approve:c1", operators=OPS)[0].startswith("Only")
-    assert [b[0] for b in telegram_bot.buttons_for(db.get("c1"), OPS)[0]] == ["Approve", "Edit"]
-    assert telegram_bot.handle_action(db, 11, "approve:c1", operators=OPS)[0] == "Approved."
+    assert telegram_bot.handle_action(db, 22, "approve:c1", operators=OPS)[0].startswith("✋")
+    labels = [b[0] for r in telegram_bot.buttons_for(db.get("c1"), OPS) for b in r]
+    assert labels[:2] == ["✅ Publish", "✏️ Change title"] and "🔁 Redo" in labels
+    assert "manu is checking it" in telegram_bot.card_text(db.get("c1"))
+    assert telegram_bot.handle_action(db, 11, "approve:c1", operators=OPS)[0] == telegram_bot.APPROVED
+
+
+def test_bot_redo_queues_a_job_for_the_streamer_lane(db):
+    assert telegram_bot.handle_action(db, 11, "redo:c1", operators=OPS)[0] == telegram_bot.REDO_ASK
+    msg = telegram_bot.request_redo(db, 11, "c1", "  start earlier ", operators=OPS)
+    assert msg.startswith("🔁")
+    streamer = db.get("c1")["streamer"]
+    job = db.claim_job(f"redo:{streamer}")
+    assert job["payload"] == {"clip_id": "c1", "operator": "manu", "note": "start earlier"}
+    assert telegram_bot.request_redo(db, 999, "c1", "x", operators=OPS) == ""
 
 
 @pytest.mark.ffmpeg

@@ -136,6 +136,7 @@ def test_live_detector_matches_batch():
     msgs = synth.make_chat()
     batch = detect(msgs, streamer="examplestreamer", top=8, before_s=20, after_s=10, gap_s=60)
     det = LiveDetector("examplestreamer")
+    det.warmup_s = 60  # the synthetic chat spikes within the first 10 min (live warm-up)
     live = []
     for m in msgs:
         c = det.feed(ChatMessage(**{**m.to_dict(), "ts_ms": m.ts_ms + base * 1000}))
@@ -148,6 +149,21 @@ def test_live_detector_matches_batch():
         assert any(abs(p - b.peak_s) <= 6 for p in peaks), (b.peak_s, peaks)
     assert all(c.end_s > c.start_s and c.unique_chatters >= 8 for c in live)
     assert not any(synth.RAID_AT - 20 <= p <= synth.RAID_AT + 90 for p in peaks)
+
+
+def test_live_detector_warms_up_and_primes_from_logged_chat():
+    base = 1_700_000_000_000
+    calm = [ChatMessage(base + t * 1000, f"u{t % 40}", f"talking {t}") for t in range(400)]
+    spike = [ChatMessage(base + 400_000 + i * 100, f"fan{i}", "KEKW LMAO") for i in range(80)]
+    cold = LiveDetector("nobody")
+    cold.warmup_s = 600
+    fired = [c for m in calm + spike if (c := cold.feed(m))] + cold.drain()
+    assert fired == []  # 400 s in: still learning this chat
+    warm = LiveDetector("nobody")
+    warm.warmup_s = 600
+    assert warm.prime([ChatMessage(m.ts_ms - 600_000, m.user, m.text) for m in calm]) == 400
+    fired = [c for m in calm + spike if (c := warm.feed(m))] + warm.drain()
+    assert len(fired) == 1  # the same spike after a restart that primed the baseline
 
 
 def test_live_detector_tick_finalizes_quiet_chat():

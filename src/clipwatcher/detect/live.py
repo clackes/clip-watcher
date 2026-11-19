@@ -58,6 +58,9 @@ class LiveDetector:
         self.min_react = float(cfg.get("min_reaction_share", 0.0))
         self.sub_bomb_min = int(cfg.get("sub_bomb_min", 10))
         self.cooldown = float(cfg.get("cooldown_s", 45))
+        # Learn the chat before judging it: every chat has its own normal, so no fire until this much of
+        # it has been seen (a restart primes it from the chat log, see prime()).
+        self.warmup_s = float(sc0.get("warmup_s", cfg.get("warmup_s", 60)))
         sc = config.streamer(streamer)
         default_delay = sc.get("delay_s", cfg.get("default_delay_s", 8))
         self.delay_s = float(delay_s if delay_s is not None else default_delay)
@@ -96,6 +99,15 @@ class LiveDetector:
         self._advance_to(sec)
         self._ingest(msg, sec)
         return self._out.popleft() if self._out else None
+
+    def prime(self, messages: list[ChatMessage]) -> int:
+        """Learn the chat from messages already logged (the minutes before a restart) without firing,
+        so the baseline and warm-up carry over instead of starting from zero."""
+        for m in messages:
+            self.feed(m)
+        self._out.clear()
+        self._maturing.clear()
+        return len(messages)
 
     def tick(self, now_s: float) -> Candidate | None:
         """Finalize seconds up to ``now_s`` without a message (quiet chat)."""
@@ -231,7 +243,7 @@ class LiveDetector:
         self._spans = [sp for sp in self._spans if sp[1] >= t - 5]
         rU, rE, rS = self._r["U"], self._r["E"], self._r["S"]
         score: float | None = None
-        if self._start is not None and t - self._start >= 60:
+        if self._start is not None and t - self._start >= self.warmup_s:
             zu, ze, zs = rU.z(u), rE.z(e), rS.z(s)
             sc = self.w["U"] * zu + self.w["E"] * ze + self.w["S"] * zs
             if not any(a <= t <= b for a, b in self._spans) and not (

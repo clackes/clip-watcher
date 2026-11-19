@@ -322,7 +322,7 @@ FRAME_H = 760  # no-webcam frame 1080x760 (16:9 source, sides trimmed a little) 
 FRAME_Y = 580
 FRAME_CAP_Y = 1450
 REFRAME_CAP_Y = 1250  # full-screen reframe: captions under the face, above the Shorts UI
-SPLIT_LOGO_W, SPLIT_LOGO_Y = 520, 40
+SPLIT_LOGO_W, SPLIT_LOGO_Y = 520, 40  # CapybarasKing red banner (owner, 19 Nov), 520x87
 PUNCH, PUNCH_S = 0.12, 0.45  # zoom punch on a beat: +12 %, eased out over 0.45 s
 FX_FILTERS = {  # beat kind -> (seconds, filter) applied to the whole picture under the captions
     "fail": (0.7, "colorchannelmixer=rr=1:rg=0.35:rb=0.35:gr=0:gg=0.4:gb=0:br=0:bg=0:bb=0.4"),

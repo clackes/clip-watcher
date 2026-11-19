@@ -38,7 +38,6 @@ KEYCHAIN = "clipwatcher-winrm" if HOST == "207.148.28.168" else f"clipwatcher-wi
 REPO = Path(__file__).resolve().parents[2]
 SRV = r"C:\clip-watcher"
 STAGE = r"C:\cw-up"
-CHUNK = 2500  # base64 chars per call: run_ps goes through an 8191-char command line
 
 KILL_BOT = (
     "Stop-ScheduledTask cw-live -EA SilentlyContinue; "
@@ -96,18 +95,36 @@ def ps(script: str, *, check: bool = True) -> str:
 
 
 def put(local: Path, remote: str) -> None:
-    b = base64.b64encode(local.read_bytes()).decode()
-    tmp = remote + ".b64"
-    ps(f"Set-Content -Path '{tmp}' -Value '' -NoNewline")
-    for i in range(0, len(b), CHUNK):
-        ps(f"Add-Content -Path '{tmp}' -Value '{b[i : i + CHUNK]}' -NoNewline")
-    n = ps(
-        f"[IO.File]::WriteAllBytes('{remote}', [Convert]::FromBase64String((Get-Content '{tmp}' -Raw)));"
-        f"Remove-Item '{tmp}'; (Get-Item '{remote}').Length"
-    ).strip()
-    if n != str(local.stat().st_size):  # a retried chunk may have landed twice
-        sys.exit(f"put {local}: server has {n} bytes, expected {local.stat().st_size}; run it again")
-    print(f"{local} -> {remote} ({n} bytes)")
+    """Stream the file as base64 over the command's stdin: one WinRM command, not one per 2.5 KB chunk
+    (that took ~15 s per chunk to a far server, 19 Nov)."""
+    data = local.read_bytes()
+    b = base64.b64encode(data)
+    proto = session().protocol
+    shell = proto.open_shell()
+    try:
+        script = (
+            "$t = [Console]::In.ReadToEnd();"
+            f" [IO.File]::WriteAllBytes('{remote}', [Convert]::FromBase64String($t));"
+            f" (Get-Item '{remote}').Length"
+        )
+        enc = base64.b64encode(script.encode("utf-16-le")).decode()
+        cmd = proto.run_command(
+            shell, "powershell", ["-NoProfile", "-NonInteractive", "-EncodedCommand", enc]
+        )
+        step = 120 * 1024  # WinRM envelopes are capped at 500 KB (MaxEnvelopeSizekb) and stdin is re-encoded
+        for i in range(0, len(b), step):
+            proto.send_command_input(shell, cmd, b[i : i + step], end=i + step >= len(b))
+        if not b:
+            proto.send_command_input(shell, cmd, b"", end=True)
+        out, err, _ = proto.get_command_output(shell, cmd)
+        proto.cleanup_command(shell, cmd)
+    finally:
+        proto.close_shell(shell)
+    n = out.decode("utf-8", "replace").strip().splitlines()[-1:] or [""]
+    if n[0] != str(len(data)):
+        tail = err.decode(errors="replace")[-800:]
+        sys.exit(f"put {local}: server has {n[0]!r} bytes, expected {len(data)}\n{tail}")
+    print(f"{local} -> {remote} ({n[0]} bytes)")
 
 
 def get(remote: str, local: Path) -> None:
