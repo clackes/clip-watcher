@@ -70,6 +70,21 @@ def keep_ranges(
     return keep or [(0.0, dur)]
 
 
+def on_frames(keep: list[tuple[float, float]], fps: float) -> list[tuple[float, float]]:
+    """keep with every edge moved onto the output frame grid (the nearest frame), so the picture and the
+    sound of each stretch are exactly as long as each other. A video stretch can only be whole frames;
+    with free edges it came out up to a frame longer than its sound, and that added up cut after cut
+    (0.42 s behind after 19 cuts at 30 fps). A stretch shorter than two frames goes with the cut."""
+    if len(keep) < 2 or fps <= 0:
+        return keep
+    out = []
+    for a, b in keep:
+        fa, fb = round(a * fps), round(b * fps)
+        if fb - fa >= 2:
+            out.append((round(fa / fps, 6), round(fb / fps, 6)))
+    return out if len(out) > 1 else [(keep[0][0], keep[-1][1])]
+
+
 def remap(t: float, keep: list[tuple[float, float]]) -> float | None:
     """Time on the cut timeline; None when t falls in a removed stretch."""
     out = 0.0

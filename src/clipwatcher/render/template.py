@@ -103,19 +103,33 @@ def _run(cmd: list[str]) -> None:
 LOUDNORM = "loudnorm=I=-14:TP=-1.5:LRA=11"
 
 
-def _segments(src: str, trim: float, keep: list[tuple[float, float]], out: str, *, audio: bool) -> str:
-    """src -> out: the kept stretches of the clip (jump cuts), back to back. 15 ms fades on audio cuts."""
+def _segments(
+    src: str, trim: float, keep: list[tuple[float, float]], out: str, *, audio: bool, fps: float = 30.0
+) -> str:
+    """src -> out: the kept stretches of the clip (jump cuts), back to back. 15 ms fades on audio cuts.
+
+    With cuts, keep lies on the frame grid of fps (jumpcut.on_frames): the picture is put on that grid
+    first and cut by frame number, the sound at the same instants, so both pieces are equally long."""
     n = len(keep)
     tr, sp = ("atrim", "asetpts") if audio else ("trim", "setpts")
     if n == 1:
         a, b = keep[0]
         return f"{src}{tr}=start={trim + a:.3f}:duration={b - a:.3f},{sp}=PTS-STARTPTS{out}"
     tag = "ja" if audio else "jv"
-    g = [f"{src}{'asplit' if audio else 'split'}={n}" + "".join(f"[{tag}{i}]" for i in range(n))]
+    outs = "".join(f"[{tag}{i}]" for i in range(n))
+    if audio:
+        g = [f"{src}asplit={n}{outs}"]
+    else:  # constant frame rate from the clip start: frame k is k / fps into the clip
+        end = trim + keep[-1][1] + 1.0
+        g = [f"{src}trim=start={trim:.3f}:end={end:.3f},setpts=PTS-STARTPTS,fps={fps:g},split={n}{outs}"]
     for i, (a, b) in enumerate(keep):
         d = b - a
-        fade = f",afade=t=in:d=0.015,afade=t=out:st={max(0.0, d - 0.015):.3f}:d=0.015" if audio else ""
-        g.append(f"[{tag}{i}]{tr}=start={trim + a:.3f}:duration={d:.3f},{sp}=PTS-STARTPTS{fade}[{tag}{i}o]")
+        if audio:
+            cut = f"atrim=start={trim + a:.6f}:duration={d:.6f}"
+            fade = f",afade=t=in:d=0.015,afade=t=out:st={max(0.0, d - 0.015):.3f}:d=0.015"
+        else:
+            cut, fade = f"trim=start_frame={round(a * fps)}:end_frame={round(b * fps)}", ""
+        g.append(f"[{tag}{i}]{cut},{sp}=PTS-STARTPTS{fade}[{tag}{i}o]")
     g.append(
         "".join(f"[{tag}{i}o]" for i in range(n))
         + f"concat=n={n}:v={0 if audio else 1}:a={1 if audio else 0}{out}"
@@ -448,11 +462,11 @@ def build_split_graph(
         g.append(
             "[0:v]split=2[cov][mnv];"
             f"[cov]trim=start={trim + cs:.3f}:duration={cd:.3f},setpts=PTS-STARTPTS[cov1];"
-            + _segments("[mnv]", trim, keep, "[mnv1]", audio=False)
+            + _segments("[mnv]", trim, keep, "[mnv1]", audio=False, fps=fps)
             + ";[cov1][mnv1]concat=n=2:v=1:a=0[sv]"
         )
     else:
-        g.append(_segments("[0:v]", trim, keep, "[sv]", audio=False))
+        g.append(_segments("[0:v]", trim, keep, "[sv]", audio=False, fps=fps))
     z = zoom_expr(co_d, zoom, [b[0] for b in beats or []])
     if has_webcam:
         centre = (face[0] + face[2] / 2, face[1] + face[3] / 2) if face else None
@@ -525,7 +539,7 @@ def render_short(
     game = parse_rect(game) or default_game(info)
     coarse, trim = _seek(start_s)
     ensure_branding(BRANDING_DIR)
-    fps = min(info.fps, 60.0)
+    fps = float(f"{min(info.fps, 60.0):g}")  # as ffmpeg is told it (-r, fps=): frame maths uses the same
     co_d = cold_open[1] if cold_open else 0.0
     split = (layout or layout_mode()) == "split"
     keep = [(0.0, dur_s)]
@@ -535,7 +549,7 @@ def render_short(
 
         protect = [(b[0] - jumpcut.PROTECT_S, b[0] + jumpcut.PROTECT_S) for b in beats or []]
         protect += [(a[0], a[1]) for a in actions or []]
-        keep = jumpcut.keep_ranges(words, dur_s, protect=protect)
+        keep = jumpcut.on_frames(jumpcut.keep_ranges(words, dur_s, protect=protect), fps)
         if len(keep) > 1:
             words = jumpcut.remap_words(words, keep)
             beats = [(t, *b[1:]) for b in beats or [] if (t := jumpcut.remap(b[0], keep)) is not None]

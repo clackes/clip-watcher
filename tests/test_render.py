@@ -355,6 +355,13 @@ def test_jump_cuts_drop_dead_air_but_keep_protected_and_edges():
     talk = [Word(i, i + 0.3, "go") for i in (0, 1, 2, 9, 10, 11)]
     assert jumpcut.keep_ranges(talk, 30.0) == [(0.0, 30.0)]  # a 6.7 s silence is content: never cut
     assert jumpcut.keep_ranges(w[:3], 11.0) == [(0.0, 11.0)]  # almost no speech: visual clip, no cuts
+    # cut edges go to the nearest frame, so picture and sound of every stretch are equally long
+    assert jumpcut.on_frames([(0.0, 1.45), (3.85, 5.46), (7.01, 50.0)], 30.0) == [
+        (0.0, 1.466667), (3.866667, 5.466667), (7.0, 50.0)
+    ]  # fmt: skip
+    assert jumpcut.on_frames([(0.0, 11.0)], 30.0) == [(0.0, 11.0)]
+    assert jumpcut.on_frames([(0.0, 1.45), (3.85, 3.88), (5.0, 9.0)], 30.0) == [(0.0, 1.466667), (5.0, 9.0)]
+    assert jumpcut.on_frames([(0.0, 0.02), (3.85, 9.0)], 30.0) == [(0.0, 9.0)]  # one stretch left: no cut
 
 
 def test_action_labels_replace_words_on_their_stretch():
@@ -419,3 +426,89 @@ def test_split_short_reframes_a_full_camera_clip(synth_src, tmp_path, monkeypatc
         beats=[(1.0, "shock", "*WAIT*", "")],
     )  # fmt: skip
     check_short(out, 4.0)
+
+
+# -- jump cuts keep picture and sound together ---------------------------------------------------------
+FLASH_FPS = 30
+FLASH_SECONDS = 28
+
+
+@pytest.fixture(scope="session")
+def flash_src(tmp_path_factory):
+    """720p30 .ts: on every whole second the picture goes white and a 1 kHz beep sounds, for 0.1 s."""
+    p = tmp_path_factory.mktemp("flash") / "flash.ts"
+    on = "lt(mod(t,1),0.1)"
+    cmd = [
+        ffmpeg_bin(), "-y", "-hide_banner", "-loglevel", "error",
+        "-f", "lavfi", "-i", f"color=c=black:s=1280x720:r={FLASH_FPS}:d={FLASH_SECONDS}",
+        "-f", "lavfi", "-i", f"aevalsrc='0.5*sin(2*PI*1000*t)*{on}':s=48000:d={FLASH_SECONDS}",
+        "-vf", f"drawbox=x=0:y=0:w=iw:h=ih:color=white:t=fill:enable='{on}'",
+        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-g", "60",
+        "-c:a", "aac", "-b:a", "128k", "-f", "mpegts", str(p),
+    ]  # fmt: skip
+    subprocess.run(cmd, check=True)
+    return p
+
+
+def flash_times(p, fps=FLASH_FPS) -> list[float]:
+    """Times at which the picture of p turns white."""
+    raw = subprocess.run(
+        [ffmpeg_bin(), "-v", "error", "-i", str(p), "-vf", "scale=16:16,format=gray", "-f", "rawvideo", "-"],
+        capture_output=True, check=True,
+    ).stdout  # fmt: skip
+    bright = [sum(raw[i : i + 256]) / 256 > 110 for i in range(0, len(raw), 256)]
+    return [i / fps for i in range(1, len(bright)) if bright[i] and not bright[i - 1]]
+
+
+def beep_times(p, rate=8000) -> list[float]:
+    """Times at which a beep starts in the sound of p (after at least 0.2 s without one)."""
+    import array
+
+    raw = subprocess.run(
+        [ffmpeg_bin(), "-v", "error", "-i", str(p), "-vn", "-ac", "1", "-ar", str(rate), "-f", "s16le", "-"],
+        capture_output=True, check=True,
+    ).stdout  # fmt: skip
+    pcm = array.array("h", raw)
+    level = 0.25 * max(abs(v) for v in pcm)
+    out, last = [], -rate
+    for i, v in enumerate(pcm):
+        if abs(v) >= level:
+            if i - last > 0.2 * rate:
+                out.append(i / rate)
+            last = i
+    return out
+
+
+@pytest.mark.ffmpeg
+def test_jump_cuts_keep_picture_and_sound_together(flash_src, tmp_path, monkeypatch):
+    """19 jump cuts in one clip: every flash must still coincide with its beep, up to the last one.
+
+    Each video piece used to be rounded up to whole frames while the sound was cut to the sample, so the
+    picture fell behind by most of a frame per cut and the final -t chopped the ending.
+    """
+    import copy
+
+    from clipwatcher import config
+    from clipwatcher.render import jumpcut
+
+    cfg = copy.deepcopy(config.global_config())
+    cfg.setdefault("render", {}).update(clip_min_s=12, jump_cuts=True, jump_gap_s=0.8)
+    monkeypatch.setattr(config, "global_config", lambda: cfg)
+    start, dur = 6.5, 20.0  # flashes at 0.5, 1.5, ... 19.5 s of the clip, one spoken word on each
+    words = [Word(k + 0.45, k + 0.61, "go") for k in range(20)]
+    cuts = len(jumpcut.keep_ranges(words, dur)) - 1
+    assert cuts == 19  # the 0.84 s pause after every word goes
+    out = tmp_path / "cuts.mp4"
+    render_short(
+        flash_src, start, dur, out, clip_id="cuts", streamer="tester", words=words, hook=None,
+        profile="cpu_live", captions="word", layout="split",
+    )  # fmt: skip
+    seen, heard = flash_times(out), beep_times(out)
+    assert len(seen) == len(heard) == 20, (seen, heard)  # nothing lost at the end either
+    offsets = [s - h for s, h in zip(seen, heard, strict=True)]
+    assert max(abs(o) for o in offsets) <= 1.5 / FLASH_FPS, [round(o, 3) for o in offsets]
+    assert max(offsets) - min(offsets) <= 1 / FLASH_FPS  # and no drift from the first cut to the last
+    info = probe(out)
+    v = next(s for s in info["streams"] if s["codec_type"] == "video")
+    assert abs(int(v["nb_read_frames"]) / FLASH_FPS - (dur - cuts * 0.39)) <= 0.35  # ~12.6 s left
+    assert abs(float(info["format"]["duration"]) - int(v["nb_read_frames"]) / FLASH_FPS) <= 0.05
