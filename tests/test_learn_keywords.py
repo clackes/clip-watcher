@@ -92,11 +92,13 @@ def test_category_words_come_back_in_every_channel_and_streamer_words_in_one(sta
     category = lk.category_words(stats, a)
     assert "wasted" in category and category["wasted"]["channels"] == 6 and category["wasted"]["weight"] >= 2
     assert not set(category) & {"helicopter", "the", "car", "chan0laugh"}  # one moment, talk, one channel
-    own = lk.streamer_words(stats[0], category, a)
+    own = lk.streamer_words(stats[0], category, set(), a)
     assert list(own) == ["chan0laugh"] and 2 <= own["chan0laugh"]["weight"] <= 2.5
     # the half kept for testing: learned without the moments around every second viewer clip
-    half = lk.streamer_words(stats[0], category, a, part="even")
+    half = lk.streamer_words(stats[0], category, set(), a, part="even")
     assert list(half) == ["chan0laugh"] and half["chan0laugh"]["moments"] < own["chan0laugh"]["moments"]
+    assert lk.streamer_words(stats[0], category, {"chan0laugh"}, a) == {}  # plain talk in every other chat
+    assert {"the", "car", "police"} <= lk.plain_words(stats, a) and "wasted" not in lk.plain_words(stats, a)
     # a channel in another language teaches the category nothing
     foreign = [{**s, "english": 0.001} for s in stats]
     assert lk.category_words(foreign, a) == {}

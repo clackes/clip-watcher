@@ -474,21 +474,39 @@ def category_words(stats: list[dict], a: argparse.Namespace, part: str = "all") 
     return drop_covered(out)
 
 
+def plain_words(stats: list[dict], a: argparse.Namespace) -> set[str]:
+    """Words many chats use during moments without them marking anything there (my, why, this is): seen in
+    five channels or more and, in the typical one, hardly more common during a moment than otherwise."""
+    import statistics
+
+    seen: dict[str, list[float]] = {}
+    for s in stats:
+        if s["moments"] >= a.min_moments_channel:
+            for x, r in s["tok"].items():
+                if r[0] >= 5:
+                    seen.setdefault(x, []).append(lift(r[0], s["chatters"], r[1], s["base_messages"]))
+    return {x for x, lifts in seen.items() if len(lifts) >= 5 and statistics.median(lifts) < a.plain_lift}
+
+
 def streamer_words(
-    s: dict, known: dict[str, dict], a: argparse.Namespace, part: str = "all"
+    s: dict, known: dict[str, dict], plain: set[str], a: argparse.Namespace, part: str = "all"
 ) -> dict[str, dict]:
     """Words that mark a moment in this channel's chat and are not the category's: its emotes, its
-    in-jokes. They have to come back in many moments; a word of one moment is what that moment was about."""
+    in-jokes, the reactions its viewers prefer. They have to come back in many moments (a word of one
+    moment is what that moment was about) and must not be plain talk in everybody else's chat."""
+    import math
+
     ia, im, it, na_key, m_key = _cols(part)
     if s[m_key] < a.streamer_moments_channel:
         return {}
     need = max(a.streamer_moments, a.streamer_share * s[m_key])
     out = {}
     for x, r in s["tok"].items():
-        if r[ia] < 20 or r[im] < need or r[it] > a.streamer_one_moment * r[ia]:
+        if x in plain or r[ia] < 20 or r[im] < need or r[it] > a.streamer_one_moment * r[ia]:
             continue
         lf = lift(r[ia], s[na_key], r[1], s["base_messages"])
-        if lf >= a.streamer_lift:
+        z = math.log(lf) / math.sqrt(1 / (r[ia] + 0.5) + 1 / (r[1] + 0.5))
+        if lf >= a.streamer_lift and z >= 5:
             out[x] = {"weight": min(2.5, weight(lf)), "lift": round(lf, 1), "moments": r[im]}
     out = drop_covered(out, known)
     return dict(sorted(out.items(), key=lambda kv: -kv[1]["moments"])[: a.streamer_max])
@@ -510,6 +528,18 @@ def drop_covered(words: dict[str, dict], known: dict[str, dict] | None = None) -
         kept[x] = info
         pats.append(re.compile(_held_keys(x), re.IGNORECASE))
     return {x: i for x, i in kept.items() if x not in (known or {})}
+
+
+def global_weight(word: str) -> float:
+    """The weight the global configuration already gives a message that is just this word: its keyword
+    list (held keys included) and the laughter pattern. 0 when it knows nothing of it."""
+    from clipwatcher.detect.detector import _kw_patterns
+
+    cfg = config.global_config().get("detector", {})
+    got = [w for _, pat, w in _kw_patterns(dict(cfg.get("keywords", {}))) if pat.fullmatch(word)]
+    if cfg.get("laughter_regex") and re.fullmatch(cfg["laughter_regex"], word):
+        got.append(2.0)
+    return max(got, default=0.0)
 
 
 def load_stats(category: str) -> tuple[list[dict], list[dict]]:
@@ -545,24 +575,32 @@ def learn(a: argparse.Namespace) -> int:
     if left:
         print("left out: " + ", ".join(left))
     category = category_words(stats, a)
-    current = {k.lower() for k in config.global_config().get("detector", {}).get("keywords", {})}
-    print(f"\ncategory keywords ({len(category)}); * = already in the global list")
-    print(f"  {'word':20} {'weight':>6} {'lift':>6} {'channels':>8} {'moments':>8}")
+    for x, i in category.items():
+        i["global"] = global_weight(x)
+    new = sum(1 for i in category.values() if i["weight"] > i["global"])
+    print(
+        f"\ncategory keywords ({len(category)}, {new} of them new or stronger than the global list has them)"
+    )
+    print(f"  {'word':20} {'weight':>6} {'global':>6} {'lift':>6} {'channels':>8} {'moments':>8}")
     for x, i in sorted(category.items(), key=lambda kv: -kv[1]["moments"]):
-        star = "*" if x in current else " "
-        print(f" {star}{x:20} {i['weight']:6.1f} {i['lift']:6.1f} {i['channels']:8d} {i['moments']:8d}")
+        was = f"{i['global']:6.1f}" if i["global"] else "     -"
+        print(f"  {x:20} {i['weight']:6.1f} {was} {i['lift']:6.1f} {i['channels']:8d} {i['moments']:8d}")
     streamers: dict[str, dict] = {}
+    plain = plain_words(stats + own, a)
     for s in stats + own:
-        words = streamer_words(s, category, a)
+        words = streamer_words(s, category, plain, a)
+        words = {x: i for x, i in words.items() if i["weight"] > global_weight(x)}
         if words:
             streamers[s["login"]] = {**streamers.get(s["login"], {}), **words}
     print(f"\nper-streamer keywords ({len(streamers)} channels)")
     for login, words in sorted(streamers.items()):
         print(f"  {login}: " + ", ".join(f"{x} ({i['weight']:g})" for x, i in words.items()))
     if a.validate:
-        validate(stats, a)
+        validate(stats, own, a)
     if a.write:
-        only = None if a.all_streamers else {k.lower() for k in config.streamers()}
+        category = {x: i for x, i in category.items() if i["weight"] > i["global"]}
+        named = {x.strip().lower() for x in (a.streamers or "").split(",") if x.strip()}
+        only = None if named == {"all"} else named or {k.lower() for k in config.streamers()}
         write_keywords(a.category, category, streamers, used, only)
     return 0
 
@@ -594,26 +632,43 @@ def _hits(job: tuple) -> tuple[str, int, list[int]]:
     return d.name, total, found
 
 
-def validate(stats: list[dict], a: argparse.Namespace) -> None:
+def validate(stats: list[dict], own: list[dict], a: argparse.Namespace) -> None:
     """Does the result find more of what viewers clipped? Every channel is tested on the half of its viewer
-    clips that no word was learned from, with category words learned from the other channels only."""
+    clips that no word was learned from, with category words learned from the other channels only. Our own
+    streamers (collected whatever they streamed) are tested with their own words alone."""
     from concurrent.futures import ProcessPoolExecutor
 
     base = dict(config.global_config().get("detector", {}).get("keywords", {}))
     chans = [s for s in stats if s["clipped"] >= 6 and s["english"] >= a.min_english]
+    plain = plain_words(stats + own, a)
     jobs = []
     for n, s in enumerate(chans):
         others = [o for m, o in enumerate(chans) if m % a.folds != n % a.folds]
         cat = category_words(others, a)
-        own = streamer_words(s, cat, a, part="even")
-        cat_kw = {**base, **{x: i["weight"] for x, i in cat.items()}}
-        lists = [base, cat_kw, {**cat_kw, **{x: i["weight"] for x, i in own.items()}}]
+        mine = streamer_words(s, cat, plain, a, part="even")
+        cat_kw = {**base, **{x: i["weight"] for x, i in cat.items() if i["weight"] > global_weight(x)}}
+        lists = [base, cat_kw, {**cat_kw, **{x: i["weight"] for x, i in mine.items()}}]
         jobs.append((CORPUS / slug(a.category) / s["login"], lists, a.per_hour))
-    print(f"\ntested on {len(jobs)} channels at {a.per_hour:g} clips an hour: viewer clips found (held out)")
+    every = category_words(stats, a)
+    for s in own:
+        if s["clipped"] >= 6:
+            mine = streamer_words(s, every, plain, a, part="even")
+            jobs.append(
+                (
+                    CORPUS / OWN / s["login"],
+                    [base, base, {**base, **{x: i["weight"] for x, i in mine.items()}}],
+                    a.per_hour,
+                )
+            )
+    print(f"\ntested at {a.per_hour:g} clips an hour: viewer clips found, of those no word was learned from")
     print(f"  {'channel':22} {'clips':>7} {'global':>7} {'+category':>10} {'+streamer':>10}")
     tot = [0, 0, 0, 0]
     with ProcessPoolExecutor(max_workers=6) as pool:
-        for login, total, found in pool.map(_hits, jobs):
+        for n, (login, total, found) in enumerate(pool.map(_hits, jobs)):
+            if n == len(chans):
+                print(f"  {'all, category':22} {tot[0]:7d} {tot[1]:7d} {tot[2]:10d} {tot[3]:10d}")
+                print("  our own streamers, any category (no category words):")
+                tot = [0, 0, 0, 0]
             print(f"  {login:22} {total:7d} {found[0]:7d} {found[1]:10d} {found[2]:10d}", flush=True)
             tot = [tot[0] + total, *(t + f for t, f in zip(tot[1:], found, strict=True))]
     print(f"  {'all':22} {tot[0]:7d} {tot[1]:7d} {tot[2]:10d} {tot[3]:10d}")
@@ -671,7 +726,7 @@ def parser() -> argparse.ArgumentParser:
     ln.add_argument("--category", required=True)
     ln.add_argument("--write", action="store_true", help="save to config/keywords.yaml")
     ln.add_argument("--validate", action="store_true", help="test the result on clipped moments held out")
-    ln.add_argument("--all-streamers", action="store_true", help="write every channel's words, not only ours")
+    ln.add_argument("--streamers", help="whose words to write: logins, or all (default: streamers.yaml)")
     ln.add_argument("--min-english", type=float, default=0.03, help="share of plain English words in a chat")
     ln.add_argument("--min-moments-channel", type=int, default=10, help="moments a channel needs to count")
     ln.add_argument("--category-lift", type=float, default=2.0, help="times more common during a moment")
@@ -685,6 +740,9 @@ def parser() -> argparse.ArgumentParser:
     ln.add_argument("--max-one-moment", type=float, default=0.2, help="share of its use in a single moment")
     ln.add_argument("--streamer-moments-channel", type=int, default=15, help="moments a streamer needs")
     ln.add_argument("--streamer-lift", type=float, default=3.0)
+    ln.add_argument(
+        "--plain-lift", type=float, default=1.3, help="under this in the typical chat: plain talk"
+    )
     ln.add_argument("--streamer-moments", type=int, default=5)
     ln.add_argument("--streamer-share", type=float, default=0.12, help="share of the streamer's moments")
     ln.add_argument("--streamer-one-moment", type=float, default=0.3)

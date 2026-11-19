@@ -82,10 +82,10 @@ def kick_clips(slug: str, stream_id: str, t0_ms: int) -> list[dict]:
 
 
 def read(path: Path) -> list[ChatMessage]:
-    out = []
+    out, fields = [], ChatMessage.__dataclass_fields__
     for line in path.read_text(encoding="utf-8").splitlines():
-        try:
-            out.append(ChatMessage(**json.loads(line)))
+        try:  # fields this version does not know (a log written by another one) are left out
+            out.append(ChatMessage(**{k: v for k, v in json.loads(line).items() if k in fields}))
         except (ValueError, TypeError):
             continue
     return sorted(out, key=lambda m: m.ts_ms)
