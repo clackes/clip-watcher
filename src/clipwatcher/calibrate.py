@@ -411,7 +411,10 @@ def steady_faces(boxes: list[Box], n_frames: int, fw: int, fh: int) -> list[Box]
     """Webcam-sized faces that stay put across the sampled frames, most-seen first.
 
     A webcam overlay never moves; faces of game characters (GTA cutscenes) jump and rescale with every
-    camera cut, so a cluster whose members drift or change size is not a cam (kaicenat, 19 Nov).
+    camera cut, so a cluster whose members drift or change size is not a cam (kaicenat, 19 Nov). A
+    character's face passing beside the cam can join its cluster: only the members that agree with the
+    cluster's median count, and enough of them must agree (jasontheween, 19 Nov: one passing face
+    rejected the whole cluster and the Short lost its webcam).
     """
     need = max(2, math.ceil(0.3 * n_frames))
     out: list[Box] = []
@@ -419,15 +422,20 @@ def steady_faces(boxes: list[Box], n_frames: int, fw: int, fh: int) -> list[Box]
         if len(c) < need:
             continue
         f: Box = tuple(statistics.median(b[i] for b in c) for i in range(4))  # type: ignore[assignment]
+        cx, cy = f[0] + f[2] / 2, f[1] + f[3] / 2
+        steady = [
+            b
+            for b in c
+            if math.hypot(b[0] + b[2] / 2 - cx, b[1] + b[3] / 2 - cy) <= STEADY_JITTER * f[2]
+            and abs(b[3] - f[3]) <= STEADY_JITTER * f[3]
+        ]
+        # Most of the cluster must agree: game faces that only jump around never pass this.
+        if len(steady) < need or len(steady) < 0.75 * len(c):
+            continue
+        f = tuple(statistics.median(b[i] for b in steady) for i in range(4))  # type: ignore[assignment]
         if f[3] < 0.04 * fh or f[3] > FULL_CAM_FACE_H * fh:
             continue
-        cx, cy = f[0] + f[2] / 2, f[1] + f[3] / 2
-        if all(
-            math.hypot(b[0] + b[2] / 2 - cx, b[1] + b[3] / 2 - cy) <= STEADY_JITTER * f[2]
-            and abs(b[3] - f[3]) <= STEADY_JITTER * f[3]
-            for b in c
-        ):
-            out.append(f)
+        out.append(f)
     return out
 
 

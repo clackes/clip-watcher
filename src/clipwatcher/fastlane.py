@@ -511,6 +511,8 @@ class FastLane:
             "chat_score": cand.chat_score, "final_score": cand.final_score, "peak_s": cand.peak_s,
             "start_s": cand.start_s, "end_s": cand.end_s, "funny_score": screen.get("funny_score"),
             "hype_score": screen.get("hype_score"), "layout": lay.source,
+            "layout_rects": {"cam": lay.cam, "game": lay.game, "face": lay.face,
+                             "judge_cam": getattr(jr, "cam_xy", None)},
             "captions": caption_style(cid), "timing": _timing(cand, jr),
         }  # fmt: skip
         if cand.tag:

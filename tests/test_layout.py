@@ -205,6 +205,32 @@ def test_small_steady_webcam_wins_over_moving_game_closeups(monkeypatch, tmp_pat
         assert x <= 120 <= x + w and y <= 395 <= y + h  # the webcam face, not a game character
 
 
+def test_game_face_next_to_the_cam_does_not_hide_the_cam(monkeypatch, tmp_path):
+    """Regression (jasontheween, GTA 6, 19 Nov): a close-up sent resolve to steady_faces, a character's
+    face passing beside the cam joined the cam's cluster, the whole cluster failed the steadiness check
+    and the Short got a guessed crop of a wall instead of the webcam. 1280x720, cam face at ~(1095, 337)."""
+    from PIL import Image
+
+    frames = []
+    for i in range(4):
+        f = tmp_path / f"f{i}.png"
+        Image.new("RGB", (1280, 720)).save(f)
+        frames.append((float(i), f))
+    cam = [(1086, 340, 90, 90), (1093, 335, 91, 91), (1097, 335, 83, 83), (1091, 360, 92, 92)]
+    per = {
+        frames[0][1]: [(413, 178, 191, 191), cam[0]],  # big close-up: the steady path
+        frames[1][1]: [cam[1], (1150, 300, 120, 120)],  # a character's face right beside the cam
+        frames[2][1]: [cam[2]],
+        frames[3][1]: [cam[3]],
+    }
+    monkeypatch.setattr(layout.config, "streamer", lambda n: {})
+    monkeypatch.setattr(layout.calibrate, "sample_frames", lambda m, d, n: frames[:n])
+    lay = layout.resolve(tmp_path / "x.mp4", "x", detector=lambda p: per.get(p, []), cam_hint=(0.2, 0.2))
+    assert lay.has_webcam and lay.source == "auto-new", lay
+    w, h, x, y = (int(v) for v in lay.cam.split(":"))
+    assert x <= 1138 <= x + w and y <= 382 <= y + h  # the webcam face, not the judge's wrong point
+
+
 def test_overlay_rect_finds_the_cam_borders_not_the_chat_under_it(tmp_path):
     """A small cam (0..260 x 288..434) with chat lines right under it, over gameplay that changes every
     frame: the crop is the overlay itself, not a guessed box sliding into the chat (kaicenat, 19 Nov)."""
