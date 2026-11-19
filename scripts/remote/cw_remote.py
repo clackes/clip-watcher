@@ -13,7 +13,8 @@
     put LOCAL REMOTE             upload a small file (configs; chunked, ~1 MB max is sensible)
     get REMOTE LOCAL             download a small file
 
-Password: macOS Keychain item "clipwatcher-winrm" (account Administrator), or CW_WINRM_PASSWORD.
+Password: macOS Keychain item "clipwatcher-winrm" (account Administrator; "clipwatcher-winrm-<host>" for
+any other host), or CW_WINRM_PASSWORD.
 Host: CW_WINRM_HOST (default 207.148.28.168).
 """
 
@@ -30,7 +31,8 @@ import winrm
 
 HOST = os.environ.get("CW_WINRM_HOST", "207.148.28.168")
 USER = os.environ.get("CW_WINRM_USER", "Administrator")
-KEYCHAIN = "clipwatcher-winrm"
+# one Keychain item per server: the first box keeps the old name
+KEYCHAIN = "clipwatcher-winrm" if HOST == "207.148.28.168" else f"clipwatcher-winrm-{HOST}"
 REPO = Path(__file__).resolve().parents[2]
 SRV = r"C:\clip-watcher"
 STAGE = r"C:\cw-up"
