@@ -7,6 +7,7 @@ moment may come from; moments from any other category are dropped before cutting
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import time
 from collections.abc import Callable
@@ -42,8 +43,14 @@ def stream_category(
     return cat
 
 
+def _norm(name: str) -> str:
+    """Kick says "Grand Theft Auto VI (GTA)", Twitch "Grand Theft Auto VI": drop the bracket, case, spaces."""
+    return " ".join(re.sub(r"\(.*?\)", " ", name).casefold().split())
+
+
 def allowed(category: str | None, games: list[str]) -> bool:
-    """No filter, or the lookup failed (the judge still sees the frames): let it through."""
+    """No filter, or the lookup failed (the judge still sees the frames): let it through. Exact names only:
+    "Grand Theft Auto V" never matches "Grand Theft Auto VI"."""
     if not games or category is None:
         return True
-    return category.casefold() in {g.casefold() for g in games}
+    return _norm(category) in {_norm(g) for g in games}

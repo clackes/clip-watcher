@@ -34,5 +34,9 @@ def test_allowed_only_the_channel_games():
     assert category.allowed("grand theft auto vi", games)
     assert not category.allowed("Just Chatting", games)
     assert not category.allowed("", games)
+    assert category.allowed("Grand Theft Auto VI (GTA)", games)  # Kick's name
+    assert not category.allowed("Grand Theft Auto V", games) and not category.allowed(
+        "Grand Theft Auto V (GTA)", games
+    )
     assert category.allowed(None, games)  # lookup failed: the judge decides
     assert category.allowed("Just Chatting", [])
