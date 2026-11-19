@@ -47,4 +47,4 @@ Status (17 Nov 2026, night). Handoff and next steps: docs/HANDOFF.md.
   again only replaces a clip that is still READY.
 - Next: ANTHROPIC_API_KEY -> `scripts/judge_cost_benchmark.py BENCH --exact` and real judge calls on staged
   clips (until then the hook is the heuristic), publishing (YouTube/IG creds; DRY_RUN=1), viewer-clip
-  confirmation, ratedpicz Kick slug, minik's language.
+  confirmation with Twitch credentials, minik's language.

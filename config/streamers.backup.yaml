@@ -111,7 +111,7 @@ streamers:
     delay_s: 8
     keywords: {}
     has_webcam: false
-  ratedpicz:
+  ratedepicz:
     platform: kick
-    url: https://kick.com/ratedpicz
-    note: slug unverified
+    url: https://kick.com/ratedepicz
+    note: slug checked 20 Nov (kick.com/ratedpicz, as first written, is 404)
