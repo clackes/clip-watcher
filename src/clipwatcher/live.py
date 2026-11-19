@@ -53,6 +53,53 @@ def _recent_chat(login: str, exclude: str, max_age_s: float = 600) -> list:
     return out
 
 
+GAME_POLL_S = 180.0  # while waiting: one streamlink metadata check per streamer every 3 min
+GAME_RECHECK_S = 300.0  # while recording: has the streamer switched game?
+OFFLINE_CHECKS = 3  # this many "no stream" checks in a row while recording: the stream ended
+
+
+def _games() -> list[str]:
+    return list(config.global_config().get("channel", {}).get("games") or [])
+
+
+async def wait_for_game(platform: str, login: str, games: list[str], *, look=None, sleep=asyncio.sleep,
+                        poll_s: float = GAME_POLL_S) -> str:  # fmt: skip
+    """Block until the stream is live in one of the channel's games. Nothing is recorded meanwhile
+    (owner, 19 Nov: GTA 6 streams only, never GTA 5 or anything else)."""
+    from clipwatcher.ingest import category
+
+    look = look or category.stream_category
+    said: object = object()
+    while True:
+        cat = await asyncio.to_thread(look, platform, login)
+        if cat and category.allowed(cat, games):
+            return cat
+        if cat != said:
+            log.info("%s: not recording, %s", login, f"playing {cat!r}" if cat else "offline")
+            said = cat
+        await sleep(poll_s)
+
+
+async def left_game(platform: str, login: str, games: list[str], *, look=None, sleep=asyncio.sleep,
+                    poll_s: float = GAME_RECHECK_S) -> str:  # fmt: skip
+    """Return once the stream switched to another category, or stayed offline for OFFLINE_CHECKS checks."""
+    from clipwatcher.ingest import category
+
+    look = look or category.stream_category
+    gone = 0
+    while True:
+        await sleep(poll_s)
+        cat = await asyncio.to_thread(look, platform, login)
+        if cat is None:
+            gone += 1
+            if gone >= OFFLINE_CHECKS:
+                return "offline"
+            continue
+        gone = 0
+        if not category.allowed(cat, games):
+            return cat
+
+
 async def run_streamer(login: str, *, db, bot=None, staging_root: Path | None = None) -> None:
     from clipwatcher.chat.live_log import LiveLog, logged
     from clipwatcher.chat.twitch_irc import TwitchChat
@@ -62,6 +109,10 @@ async def run_streamer(login: str, *, db, bot=None, staging_root: Path | None = 
 
     scfg = config.streamer(login)
     platform = scfg.get("platform", "twitch")
+    games = _games()
+    if games:
+        game = await wait_for_game(platform, login, games)
+        log.info("%s: live in %s, recording", login, game)
     if platform != "twitch":
         from clipwatcher.chat.kick import KickHistoryChat
 
@@ -102,7 +153,20 @@ async def run_streamer(login: str, *, db, bot=None, staging_root: Path | None = 
             log.info("%s: chat baseline primed with %d logged messages", login, n)
         lane = FastLane(login, chat, det, rec.ring, steps=steps, db=db, bot=bot,
                         staging_root=staging_root)  # fmt: skip
-        await lane.run()
+        run = asyncio.create_task(lane.run())
+        if not games:
+            await run
+            return
+        watch = asyncio.create_task(left_game(platform, login, games))
+        done, _ = await asyncio.wait({run, watch}, return_when=asyncio.FIRST_COMPLETED)
+        if watch in done:
+            # Moments already being rendered finish from the ring files on disk.
+            log.info("%s: now %s, recording stopped", login, watch.result())
+            run.cancel()
+            await asyncio.gather(run, return_exceptions=True)
+        else:
+            watch.cancel()
+            run.result()
     finally:
         await rec.stop()
 

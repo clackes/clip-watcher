@@ -13,7 +13,7 @@ from collections.abc import Callable
 
 from .. import config
 
-TTL_S = 300.0  # a stream's category rarely changes; one streamlink lookup per streamer per 5 min
+TTL_S = 120.0  # a stream's category rarely changes; at most one streamlink lookup per streamer per 2 min
 _CACHE: dict[str, tuple[float, str | None]] = {}
 
 
