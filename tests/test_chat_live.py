@@ -278,3 +278,18 @@ def test_spike_without_reaction_does_not_fire(monkeypatch):
 
     assert any(abs(c.signals["fire_s"] - (base / 1000 + 1000)) < 15 for c in run("KEKW LMAO"))
     assert not run("TIP HER")
+
+
+def test_windows_tls_uses_certifi_roots(monkeypatch):
+    import importlib
+    import os
+
+    import pytest
+
+    import clipwatcher
+
+    certifi = pytest.importorskip("certifi")
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    monkeypatch.setattr(os, "name", "nt")
+    importlib.reload(clipwatcher)
+    assert os.environ["SSL_CERT_FILE"] == certifi.where()
