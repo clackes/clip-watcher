@@ -23,7 +23,8 @@ GLOBAL = {
 }
 LEARNED = {
     "categories": {
-        "grand-theft-auto-vi": {"keywords": {"busted": 2, "wasted": 1}},  # the hand-set weight wins
+        # the hand-set weight of wasted wins; kekw is KEKW, raised
+        "grand-theft-auto-vi": {"keywords": {"busted": 2, "wasted": 1, "kekw": 2.5}},
         "fortnite": {"keywords": {"cracked": 2}},  # a kind that only the learner knows: matched by its name
     },
     "streamers": {"zack": {"keywords": {"asmonl": 2, "W": 1}}},
@@ -46,11 +47,11 @@ def test_a_stream_gets_the_keywords_of_its_kind_and_of_its_streamer(monkeypatch)
     )
     assert config.keywords_for("someone") == {"KEKW": 2, "W": 1.5}
     gta = config.keywords_for("someone", "Grand Theft Auto VI")
-    assert gta == {"KEKW": 2, "W": 1.5, "busted": 2, "wasted": 2.5}
+    assert gta == {"KEKW": 2.5, "W": 1.5, "busted": 2, "wasted": 2.5}
     zack = config.keywords_for(
         "Zack", "Just Chatting"
     )  # no words of GTA; the learned and hand-set ones of zack
-    assert zack == {"KEKW": 2, "W": 1, "asmonl": 2, "bald": 3}
+    assert zack == {"KEKW": 2, "W": 1.5, "asmonl": 2, "bald": 3}  # learned W 1 does not lower the set 1.5
     assert "busted" in config.keywords_for("rp")  # no category given: the game set in streamers.yaml
     assert (
         settings("someone", "Grand Theft Auto VI")["keep_q"] == 0.985

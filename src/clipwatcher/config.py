@@ -65,7 +65,8 @@ _LEARNED: tuple[float, dict[str, Any]] = (0.0, {})
 
 def learned() -> dict[str, Any]:
     """config/keywords.yaml: what scripts/learn_keywords.py found in real chat (D16). Re-read when the
-    file changes, so a new learn run reaches a bot that is already running."""
+    file changes: a running bot uses a new learn run from the next detector it makes (a new broadcast, a
+    change of game, a restart)."""
     global _LEARNED
     p = CONFIG_DIR / "keywords.yaml"
     try:
@@ -83,7 +84,8 @@ def category_profile(category: str | None) -> tuple[str | None, dict[str, Any]]:
     Kinds are listed under ``categories:`` in global.yaml (hand-set: what to match, detector overrides,
     extra keywords) and in keywords.yaml (learned keywords). A stream belongs to the first kind one of whose
     ``match`` texts is in the category name: "grand theft auto vi" is in Twitch's "Grand Theft Auto VI" and
-    in Kick's "Grand Theft Auto VI (GTA)".
+    in Kick's "Grand Theft Auto VI (GTA)". In the settings ``keywords`` are the hand-set ones and
+    ``learned_keywords`` the learned.
     """
     if not category:
         return None, {}
@@ -93,21 +95,41 @@ def category_profile(category: str | None) -> tuple[str | None, dict[str, Any]]:
         prof_h, prof_a = hand.get(name) or {}, auto.get(name) or {}
         needles = [*(prof_h.get("match") or []), *(prof_a.get("match") or [])] or [name.replace("-", " ")]
         if any(str(n).lower() in text for n in needles):
-            kw = {**(prof_a.get("keywords") or {}), **(prof_h.get("keywords") or {})}
-            return name, {**prof_a, **prof_h, "keywords": kw}
+            return name, {
+                **prof_a, **prof_h, "keywords": prof_h.get("keywords") or {},
+                "learned_keywords": prof_a.get("keywords") or {},
+            }  # fmt: skip
     return None, {}
 
 
+def _add_keywords(kw: dict[str, float], extra: dict[str, Any] | None, *, raise_only: bool = False) -> None:
+    """Put ``extra`` into ``kw``, a word being the same word in any case (KEKW, kekw). ``raise_only``: a
+    weight found by the learner never lowers one a person set."""
+    spelt = {k.lower(): k for k in kw}
+    for word, w in (extra or {}).items():
+        have = spelt.get(str(word).lower())
+        if have is None:
+            kw[str(word)] = float(w)
+            spelt[str(word).lower()] = str(word)
+        elif not raise_only or float(w) > kw[have]:
+            kw[have] = float(w)
+
+
 def keywords_for(name: str | None, category: str | None = None) -> dict[str, float]:
-    """Reaction keyword weights for one stream (D3, D16): the global list, then the words of the kind of
+    """Reaction keyword weights for one stream (D3, D16): the global list; the words learned for the kind of
     stream it is (``category``, as the platform names it; the streamer's ``game`` in streamers.yaml when not
-    given), then the words learned for this streamer's chat, then the streamer's hand-set extras."""
-    kw = dict(global_config().get("detector", {}).get("keywords", {}))
+    given) and that kind's hand-set ones; the words learned for this streamer's chat and the streamer's
+    hand-set extras. Hand-set weights win; a learned weight only adds a word or raises one."""
+    kw: dict[str, float] = {}
+    _add_keywords(kw, global_config().get("detector", {}).get("keywords"))
     scfg = streamer(name) if name else {}
-    kw.update(category_profile(category or scfg.get("game"))[1].get("keywords") or {})
+    kind = category_profile(category or scfg.get("game"))[1]
+    _add_keywords(kw, kind.get("learned_keywords"), raise_only=True)
+    _add_keywords(kw, kind.get("keywords"))
     if name:
-        kw.update(((learned().get("streamers") or {}).get(name.lower()) or {}).get("keywords") or {})
-        kw.update(scfg.get("keywords") or {})
+        own = ((learned().get("streamers") or {}).get(name.lower()) or {}).get("keywords")
+        _add_keywords(kw, own, raise_only=True)
+        _add_keywords(kw, scfg.get("keywords"))
     return kw
 
 
