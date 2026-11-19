@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run the bot on live streams on this Mac: the Telegram approval bot (Claim/Approve buttons) plus the live
 # lane (record, chat, detect, judge, render, stage). No Twitch/Kick credentials needed: anonymous IRC chat,
-# Kick's public chat history and anonymous streamlink, which waits on offline channels until they go live.
+# Kick's public chat websocket and anonymous streamlink, which waits on offline channels until they go live.
 #   scripts/run_live_mac.sh                  # every English streamer in config/streamers.yaml
 #   scripts/run_live_mac.sh kaicenat,clix    # a subset
 # Ctrl-C (or closing the terminal) stops both. caffeinate keeps the Mac awake while it runs.

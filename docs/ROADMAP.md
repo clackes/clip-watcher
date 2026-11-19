@@ -25,8 +25,9 @@ Status (17 Nov 2026, night). Handoff and next steps: docs/HANDOFF.md.
   assets/branding/src via scripts/build_brand_assets.py, subs at y1495) is kept as `render.layout: stack`.
 - Lessons from real runs: small chats need an adaptive unique-chatter floor; bots posting every few seconds
   must not hold fires; live fires must mature ~15 s to get their real peak score; faster-whisper must not go
-  through PyAV; each clip needs its own layout detection; Kick chat = web.kick.com history polling (skip the
-  first backlog page); pruning must never stop on low disk (it filled the Mac twice); resolve streamlink next
+  through PyAV; each clip needs its own layout detection; Kick chat = its realtime websocket, the chat history
+  only for gaps and with a fresh cursor (the bare address is cached 10 s), time from created_at and never from
+  message_ref, at most 1.5 requests a second (CLAUDE.md D15); pruning must never stop on low disk (it filled the Mac twice); resolve streamlink next
   to the venv Python; kill recorders by process group.
 - Judge v2 (built, not yet run against the API): static cached prompt prompts/judge_v2.md, 8 labelled
   480x270 frames, compact JSON in/out, clickbait title/description rules, spoiler/music/gambling flags that

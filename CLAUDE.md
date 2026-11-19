@@ -32,8 +32,9 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 - `scripts/force_clip.py` pushes one forced moment through the live pipeline on a running ring buffer.
 
 ## Decision log (v2.1, binding)
-- D1 Ingestion: streamlink -> .ts + anonymous Twitch IRC TLS (irc.chat.twitch.tv:6697) + Kick Pusher/webhooks.
-  patchright only as optional Kick Cloudflare cookie adapter, never video capture.
+- D1 Ingestion: streamlink -> .ts + anonymous Twitch IRC TLS (irc.chat.twitch.tv:6697) + Kick's realtime
+  websocket (D15; Pusher is gone). patchright only as optional Kick Cloudflare cookie adapter, never video
+  capture.
 - D2 Ring buffer: 10 s .ts segments, 15-60 min window (default 30). Candidates pin window +/-60 s. Pins expire
   after render or 48 h. Recording pauses and alerts below 15% and 5 GB free; pruning never stops. One ring
   folder per streamer for the life of the process: a lane restart records into it again (clips in flight keep
@@ -78,7 +79,8 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   a broadcast is kept whole in work/chat/<login>/<stream id>.jsonl and never pruned; only the video stays a
   rolling window. On joining (start, restart, crash) `session.StreamSession` reads the
   saved log, fetches the rest from Twitch's chat replay from the first second of the stream (anonymous GQL by
-  VOD offset, `chat/twitch_replay.py`; up to `chat.backfill_max_h` 12; needs VODs on; no Kick backfill),
+  VOD offset, `chat/twitch_replay.py`; up to `chat.backfill_max_h` 12; needs VODs on; Kick: its chat
+  history, D15),
   primes the detector with it and holds live chat meanwhile; a new broadcast gets a new log and detector.
   `detect/session.SessionTable` is the stream as a table, one row (U, M, E, S) per second:
   chat_score = 0.3*z(U) + 0.25*z(M messages) + 0.3*z(E) + 0.15*z(S). Level = half whole-stream median, half
@@ -88,6 +90,24 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   The cooldown starts at kept spikes only and a spike 1.5x the last kept one overrides it. Candidates carry
   session_pct / session_rank (meta chat_pct / chat_rank). Replay of 6 real chats (55 h) against 180 viewer
   clips: 34 hit at 3.1 clips/h (before: 18 at 2.2/h, none on the two biggest chats).
+- D15 Kick (checked against the live service 19 Nov, all without login or key; `chat/kick.py`). Live chat:
+  POST web.kick.com/api/v1/realtime/channels/<channel id>/chat/connection names a Centrifugo websocket, POST
+  .../realtime/auth/connection gives a guest token (45 min, renewed on the open connection); messages come on
+  chatrooms.<chatroom id>.v2 as App\Events\ChatMessageEvent, complete, ~0.5 s late; gifted subs (5+) and
+  hosts mute like sub bombs and raids. History: GET kick.com/api/v2/channels/<channel id>/messages?cursor=<epoch
+  microseconds> = the 25 messages before that instant, any instant, VODs 17 days old included; it fills the
+  gap after a reconnect, is the polling fallback when the websocket cannot be opened, backfills a broadcast
+  and is the VOD lane's chat. Always with a cursor: the bare address is cached 10 s. Kick lets about 1.6
+  requests a second through (kick.com and web.kick.com together) and answers 429 beyond, so all requests share
+  one limiter (`kick.max_rps` 1.5) and history comes at ~35 messages a second: a broadcast is backfilled
+  newest first for `chat.backfill_first_s`, detection starts, the rest is read in the background and the
+  detector rebuilt on it every `chat.rebuild_every_s`. Time is the server's created_at (whole seconds);
+  metadata.message_ref is the viewer's clock (6% off by more than 5 s, some 40 s ahead) and only orders
+  messages inside their second. Broadcast id and start: /api/v2/channels/<slug> (livestream). Viewer clips:
+  /api/v2/channels/<slug>/clips, public, so D3's clip confirmation needs no credentials on Kick; a moment is
+  confirmed when at least twice the usual number of clips cover it (big channels clip every few seconds).
+  VODs: /api/v2/channels/<slug>/videos gives start, length and the HLS playlist, cut by ffmpeg
+  (/api/v1/video/<uuid>, which yt-dlp asks, answers 403).
 - D14 Clips run 30-59 s (owner, 19 Nov, as read from "at least 30 seconds up to 59"; replaces the 12-30 s of
   D6/D12; `render.clip_min_s: 12` brings the short clips back): the candidate window is 59 s of
   footage (`detector.before_s` 40 / `after_s` 19, same in `vod`), the judge trims inside 30-59 s (prompt) and
@@ -146,6 +166,8 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   `pin(start_ms, end_ms, ttl_s)`, `prune()`, `cut(start_ms, end_ms, out) -> Path` (wall-clock epoch ms via
   #EXT-X-PROGRAM-DATE-TIME map). `watcher.py` live polling (Helix / Kick), `recorder.py` streamlink supervisor.
 - Live chat (`chat/twitch_irc.py`, `chat/kick.py`): async iterators yielding ChatMessage with epoch-ms ts.
+  `chat/kick.py` `KickChat(slug)` (websocket + gap fill + polling fallback), `live_session(slug)`,
+  `replay(channel_id, start_ms, end_ms, budget_s=None) -> (messages, instant reached)`, `message_to_chat`.
   `chat/twitch_replay.py` `live_session(login) -> Session | None`, `fetch(vod_id, start_s, end_s) -> list[ChatMessage]`
   (chat from before the bot joined). `chat/live_log.py` `LiveLog(login, stream_id, root)` `.write/.read/.rewrite`.
   `session.py` `StreamSession(login, root=, platform=)`: `.feed(msg)` like a detector, `.watch()` task (D13).
