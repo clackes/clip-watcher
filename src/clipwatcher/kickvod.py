@@ -178,26 +178,32 @@ def main(argv: list[str] | None = None) -> int:
     def fetch_window(start_s: float, end_s: float, out: Path) -> None:
         vod.run_cmd(build_ytdlp_cmd(url, start_s, end_s, out))
 
+    failed = 0
     for n, c in enumerate(cands, 1):
-        pkg = vod.process_candidate(
-            n,
-            c,
-            streamer=streamer,
-            vod=url,
-            vid=vid,
-            work=work,
-            out_dir=a.out,
-            video=a.video,
-            messages=messages,
-            language=language,
-            judge=not a.no_judge,
-            pad_s=float(vcfg.get("pad_s", 6)),
-            quality=vcfg.get("quality", "1080p60"),
-            fetch_window=fetch_window,
-            platform="kick",
-        )
+        try:  # one clip that cannot be made (the VOD ends inside it, ffmpeg fails) is not the end of the run
+            pkg = vod.process_candidate(
+                n,
+                c,
+                streamer=streamer,
+                vod=url,
+                vid=vid,
+                work=work,
+                out_dir=a.out,
+                video=a.video,
+                messages=messages,
+                language=language,
+                judge=not a.no_judge,
+                pad_s=float(vcfg.get("pad_s", 6)),
+                quality=vcfg.get("quality", "1080p60"),
+                fetch_window=fetch_window,
+                platform="kick",
+            )
+        except Exception as e:  # noqa: BLE001
+            failed += 1
+            print(f"failed #{n}: {type(e).__name__}: {e}", file=sys.stderr)
+            continue
         print(f"staged #{n}: {pkg}" if pkg else f"rejected by the judge #{n}")
-    return 0
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

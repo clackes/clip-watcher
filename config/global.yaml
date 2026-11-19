@@ -123,6 +123,8 @@ judge:
     claude-haiku-5-5: disabled
     claude-sonnet-5-5: adaptive
   max_tokens: 8000          # thinking counts toward it; the answer is ~300 tokens; headroom is not billed
+  timeout_s: 60             # one judge attempt; left to the SDK a hung call held a render slot for up to 30 min
+  max_retries: 1            # retries after the first attempt, then the heuristic answers
   frames: 8                 # min frames (evenly spaced + 2 right after the chat peak)
   frames_max: 16            # one frame every frame_every_s, up to this many
   frame_every_s: 2.5

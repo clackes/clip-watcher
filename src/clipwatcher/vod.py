@@ -321,24 +321,30 @@ def main(argv: list[str] | None = None) -> int:
     if not cands:
         print("no candidates")
         return 0
+    failed = 0
     for n, c in enumerate(cands, 1):
-        pkg = process_candidate(
-            n,
-            c,
-            streamer=streamer,
-            vod=a.vod,
-            vid=vid,
-            work=work,
-            out_dir=a.out,
-            video=a.video,
-            messages=messages,
-            language=language,
-            judge=not a.no_judge,
-            pad_s=float(vcfg.get("pad_s", 6)),
-            quality=vcfg.get("quality", "1080p60"),
-        )
+        try:  # one clip that cannot be made (the VOD ends inside it, ffmpeg fails) is not the end of the run
+            pkg = process_candidate(
+                n,
+                c,
+                streamer=streamer,
+                vod=a.vod,
+                vid=vid,
+                work=work,
+                out_dir=a.out,
+                video=a.video,
+                messages=messages,
+                language=language,
+                judge=not a.no_judge,
+                pad_s=float(vcfg.get("pad_s", 6)),
+                quality=vcfg.get("quality", "1080p60"),
+            )
+        except Exception as e:  # noqa: BLE001
+            failed += 1
+            print(f"failed #{n}: {type(e).__name__}: {e}", file=sys.stderr)
+            continue
         print(f"staged #{n}: {pkg}" if pkg else f"rejected by the judge #{n}")
-    return 0
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

@@ -165,3 +165,28 @@ def test_viewer_clips_confirm_and_reorder_vod_candidates():
     loud = [(i / 10, -8.0 if 400 <= i < 410 else -30.0 + (i % 5) * 0.5) for i in range(590)]
     both = vod.with_loudness(top[0], loud)  # the loudness bonus is added to the clip bonus, not instead of it
     assert both.final_score == 8.0 + 1.5 + 1.5 and both.signals["viewer_clip"] and both.signals["loud_z"] > 5
+
+
+def test_one_clip_that_cannot_be_rendered_does_not_end_the_run(tmp_path, monkeypatch, capsys):
+    chat = synth.to_tdl_json(synth.make_chat(), tmp_path / "chat.json")
+    monkeypatch.setattr(vod, "run_cmd", lambda cmd: None)
+    renders, staged = [], []
+
+    def short(src, start, dur, out, **k):
+        renders.append(out)
+        if len(renders) == 1:
+            raise RuntimeError("render failed, 2.0 s of picture for a 30.0 s clip")
+        return out
+
+    _fake(
+        monkeypatch, "clipwatcher.render.template", render_short=short, render_clean=lambda s, a, d, o, **k: o
+    )
+    _fake(
+        monkeypatch,
+        "clipwatcher.queue.staging",
+        stage_package=lambda c, s, cl, m, **k: staged.append(c) or tmp_path,
+    )
+    args = ["--vod", "888888", "--streamer", "foo", "--chat", str(chat), "--no-judge", "--top", "3"]
+    rc = vod.main([*args, "--work", str(tmp_path / "w"), "--out", str(tmp_path / "st")])
+    assert rc == 1 and len(renders) == 3 and len(staged) == 2  # the other two are still made
+    assert "failed #1: RuntimeError" in capsys.readouterr().err
