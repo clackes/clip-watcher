@@ -217,8 +217,18 @@ class Recorder:
             self._last_ingest = time.time()
         return n
 
+    def drop_unindexed(self) -> list[str]:
+        """Delete segment files the index does not know. When a lane restarts into the same folder, the
+        last segments of the previous run were written but never ingested, so pruning would never see them."""
+        known = {r["name"] for r in self.ring.segments()}
+        gone = [f.name for f in self.dir.glob("seg_*.ts") if f.name not in known]
+        for name in gone:
+            (self.dir / name).unlink(missing_ok=True)
+        return gone
+
     async def start(self) -> None:
         await self.stop()
+        self.drop_unindexed()
         await self._spawn()
         self._tasks.append(asyncio.create_task(self._ingest_loop()))
 

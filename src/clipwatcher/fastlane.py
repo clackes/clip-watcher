@@ -216,23 +216,34 @@ class FastLane:
     # -- main loop ----------------------------------------------------------
     async def run(self) -> list[Outcome]:
         self._sem = asyncio.Semaphore(int(self.cfg["max_parallel"]))
-        async for msg in self.chat:
-            self._remember(msg)
-            cand = self.detector.feed(msg)
-            if cand is not None and cand.chat_score < float(self.cfg["min_score"]):
-                log.info("%s: skip weak moment score=%.1f", self.streamer, cand.chat_score)
-                cand = None
-            if cand is not None and self._clip_id(cand) in self._started:
-                log.info("%s: %s already in progress or done", self.streamer, self._clip_id(cand))
-                cand = None
-            if cand is not None:
-                self._started.add(self._clip_id(cand))
-                t = asyncio.create_task(self._guarded(cand))
-                self._tasks.add(t)
-                t.add_done_callback(self._tasks.discard)
-        if self._tasks:
-            await asyncio.gather(*list(self._tasks))
+        try:
+            async for msg in self.chat:
+                self._remember(msg)
+                self._start(self.detector.feed(msg))
+        except asyncio.CancelledError:
+            for t in self._tasks:  # shutdown: do not hold it up for renders
+                t.cancel()
+            raise
+        finally:
+            # Chat ended or crashed: the clips already being made are finished first. The caller stops the
+            # recorder right after this returns, and they still need its ring buffer.
+            if self._tasks:
+                await asyncio.gather(*list(self._tasks), return_exceptions=True)
         return self.outcomes
+
+    def _start(self, cand: Candidate | None) -> None:
+        if cand is None:
+            return
+        if cand.chat_score < float(self.cfg["min_score"]):
+            log.info("%s: skip weak moment score=%.1f", self.streamer, cand.chat_score)
+            return
+        if self._clip_id(cand) in self._started:
+            log.info("%s: %s already in progress or done", self.streamer, self._clip_id(cand))
+            return
+        self._started.add(self._clip_id(cand))
+        t = asyncio.create_task(self._guarded(cand))
+        self._tasks.add(t)
+        t.add_done_callback(self._tasks.discard)
 
     def _remember(self, msg: ChatMessage) -> None:
         self.recent.append(msg)

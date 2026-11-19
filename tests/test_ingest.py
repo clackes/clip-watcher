@@ -443,3 +443,16 @@ def test_recorder_loop_survives_a_failed_check(tmp_path, monkeypatch):
         pass
     assert len(calls) == 4  # kept going after two failures, stopped only when cancelled
     assert len(alerts) == 1 and "No space left" in alerts[0]  # one alert for the streak
+
+
+def test_recorder_reusing_a_ring_drops_segments_the_last_run_never_indexed(tmp_path):
+    from clipwatcher.ingest.recorder import Recorder
+
+    rec = Recorder("twitch", "x", "s", tmp_path)
+    kept, orphan = rec.dir / "seg_r1_00000.ts", rec.dir / "seg_r1_00001.ts"
+    kept.write_bytes(b"x")
+    orphan.write_bytes(b"x")
+    rec.ring.add_segment(kept, 1_000_000, 10)
+    again = Recorder("twitch", "x", "s", tmp_path)  # the lane restarted into the same folder
+    assert again.drop_unindexed() == ["seg_r1_00001.ts"]
+    assert kept.exists() and not orphan.exists() and len(again.ring.segments()) == 1

@@ -27,7 +27,9 @@ def data_root() -> Path:
     return Path(os.environ.get("CLIPWATCHER_DATA", config.ROOT / "work"))
 
 
-async def run_streamer(login: str, *, db, bot=None, staging_root: Path | None = None) -> None:
+async def run_streamer(
+    login: str, *, db, bot=None, staging_root: Path | None = None, ring_id: str | None = None
+) -> None:
     from clipwatcher.chat.twitch_irc import TwitchChat
     from clipwatcher.fastlane import FastLane, Steps
     from clipwatcher.ingest.recorder import Recorder
@@ -41,7 +43,9 @@ async def run_streamer(login: str, *, db, bot=None, staging_root: Path | None = 
         chat_src = KickHistoryChat(login)
     else:
         chat_src = TwitchChat(login)
-    stream_id = time.strftime("%Y%m%d-%H%M%S")
+    # The ring folder outlives a lane restart (supervise passes the same id again): clips still being cut
+    # from it keep their pinned video. Only folders of earlier processes are swept below.
+    stream_id = ring_id or time.strftime("%Y%m%d-%H%M%S")
     buf = config.global_config().get("buffer", {})
     rec = Recorder(
         platform,
@@ -93,10 +97,11 @@ def _alerter(bot):
 
 async def supervise(login: str, **kw) -> None:
     delay = 5.0
+    ring_id = time.strftime("%Y%m%d-%H%M%S")
     while True:
         t0 = time.time()
         try:
-            await run_streamer(login, **kw)
+            await run_streamer(login, ring_id=ring_id, **kw)
         except asyncio.CancelledError:
             raise
         except Exception:

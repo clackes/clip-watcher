@@ -225,3 +225,30 @@ def test_same_window_fires_once(tmp_path):
     )  # fmt: skip
     out = asyncio.run(lane.run())
     assert len(out) == 1 and sum(e[0] == "transcribe" for e in log) == 1
+
+
+def test_clip_in_flight_is_finished_when_chat_crashes(tmp_path):
+    """A chat error ended run() with the clip task still running; the caller then stopped the recorder and a
+    restart deleted the ring the clip was about to cut from."""
+    log: list = []
+    t0 = 1_700_000_000_000
+
+    class CrashingChat:
+        def __aiter__(self):
+            return self._gen()
+
+        async def _gen(self):
+            yield ChatMessage(t0, "u", "fire")
+            raise ConnectionError("chat source died")
+
+    lane = fastlane.FastLane(
+        "zack", CrashingChat(), FakeDetector({"fire"}), FakeRing(log), steps=_steps(log),
+        cfg={"work_dir": str(tmp_path)}, db=object(), bot=object(),
+    )  # fmt: skip
+    try:
+        asyncio.run(lane.run())
+    except ConnectionError:
+        pass
+    else:
+        raise AssertionError("the crash must still reach the supervisor")
+    assert [o.status for o in lane.outcomes] == ["staged"] and any(e[0] == "stage" for e in log)
