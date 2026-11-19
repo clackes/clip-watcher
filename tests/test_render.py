@@ -60,7 +60,6 @@ def check_short(out, dur, fps=60):
 
 def test_pure_helpers():
     assert pick_style("abc") == pick_style("abc")
-    assert esc_filter_path("/a b/c:d'e") == "/a b/c\\:d\\'e"
     ass = build_ass(demo_words(4), 4, credit="twitch.tv/x")
     assert "PlayResX: 1080" in ass and "\\pos(540,1495)" in ass and "&H00E6FF&" in ass
     assert "\\an9\\pos(1060,407)" in ass
@@ -562,3 +561,64 @@ def test_render_keeps_a_clip_the_recording_cut_short_when_it_is_still_long_enoug
         render_clean(synth_src, SRC_SECONDS - 5.0, 8.0, out, profile="cpu_live")
     assert abs(float(probe(out)["format"]["duration"]) - 5.0) <= 0.1
     assert "5.0 s of 8.0 s" in caplog.text
+
+
+# -- paths in the filter graph -----------------------------------------------------------------------------
+ODD_DIR = "it's 12:30, [take 2]; final"  # every character ffmpeg's two parsers treat as special
+
+
+def test_filter_paths_are_escaped_for_both_parsers(monkeypatch):
+    r"""The graph parser reads the string first (\ ' [ ] , ;), the filter's option parser second (\ ' :)."""
+    assert esc_filter_path("/a b/c:d'e") == r"/a b/c\\:d\\\'e"
+    assert esc_filter_path("/x/a,b;[c]") == r"/x/a\,b\;\[c\]"
+    assert esc_filter_path("/plain/path-1_2.ass") == "/plain/path-1_2.ass"
+    import pathlib
+
+    from clipwatcher.render import template
+
+    monkeypatch.setattr(template.os, "name", "nt")  # Windows: forward slashes, the drive colon like any colon
+    monkeypatch.setattr(template, "Path", pathlib.PureWindowsPath)
+    assert esc_filter_path(r"C:\Users\me\subs.ass") == r"C\\:/Users/me/subs.ass"
+
+
+@pytest.mark.ffmpeg
+def test_ass_filter_finds_file_and_fonts_in_an_oddly_named_folder(tmp_path):
+    """ffmpeg itself must read the escaped paths: the captions file opens and the font comes from fontsdir."""
+    import shutil
+
+    from clipwatcher.render.branding import FONTS_DIR
+
+    odd = tmp_path / ODD_DIR
+    shutil.copytree(FONTS_DIR, odd / "fonts")
+    (odd / "subs.ass").write_text(build_ass(demo_words(1), 1, style="word"), encoding="utf-8")
+    vf = f"ass=filename={esc_filter_path(odd / 'subs.ass')}:fontsdir={esc_filter_path(odd / 'fonts')}"
+    r = subprocess.run(
+        [ffmpeg_bin(), "-hide_banner", "-v", "debug", "-f", "lavfi", "-i", "color=s=1080x1920:r=5:d=1",
+         "-vf", vf, "-f", "null", "-"],
+        capture_output=True, text=True,
+    )  # fmt: skip
+    assert r.returncode == 0, r.stderr[-600:]
+    said = [ln for ln in r.stderr.splitlines() if ODD_DIR in ln]
+    assert any("Added subtitle file" in ln and "subs.ass" in ln for ln in said)
+    assert any("Loading font file" in ln and "Anton-Regular.ttf" in ln for ln in said)
+
+
+@pytest.mark.ffmpeg
+@pytest.mark.parametrize("layout", ["split", "stack"])
+def test_short_renders_from_an_oddly_named_work_folder(synth_src, tmp_path, monkeypatch, layout):
+    """Every render failed when the temp folder or the fonts folder had a ':' or an apostrophe in its path."""
+    import shutil
+    import tempfile
+
+    from clipwatcher.render import template
+
+    odd = tmp_path / ODD_DIR
+    shutil.copytree(template.FONTS_DIR, odd / "fonts")
+    monkeypatch.setattr(template, "FONTS_DIR", odd / "fonts")
+    monkeypatch.setattr(tempfile, "tempdir", str(odd))  # where the captions file is written
+    out = odd / "out.mp4"
+    render_short(
+        synth_src, 3.0, 2.0, out, clip_id="odd", streamer="tester", words=demo_words(2), hook="LOOK",
+        profile="cpu_live", layout=layout,
+    )  # fmt: skip
+    check_short(out, 2.0)

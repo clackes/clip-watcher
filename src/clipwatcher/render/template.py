@@ -79,18 +79,18 @@ def default_game(info: SourceInfo) -> Rect:
 
 
 def esc_filter_path(p: str | Path) -> str:
-    out = []
-    drive = ""
-    if os.name == "nt":  # forward slashes; "C:" -> "C\\:" (option-level + filtergraph-level escaping)
+    r"""A path as a filter option value inside -filter_complex.
+
+    Two parsers read it. The filter's option parser treats \ ' : as special, the graph parser before it
+    \ ' [ ] , ; so a colon needs \\: and an apostrophe \\\' to arrive as themselves. One level only
+    (what this did before) left every ':' and "'" in a temp or fonts folder name breaking the render.
+    Windows: forward slashes, and the drive colon "C:" becomes "C\\:" like any other colon."""
+    if os.name == "nt":
         p = Path(p).as_posix()
-        if len(p) > 1 and p[1] == ":":
-            drive, p = p[0] + "\\\\:", p[2:]
-    out.append(drive)
-    for ch in str(p):
-        if ch in "\\:'[],;":
-            out.append("\\")
-        out.append(ch)
-    return "".join(out)
+    s = str(p)
+    for special in ("\\':", "\\'[],;"):  # option level first, then graph level on top of it
+        s = "".join("\\" + ch if ch in special else ch for ch in s)
+    return s
 
 
 def _seek(start_s: float) -> tuple[float, float]:
