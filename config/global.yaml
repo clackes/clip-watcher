@@ -21,6 +21,11 @@ chat:                       # D13: the whole chat of a broadcast is kept in work
   backfill_max_h: 12        # ... at most this far back (a 48 h marathon is millions of messages)
   session_poll_s: 60        # how often to check whether the streamer started a new broadcast
 
+kick:
+  max_rps: 1.5              # requests a second to Kick, all lanes together. Measured 19 Nov: a burst of 5/s
+                            # passes, but over a minute Kick lets about 1.6/s through and answers 429 beyond.
+                            # Live chat is a websocket and costs none; history reads at ~35 messages a second.
+
 detector:                   # D3 + D13
   # chat_score = sum of weight * z over a 10 s window: U unique chatters, M messages, E keyword energy,
   # S share of short / repeated messages. z = (value - level) / scale, with the scale taken from every
@@ -54,7 +59,8 @@ detector:                   # D3 + D13
   prompt_share: 0.4         # one keyword-less message from >= 40% of chatters = prompted copy-paste, not a moment
   rescue_s: 600             # D3: a viewer clip confirms a spike that fired under the keep gate in the last N s
   default_delay_s: 8        # chat reacts ~5-15 s after the moment
-  bots: [nightbot, streamelements, moobot, fossabot, sery_bot, streamlabs, wizebot, soundalerts]
+  bots: [nightbot, streamelements, moobot, fossabot, sery_bot, streamlabs, wizebot, soundalerts,
+         botrix, kickbot, kicklet]   # the last three are Kick's
   keywords:                 # weights for E (case-insensitive whole tokens; held keys match too: LMAOOO, WWWW)
     "clip it": 3
     clip: 3

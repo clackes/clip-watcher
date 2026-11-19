@@ -1,6 +1,7 @@
 """Test the spike detector against reality: replay a real chat through it, as the live lane would see it.
 
     python scripts/replay_chat.py --vod 2932469290 --login zackrawrr [--hours 6] [--join-at-h 3]
+    python scripts/replay_chat.py --kick --vod <uuid of a Kick VOD> --login n3on [--hours 1]
     python scripts/replay_chat.py --jsonl work/chat/zackrawrr/318665167448.jsonl
 
 --vod downloads the chat replay of a Twitch VOD (also one still being recorded) into work/replay/. With
@@ -49,6 +50,37 @@ def load_vod(vod: str, hours: float | None) -> tuple[list[ChatMessage], int, str
     return read(cache), _ms(v["createdAt"]), v["owner"]["login"]
 
 
+def load_kick_vod(slug: str, vod: str, hours: float | None) -> tuple[list[ChatMessage], int, dict]:
+    """(chat in epoch ms, VOD start, VOD facts) of a Kick VOD; the chat is cached in work/replay/. Kick lets
+    history through at about 35 messages a second, so an hour of a busy chat takes several minutes."""
+    from clipwatcher import kickvod
+    from clipwatcher.chat import kick
+
+    meta = kickvod.fetch_vod_meta(slug, kickvod.kick_vod_id(vod))
+    dur = min(meta["duration_s"] or 0, hours * 3600) if hours else meta["duration_s"] or 0
+    cache = config.ROOT / "work" / "replay" / f"kick-{meta['stream_id']}-{int(dur)}.jsonl"
+    if not cache.exists():
+        print(f"reading the chat of Kick VOD {vod} (0-{dur / 3600:.1f} h) ...")
+        msgs, _ = kick.replay(meta["channel_id"], meta["start_ms"], meta["start_ms"] + dur * 1000)
+        write_jsonl(msgs, cache)
+    return read(cache), int(meta["start_ms"]), meta
+
+
+def kick_clips(slug: str, stream_id: str, t0_ms: int) -> list[dict]:
+    """The channel's most viewed clips of the week that belong to this broadcast, on the VOD's timeline."""
+    from clipwatcher.chat import kick
+    from clipwatcher.detect.viewer_clips import KICK_CLIPS, ViewerClip, parse_rfc3339
+
+    d = kick._http_json(KICK_CLIPS.format(slug=slug) + "?cursor=0&sort=view&time=week", {})
+    out = []
+    for c in d.get("clips") or []:
+        if str(c.get("livestream_id")) == str(stream_id) and c.get("duration"):
+            a, b = ViewerClip(str(c["id"]), parse_rfc3339(c["created_at"]), "", float(c["duration"])).window
+            out.append({"title": c.get("title") or "", "viewCount": c.get("views") or 0,
+                        "videoOffsetSeconds": a - t0_ms / 1000, "durationSeconds": b - a})  # fmt: skip
+    return out
+
+
 def read(path: Path) -> list[ChatMessage]:
     out = []
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -73,13 +105,20 @@ def main() -> int:
     src.add_argument("--vod", help="Twitch VOD id")
     src.add_argument("--jsonl", type=Path, help="saved chat log (work/chat/<login>/<stream id>.jsonl)")
     ap.add_argument("--login", help="channel login: compare with its viewer-made clips (needs --vod)")
+    ap.add_argument("--kick", action="store_true", help="--vod is the uuid of a Kick VOD of channel --login")
     ap.add_argument("--hours", type=float, help="only the first N hours of the VOD")
     ap.add_argument(
         "--join-at-h", type=float, default=0.0, help="the bot joins this far in, primed with history"
     )
     a = ap.parse_args()
 
-    if a.vod:
+    kick_meta = None
+    if a.kick:
+        if not (a.vod and a.login):
+            ap.error("--kick needs --vod <uuid> and --login <slug>")
+        msgs, t0_ms, kick_meta = load_kick_vod(a.login.lower(), a.vod, a.hours)
+        owner = a.login.lower()
+    elif a.vod:
         msgs, t0_ms, owner = load_vod(a.vod, a.hours)
     else:
         msgs, owner = read(a.jsonl), a.jsonl.parent.name
@@ -107,8 +146,13 @@ def main() -> int:
     same = sum(1 for b in batch if any(abs(c.peak_s - b.peak_s) <= 30 for c in live))
     print(f"batch top {len(batch)}: live found {same} of them")
     if a.vod and a.login:
+        every = (
+            kick_clips(a.login.lower(), kick_meta["stream_id"], t0_ms)
+            if kick_meta
+            else viewer_clips(a.login, a.vod)
+        )
         clips = [
-            c for c in viewer_clips(a.login, a.vod)
+            c for c in every
             if a.join_at_h * 3600 + 120 < c["videoOffsetSeconds"] < (msgs[-1].ts_ms - t0_ms) / 1000 - 30
         ]  # fmt: skip
         fires = [c.signals["fire_s"] - t0 for c in live]

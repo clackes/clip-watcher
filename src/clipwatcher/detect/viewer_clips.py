@@ -23,14 +23,22 @@ HELIX_CLIPS = "https://api.twitch.tv/helix/clips"
 CLIP_LOOKBACK_S = 35.0
 
 
+KICK_CLIPS = "https://kick.com/api/v2/channels/{slug}/clips"
+KICK_EDIT_S = 30.0  # a Kick clip is cut from the last minutes of the stream and saved a little later
+
+
 @dataclass(frozen=True)
 class ViewerClip:
     id: str
     created_s: float  # epoch seconds
     url: str = ""
+    duration_s: float | None = None  # Kick says how long the clip is (13-180 s); Twitch does not
 
     @property
     def window(self) -> tuple[float, float]:
+        """The stretch of the stream the clip covers, as well as it is known."""
+        if self.duration_s:
+            return self.created_s - self.duration_s - KICK_EDIT_S, self.created_s
         return clip_window(self.created_s)
 
     @property
@@ -122,6 +130,85 @@ class ViewerClipPoller:
 
     def moment_times(self) -> list[float]:
         return [c.moment_s for c in self.seen.values()]
+
+
+class KickClipPoller:
+    """Viewer-made clips of a Kick broadcast. Kick lists a channel's clips, newest first, to anyone:
+    no login and no key. Same interface as ViewerClipPoller (``seen``, ``poll_once``, ``run``)."""
+
+    def __init__(
+        self,
+        slug: str,
+        livestream_id: str | None = None,
+        *,
+        interval: float = 60.0,
+        get: Callable[[str], dict[str, Any]] | None = None,
+    ):
+        self.slug, self.livestream_id, self.interval = slug.lower(), livestream_id, interval
+        self._get = get
+        self.seen: dict[str, ViewerClip] = {}
+
+    def _request(self) -> dict[str, Any]:
+        url = KICK_CLIPS.format(slug=self.slug) + "?cursor=0&sort=date&time=day"
+        if self._get:
+            return self._get(url)
+        from clipwatcher.chat import kick
+
+        return kick._http_json(url, {})
+
+    def poll_once(self) -> list[ViewerClip]:
+        new = []
+        for c in self._request().get("clips") or []:
+            try:
+                if self.livestream_id and str(c.get("livestream_id")) != str(self.livestream_id):
+                    continue  # a clip of an earlier broadcast
+                clip = ViewerClip(
+                    str(c["id"]), parse_rfc3339(c["created_at"]), c.get("clip_url") or "",
+                    float(c["duration"]) if c.get("duration") else None,
+                )  # fmt: skip
+            except (KeyError, ValueError, TypeError):
+                continue
+            if clip.id not in self.seen:
+                self.seen[clip.id] = clip
+                new.append(clip)
+        return new
+
+    async def run(self, on_clip: Callable[[ViewerClip], None]) -> None:
+        while True:
+            try:
+                for c in await asyncio.to_thread(self.poll_once):
+                    on_clip(c)
+            except Exception:  # noqa: BLE001 - blocked, offline, a changed answer: try again next cycle
+                pass
+            await asyncio.sleep(self.interval)
+
+    def moment_times(self) -> list[float]:
+        return [c.moment_s for c in self.seen.values()]
+
+
+def kick_vod_clip_moments(
+    slug: str, stream_id: str, start_ms: float, get: Callable[[str], dict[str, Any]] | None = None
+) -> list[float]:
+    """Where in a Kick VOD viewers made their clips: the middle of each, in seconds from the VOD start.
+    The channel's most viewed clips of the last week, filtered to this broadcast. [] on any error."""
+    try:
+        url = KICK_CLIPS.format(slug=slug.lower()) + "?cursor=0&sort=view&time=week"
+        if get is None:
+            from clipwatcher.chat import kick
+
+            d = kick._http_json(url, {})
+        else:
+            d = get(url)
+        out = []
+        for c in d.get("clips") or []:
+            if str(c.get("livestream_id")) != str(stream_id) or not c.get("duration"):
+                continue
+            clip = ViewerClip(str(c["id"]), parse_rfc3339(c["created_at"]), "", float(c["duration"]))
+            a, b = clip.window
+            out.append((a + b) / 2 - start_ms / 1000)
+        return out
+    except Exception:  # noqa: BLE001 - blocked, offline, a changed answer: confirmation is a bonus
+        return []
 
 
 _VOD_CLIPS_Q = (

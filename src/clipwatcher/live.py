@@ -38,9 +38,9 @@ async def run_streamer(
     scfg = config.streamer(login)
     platform = scfg.get("platform", "twitch")
     if platform != "twitch":
-        from clipwatcher.chat.kick import KickHistoryChat
+        from clipwatcher.chat.kick import KickChat
 
-        chat_src = KickHistoryChat(login)
+        chat_src = KickChat(login)  # realtime websocket; reads the history after a reconnect
     else:
         chat_src = TwitchChat(login)
     # The ring folder outlives a lane restart (supervise passes the same id again): clips still being cut

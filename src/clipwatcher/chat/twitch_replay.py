@@ -58,6 +58,7 @@ class Session:
     started_ms: int
     vod_id: str | None
     user_id: str | None = None  # the broadcaster, for Helix (viewer clips)
+    platform: str = "twitch"  # kick: vod_id is the channel id, which is what its chat replay goes by
 
 
 def _post(payload: dict[str, Any]) -> dict[str, Any]:
@@ -201,3 +202,13 @@ def fetch(
     msgs = [node_to_message(n, bots) for part in parts for n in part]
     msgs.sort(key=lambda m: m.ts_ms)
     return msgs
+
+
+def fetch_between(
+    s: Session, a_ms: float, b_ms: float, budget_s: float | None = None
+) -> tuple[list[ChatMessage], int]:
+    """StreamSession's history source for Twitch: replayed chat strictly between two instants, and how far
+    back the read got (always all the way: the replay is fetched in parallel, no budget needed)."""
+    off = lambda ms: (ms - s.started_ms) / 1000  # noqa: E731 - the VOD starts with the stream, give or take
+    msgs = fetch(str(s.vod_id), off(a_ms) - 30, off(b_ms) + 30)
+    return [m for m in msgs if a_ms < m.ts_ms < b_ms], int(a_ms)
