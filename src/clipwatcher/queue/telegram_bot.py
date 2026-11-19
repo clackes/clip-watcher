@@ -15,8 +15,9 @@ from .db import CARD_MAX_ATTEMPTS, ClipDB
 log = logging.getLogger(__name__)
 MAX_VIDEO_BYTES = 50 * 1024 * 1024
 CAPTION_MAX, TEXT_MAX = 1024, 4096  # Telegram limits for a video caption and a text message
-CARD_LEASE_S = 300  # how long one attempt to post a card keeps every other poster away
+CARD_LEASE_S = 600  # one attempt to post a card keeps every other poster away this long (a slow video upload)
 CARD_GRACE_S = 120  # the lane that staged a clip posts its card itself; the bot only steps in after this
+CARD_BATCH = 10  # missing cards posted per sweep: Telegram allows about 20 messages a minute to a group
 UPLOADING = "Uploading to YouTube."
 
 
@@ -205,7 +206,9 @@ def build_application(db: ClipDB, token: str | None = None, root: Path | None = 
         await asyncio.gather(*tasks, return_exceptions=True)
 
     token = token or os.environ["TELEGRAM_BOT_TOKEN"]
-    app = Application.builder().token(token).post_init(started).post_stop(stopping).build()
+    # post_stop runs after a normal stop, post_shutdown also when the bot never got to start polling
+    builder = Application.builder().token(token).post_init(started)
+    app = builder.post_stop(stopping).post_shutdown(stopping).build()
 
     async def on_button(update: Any, context: Any) -> None:
         q = update.callback_query
@@ -440,7 +443,7 @@ async def post_missing_cards(app: Any, db: ClipDB, root: Path | None = None) -> 
         return []
     root = Path(root) if root else staging.staging_root()
     posted = []
-    for row in db.cardless(CARD_GRACE_S, max_age_h * 3600):
+    for row in db.cardless(CARD_GRACE_S, max_age_h * 3600)[:CARD_BATCH]:
         try:
             if await post_card(app, db, row["id"], root / row["id"] / "short_9x16.mp4"):
                 posted.append(row["id"])

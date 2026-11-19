@@ -270,7 +270,7 @@ class ClipDB:
         self._conn().execute("UPDATE clips SET publish_error=NULL WHERE id=?", (clip_id,))
 
     # -- approval cards ----------------------------------------------------
-    def reserve_card(self, clip_id: str, lease_s: float = 300) -> int:
+    def reserve_card(self, clip_id: str, lease_s: float = 600) -> int:
         """Atomically take the right to post a clip's card. Returns the attempt number (1, 2, ...), or 0 when
         the clip has a card or someone holds the lease (is posting it, or failed less than lease_s ago)."""
         now = time.time()

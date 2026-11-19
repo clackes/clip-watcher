@@ -80,7 +80,7 @@ def env(tmp_path, monkeypatch):
     return SimpleNamespace(root=root, db=db, app=FakeApp(), stage=stage)
 
 
-def later(db, seconds=600):
+def later(db, seconds=3600):
     """Move the queue's clocks back: leases have run out and the staging lane's grace period is over."""
     db._conn().execute(
         "UPDATE clips SET updated_at=updated_at-?, card_lease_until=card_lease_until-?", (seconds, seconds)
@@ -141,6 +141,15 @@ def test_only_recent_ready_clips_without_a_card_get_one(env, monkeypatch):
     env.stage("vod")
     later(env.db)
     assert asyncio.run(telegram_bot.post_missing_cards(env.app, env.db, env.root)) == []
+
+
+def test_a_backlog_of_missing_cards_is_posted_in_batches(env):
+    for n in range(telegram_bot.CARD_BATCH + 2):  # e.g. Telegram was unreachable for the lane for a while
+        env.stage(f"c{n:02d}")
+    later(env.db)
+    posted = asyncio.run(telegram_bot.post_missing_cards(env.app, env.db, env.root))
+    assert posted == [f"c{n:02d}" for n in range(telegram_bot.CARD_BATCH)]  # oldest first, under the limit
+    assert len(asyncio.run(telegram_bot.post_missing_cards(env.app, env.db, env.root))) == 2
 
 
 def test_clips_queued_before_cards_were_tracked_are_not_posted_again(tmp_path):
