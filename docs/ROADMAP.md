@@ -29,6 +29,11 @@ Status (17 Nov 2026, night). Handoff and next steps: docs/HANDOFF.md.
   only for gaps and with a fresh cursor (the bare address is cached 10 s), time from created_at and never from
   message_ref, at most 1.5 requests a second (CLAUDE.md D15); pruning must never stop on low disk (it filled the Mac twice); resolve streamlink next
   to the venv Python; kill recorders by process group.
+- Keywords (D16, 20 Nov): streams have kinds (`categories:` in global.yaml, GTA VI first) and streamers can
+  have learned words (config/keywords.yaml), but 403 h of GTA VI chat showed that more words do not find
+  more of what viewers clip: eight laughter words carry almost all a keyword list adds (78 clips found of
+  653 with none, 87 with the eight, 90 with the list we have), and chat volume carries the rest. To find
+  more moments, look outside the word list. `scripts/learn_keywords.py learn --validate` is the test bench.
 - Judge v2 (built, not yet run against the API): static cached prompt prompts/judge_v2.md, 8 labelled
   480x270 frames, compact JSON in/out, clickbait title/description rules, spoiler/music/gambling flags that
   reject a clip. Live lane calls it once per clip when ANTHROPIC_API_KEY is set and trims to its t0/t1.

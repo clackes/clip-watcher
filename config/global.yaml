@@ -32,9 +32,14 @@ kick:
 categories:                 # D16: kinds of stream. A stream belongs to the first kind one of whose `match` texts
   grand-theft-auto-vi:      # is in the category name its platform reports ("Grand Theft Auto VI" on Twitch,
     match: ["grand theft auto vi", "gta vi", "gta 6", "gta6"]   # "Grand Theft Auto VI (GTA)" on Kick).
-    # keywords: {wasted: 2}       # hand-picked extras; the learned ones are in config/keywords.yaml
+    # No keywords of its own: 403 h of GTA VI chat (20 Nov) react with the words of detector.keywords below.
+    # The candidates the learner found (wasted, physics, jiggle, banned, damn, ayo, gyat ...) found no more
+    # of the moments viewers clipped when the detector was run with them, so none is switched on.
+    # keywords: {wasted: 2}       # hand-set extras for this kind of stream go here
     # detector: {keep_q: 0.985}   # any detector.* setting can differ for a kind of stream
-  # Add a kind:  python scripts/learn_keywords.py collect --category "<name on Twitch>"  then  learn --write
+  # Add a kind:  python scripts/learn_keywords.py collect --category "<name on Twitch>"
+  #              python scripts/learn_keywords.py learn --category "<name on Twitch>" --write
+  # learn writes config/keywords.yaml, and only words that find more viewer clips in its own test.
 
 detector:                   # D3 + D13
   # chat_score = sum of weight * z over a 10 s window: U unique chatters, M messages, E keyword energy,

@@ -29,6 +29,9 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   `python scripts/replay_chat.py --vod <id> --login <channel>` does it: downloads the chat replay, replays it
   as the live lane would, prints clips/h, the top-10 match and how many of the channel's most viewed
   viewer-made clips the detector fired on (the ground truth D13 was tuned against; old detector 18/180).
+- `python scripts/learn_keywords.py learn --category "<name on Twitch>" --validate` tests a keyword list (and
+  any change to how keywords count) on the corpus in work/corpus/: viewer clips found at a fixed number of
+  clips an hour, on clips nothing was learned from (D16; GTA VI: 653 clips in 36 channels, global list 90).
 - `scripts/force_clip.py` pushes one forced moment through the live pipeline on a running ring buffer.
 
 ## Decision log (v2.1, binding)
@@ -108,6 +111,35 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   confirmed when at least twice the usual number of clips cover it (big channels clip every few seconds).
   VODs: /api/v2/channels/<slug>/videos gives start, length and the HLS playlist, cut by ffmpeg
   (/api/v1/video/<uuid>, which yt-dlp asks, answers 403).
+- D16 Keywords per kind of stream and per streamer (owner, 19 Nov: the tool is customizable per live type,
+  GTA 6 first, and per streamer). A stream's category as its platform names it (Twitch `stream.game.name`,
+  Kick `livestream.categories[0].name`) picks a profile under `categories:` in global.yaml by its `match`
+  texts ("grand theft auto vi" is in Twitch's "Grand Theft Auto VI" and Kick's "Grand Theft Auto VI (GTA)");
+  a profile holds `keywords` and any `detector` setting. `config/keywords.yaml` (absent until a word earns
+  its place) holds learned words per category and per streamer. `config.keywords_for(name, category)`: global
+  list, learned category words, the profile's hand-set ones, learned streamer words, the streamer's hand-set
+  `keywords`; hand-set weights win, a learned one only adds a word or raises it, KEKW is kekw.
+  `StreamSession.category` follows the platform; on a change of game the detector takes the new words and
+  keeps its baseline (`LiveDetector.set_category`); VOD lanes: `--category`, else what the platform says.
+  `scripts/learn_keywords.py`: `collect` (chat replays of the category's biggest channels, cut to the
+  category by Twitch's chapter markers, with their viewer clips of the last day/week/month; `--streamers`
+  for our own channels in any category; no login; work/corpus/), `learn` (a word or pair is the category's
+  when chatters type it >= 2x more around viewer clips than otherwise, in >= 15 moments and >= 20% of the
+  channels, never mostly from one moment; a streamer's when it does so >= 3x in that one chat and is not
+  plain talk elsewhere), `--validate` (the real batch detector with and without the words on the half of
+  each channel's viewer clips no word was learned from, category words learned from other channels),
+  `--write` (only what found >= 5% and >= 3 more clips; `--force` otherwise). First run 20 Nov, GTA VI: 49
+  channels, 403 h, 3.78 M messages, 1309 viewer clips in 34 English chats. Result: GTA VI chat reacts with
+  the global list's words (the learner found 15 of them on its own), plus damn, crazy, ayo, gyat, jesus,
+  "that was", "oh my" and words of the game's own scenes (wasted, physics, jiggle, banned, coffee, psycho).
+  Adding them found no more viewer clips: 90 of 653 with and without at 3 clips/h, 126 vs 129 at 6/h; 79
+  when the detector's own spikes were moments too, 85 when learned on the test clips themselves; streamer
+  words 101 vs 100. So nothing is written and the GTA VI profile has no keywords of its own. Measured on
+  the way: with no keyword at all the detector finds 78 of the 653, with eight laughter words 87, with the
+  global list 90; D13's weights were at the top of eight alternatives on 1327 clips (183; best 187, not in
+  both halves of the channels). Dropped as labels: spikes of message volume alone (mostly chat answering the
+  streamer: "yes" and "no" lead, viewers clipped none) and counting single words' bursts on clips (too few
+  per word).
 - D14 Clips run 30-59 s (owner, 19 Nov, as read from "at least 30 seconds up to 59"; replaces the 12-30 s of
   D6/D12; `render.clip_min_s: 12` brings the short clips back): the candidate window is 59 s of
   footage (`detector.before_s` 40 / `after_s` 19, same in `vod`), the judge trims inside 30-59 s (prompt) and
@@ -143,9 +175,10 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 
 ## Module map and interfaces (keep signatures stable)
 - `models.py` ChatMessage, Candidate, JudgeResult, Word. `config.py` loaders + tool paths.
+  `config.keywords_for(name, category=None)`, `category_profile(category) -> (kind, settings)`, `learned()` (D16).
 - `chat/convert.py` `tdl_to_messages(path) -> list[ChatMessage]`, `read_jsonl/write_jsonl`.
-- `detect/detector.py` `detect(messages, *, streamer, viewers=None, top, before_s, after_s, gap_s) -> list[Candidate]`
-  (whole chat known: scored against all of it), `settings(streamer)`, `gate(table, settings)`.
+- `detect/detector.py` `detect(messages, *, streamer, viewers=None, top, before_s, after_s, gap_s, category=None) -> list[Candidate]`
+  (whole chat known: scored against all of it), `settings(streamer, category=None)`, `gate(table, settings)`.
   `detect/session.py` `SessionTable` (D13: per-second rows, level/scale/gate statistics).
   `detect/baseline.py` `x_normal_series(messages, bucket_s) / x_normal_top(...)`.
 - `render/template.py` `render_short(src, start_s, dur_s, out, *, clip_id, streamer, words, hook,
@@ -168,10 +201,12 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 - Live chat (`chat/twitch_irc.py`, `chat/kick.py`): async iterators yielding ChatMessage with epoch-ms ts.
   `chat/kick.py` `KickChat(slug)` (websocket + gap fill + polling fallback), `live_session(slug)`,
   `replay(channel_id, start_ms, end_ms, budget_s=None) -> (messages, instant reached)`, `message_to_chat`.
-  `chat/twitch_replay.py` `live_session(login) -> Session | None`, `fetch(vod_id, start_s, end_s) -> list[ChatMessage]`
+  `chat/twitch_replay.py` `live_session(login) -> Session | None` (stream id, start, category), `vod_category(vod_id)`,
+  `fetch(vod_id, start_s, end_s) -> list[ChatMessage]`
   (chat from before the bot joined). `chat/live_log.py` `LiveLog(login, stream_id, root)` `.write/.read/.rewrite`.
   `session.py` `StreamSession(login, root=, platform=)`: `.feed(msg)` like a detector, `.watch()` task (D13).
-  `detect/live.py` `LiveDetector(streamer, viewers=None).feed(msg) -> Candidate | None` (epoch seconds),
+  `detect/live.py` `LiveDetector(streamer, viewers=None, category=None).feed(msg) -> Candidate | None` (epoch
+  seconds), `.set_category(category)` (D16),
   `.prime(history) -> int` loads earlier chat as baseline without emitting clips.
   `detect/viewer_clips.py` Helix Get Clips poller (live), `vod_clip_moments(login, vod_id)` (VOD, no login);
   `detect/detector.py` `confirm(candidate, viewer_clip_times, loud_z)`, `loud_z(series, peak_rel)`.
