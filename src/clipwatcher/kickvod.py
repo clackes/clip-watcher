@@ -196,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
             fetch_window=fetch_window,
             platform="kick",
         )
-        print(f"staged #{n}: {pkg}")
+        print(f"staged #{n}: {pkg}" if pkg else f"rejected by the judge #{n}")
     return 0
 
 

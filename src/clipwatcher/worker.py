@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import shutil
 from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
@@ -42,8 +43,9 @@ def _words(p: dict[str, Any]) -> list[Word]:
 
 # --------------------------------------------------------------------------- default stage handlers
 def _lines(msgs: list, c: Candidate) -> list[str]:
+    """Chat of the window; when it must be cut, the end is kept: that is where the reaction is."""
     lo, hi = c.start_s * 1000, c.end_s * 1000
-    return [f"{m.user}: {m.text}" for m in msgs if lo <= m.ts_ms <= hi][:60]
+    return [f"{m.user}: {m.text}" for m in msgs if lo <= m.ts_ms <= hi][-2000:]
 
 
 def h_detect(p: dict[str, Any], w: Worker) -> list[dict[str, Any]]:
@@ -86,19 +88,49 @@ def h_transcribe(p: dict[str, Any], w: Worker) -> list[dict[str, Any]]:
     return [{**p, "words": [asdict(x) for x in words]}]
 
 
+def _frames_dir(p: dict[str, Any], c: Candidate, w: Worker) -> Path:
+    return w.clips_root / "frames" / f"{p['streamer']}-{int(c.start_s * 1000)}"
+
+
+def _frames_and_loud(p: dict[str, Any], c: Candidate, w: Worker, jcfg: dict[str, Any]) -> tuple[list, list]:
+    """What the judge looks at besides the transcript, as in the live and VOD lanes (this lane sent it no
+    frames at all). A failed read means judging without, not a failed job."""
+    try:
+        from .judge import frames as fr
+        from .render import cold_open
+
+        media, dur = Path(p["media"]), c.end_s - c.start_s
+        size = jcfg.get("frame_size", [480, 270])
+        frames = fr.keyframes_lowres(
+            media, c.start_s, dur, n=fr.frame_count(dur), peak_rel=c.peak_s - c.start_s,
+            size=(int(size[0]), int(size[1])), quality=int(jcfg.get("frame_quality", 65)),
+            out_dir=_frames_dir(p, c, w),
+        )  # fmt: skip
+        return frames, cold_open.loud_moments(cold_open.loudness(media, c.start_s, dur))
+    except Exception as e:  # noqa: BLE001
+        log.warning("frames/loudness for the judge failed (%s); judging without", e)
+        return [], []
+
+
 def h_judge(p: dict[str, Any], w: Worker) -> list[dict[str, Any]]:
     from .judge import claude
 
     c, words = _cand(p), _words(p)
+    jcfg = config.global_config().get("judge", {})
+    if jcfg.get("mode", "single") == "off":
+        return [{**p, "judge": asdict(claude.heuristic_judge(c, words))}]
+    frames, loud = _frames_and_loud(p, c, w, jcfg)
     try:
         scfg = config.streamer(p["streamer"])
         jr: JudgeResult = claude.judge_clip(
-            c, words, p.get("chat_lines", []), [], game=scfg.get("game") or "",
-            platform=scfg.get("platform"), language=p.get("language"),
+            c, words, p.get("chat_lines", []), frames, game=scfg.get("game") or "",
+            platform=scfg.get("platform"), language=p.get("language"), loud=loud,
         )  # fmt: skip
     except Exception as e:  # noqa: BLE001
         log.warning("judge failed (%s); heuristic fallback", e)
         jr = claude.heuristic_judge(c, words)
+    finally:
+        shutil.rmtree(_frames_dir(p, c, w), ignore_errors=True)
     if jr.source == "claude" and not jr.ok:  # rejected or flagged, like the live lane
         log.info("judge rejected %s at %.0fs: %s", p["streamer"], c.start_s, jr.reject_reason or jr.why)
         return []

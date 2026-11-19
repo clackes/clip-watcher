@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import logging
 import re
 import subprocess
 import sys
@@ -18,6 +19,8 @@ from clipwatcher.chat.convert import read_jsonl, tdl_to_messages, write_jsonl
 from clipwatcher.detect.detector import detect
 from clipwatcher.models import Candidate, ChatMessage
 from clipwatcher.render import cold_open
+
+log = logging.getLogger(__name__)
 
 
 def vod_id(vod: str) -> str:
@@ -79,9 +82,16 @@ def _mod(name: str):
     return importlib.import_module(name)
 
 
-def _chat_lines(messages: list[ChatMessage], start_s: float, end_s: float, limit: int = 60) -> list[str]:
+def _screened_out(jr, jcfg: dict) -> bool:
+    """two_stage: the text screen rejected it with a score under judge.screen_min."""
+    return jr.source == "claude" and not jr.ok and jr.score < int(jcfg.get("screen_min", 5))
+
+
+def _chat_lines(messages: list[ChatMessage], start_s: float, end_s: float, limit: int = 2000) -> list[str]:
+    """Chat of the window for the judge, which only counts it (messages, chatters, most repeated lines).
+    The reaction comes at the end of the window: the first 60 lines of a busy chat were all from before it."""
     sel = [m for m in messages if start_s * 1000 <= m.ts_ms <= end_s * 1000 and not m.is_notice]
-    return [f"{m.user}: {m.text}" for m in sel[:limit]]
+    return [f"{m.user}: {m.text}" for m in sel[-limit:]]
 
 
 def print_table(cands: list[Candidate]) -> None:
@@ -109,7 +119,9 @@ def process_candidate(
     quality: str,
     fetch_window: Callable[[float, float, Path], None] | None = None,
     platform: str = "twitch",
-) -> Path:
+) -> Path | None:
+    """Judge, render and stage one candidate. None when the judge rejected it (not publishable, or a
+    spoiler / music flag): like the live lane, a rejected clip is not rendered and never reaches the queue."""
     scfg = config.streamer(streamer)
     clip_id = f"{streamer}-{vid}-{int(cand.start_s * 1000)}"
     dur = cand.end_s - cand.start_s
@@ -131,23 +143,39 @@ def process_candidate(
     meta = heuristic_meta(streamer, platform, int(cand.start_s * 1000))
     words: list = []
     jr = None
-    if judge:
+    jcfg = config.global_config().get("judge", {})
+    mode = jcfg.get("mode", "single")  # single | two_stage | off, as in the live lane
+    if judge and mode != "off":
         transcribe = _mod("clipwatcher.judge.transcribe")
         frames_m = _mod("clipwatcher.judge.frames")
         claude = _mod("clipwatcher.judge.claude")
-        jcfg = config.global_config().get("judge", {})
         words = transcribe.transcribe(src, local_start, dur, language)
-        size = jcfg.get("frame_size", [480, 270])
-        frames = frames_m.keyframes_lowres(
-            src, local_start, dur, n=frames_m.frame_count(dur), peak_rel=cand.peak_s - cand.start_s,
-            size=(int(size[0]), int(size[1])), quality=int(jcfg.get("frame_quality", 65)),
-            out_dir=work / f"frames_{n}",
-        )  # fmt: skip
-        jr = claude.judge_clip(
-            cand, words, _chat_lines(messages, cand.start_s, cand.end_s), frames,
-            game=scfg.get("game") or "", platform=platform, language=language,
-            loud=cold_open.loud_moments(cold_open.loudness(src, local_start, dur)),
-        )  # fmt: skip
+        chat_lines = _chat_lines(messages, cand.start_s, cand.end_s)
+        game = scfg.get("game") or ""
+        if mode == "two_stage":  # cheap text screen first; only what passes gets the frames
+            jr = claude.judge_clip(
+                cand, words, chat_lines, [], game=game, platform=platform, language=language, task="screen"
+            )
+            if not _screened_out(jr, jcfg):
+                jr = None
+        if jr is None:
+            size = jcfg.get("frame_size", [480, 270])
+            frames, loud = [], []
+            try:  # the judge still works from transcript and chat when a frame or audio read fails
+                frames = frames_m.keyframes_lowres(
+                    src, local_start, dur, n=frames_m.frame_count(dur), peak_rel=cand.peak_s - cand.start_s,
+                    size=(int(size[0]), int(size[1])), quality=int(jcfg.get("frame_quality", 65)),
+                    out_dir=work / f"frames_{n}",
+                )  # fmt: skip
+                loud = cold_open.loud_moments(cold_open.loudness(src, local_start, dur))
+            except Exception as e:  # noqa: BLE001
+                log.warning("%s: frames/loudness for the judge failed (%s); judging without", clip_id, e)
+            jr = claude.judge_clip(
+                cand, words, chat_lines, frames, game=game, platform=platform, language=language, loud=loud
+            )
+        if jr.source == "claude" and not jr.ok:
+            log.info("%s: judge rejected (sc=%s): %s", clip_id, jr.score, jr.reject_reason or jr.why)
+            return None
         meta.update(
             hook=jr.hook_text,
             titles=jr.title_options,
@@ -280,7 +308,7 @@ def main(argv: list[str] | None = None) -> int:
             pad_s=float(vcfg.get("pad_s", 6)),
             quality=vcfg.get("quality", "1080p60"),
         )
-        print(f"staged #{n}: {pkg}")
+        print(f"staged #{n}: {pkg}" if pkg else f"rejected by the judge #{n}")
     return 0
 
 

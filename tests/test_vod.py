@@ -84,6 +84,53 @@ def test_main_no_judge_with_video(tmp_path, monkeypatch):
         "clipwatcher.queue.staging",
         stage_package=lambda c, s, cl, m, **k: staged.append(m) or tmp_path,
     )
-    vod.main(["--vod", "555555", "--streamer", "foo", "--chat", str(chat), "--video", str(tmp_path / "v.mp4"),
-              "--no-judge", "--top", "2", "--work", str(tmp_path / "w")])  # fmt: skip
+    # --out: the default is ./staging, the real queue (this test used to create staging/clips.db in the repo)
+    args = ["--vod", "555555", "--streamer", "foo", "--chat", str(chat), "--video", str(tmp_path / "v.mp4")]
+    vod.main(
+        [*args, "--no-judge", "--top", "2", "--work", str(tmp_path / "w"), "--out", str(tmp_path / "st")]
+    )
     assert len(staged) == 2 and staged[0]["judge_source"] == "none"
+
+
+def test_judge_rejected_clip_is_not_staged(tmp_path, monkeypatch, capsys):
+    """The VOD lane staged everything as READY, also what the judge marked not publishable or flagged as a
+    spoiler / music risk, with the judge score as queue score: auto-approve could have published it."""
+    chat = synth.to_tdl_json(synth.make_chat(), tmp_path / "chat.json")
+    monkeypatch.setattr(vod, "run_cmd", lambda cmd: None)
+    verdicts = [
+        JudgeResult(
+            9, 9, "", 0, 20, "h", ["t"], "s", ok=False, score=9, flags={"mu": True}, reject_reason="music"
+        ),
+        JudgeResult(7, 7, "", 0, 20, "h", ["t"], "s", ok=True, score=7),
+        JudgeResult(3, 3, "", 0, 20, "h", ["t"], "s", ok=False, score=3, reject_reason="dead air"),
+    ]
+    _fake(monkeypatch, "clipwatcher.judge.transcribe", transcribe=lambda *a, **k: [])
+
+    def no_frames(*a, **k):
+        raise OSError("ffmpeg could not read the window")  # must not abort the run either
+
+    _fake(monkeypatch, "clipwatcher.judge.frames", keyframes_lowres=no_frames, frame_count=lambda d: 8)
+    _fake(monkeypatch, "clipwatcher.judge.claude", judge_clip=lambda *a, **k: verdicts.pop(0))
+    rendered, staged = [], []
+    _fake(
+        monkeypatch, "clipwatcher.render.template",
+        render_short=lambda s, a, d, out, **k: rendered.append(out) or out,
+        render_clean=lambda s, a, d, out, **k: out,
+    )  # fmt: skip
+    _fake(
+        monkeypatch,
+        "clipwatcher.queue.staging",
+        stage_package=lambda c, s, cl, m, **k: staged.append(m) or tmp_path,
+    )
+    rc = vod.main(["--vod", "777777", "--streamer", "foo", "--chat", str(chat), "--top", "3",
+                   "--work", str(tmp_path / "w"), "--out", str(tmp_path / "st")])  # fmt: skip
+    assert rc == 0 and len(staged) == 1 and len(rendered) == 1  # rejected clips are not even rendered
+    assert staged[0]["judge_score"] == 7 and capsys.readouterr().out.count("rejected by the judge") == 2
+
+
+def test_chat_lines_keep_the_reaction_at_the_end_of_the_window():
+    from clipwatcher.models import ChatMessage
+
+    msgs = [ChatMessage(t * 10, f"u{t}", f"line {t}") for t in range(5000)]  # 100 messages a second
+    lines = vod._chat_lines(msgs, 0, 50)
+    assert len(lines) == 2000 and lines[-1] == "u4999: line 4999"  # was: the first 60, all before the moment

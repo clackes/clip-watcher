@@ -112,12 +112,16 @@ def _default_judge(
     size = tuple(jcfg.get("frame_size", [480, 270]))
     from .render import cold_open
 
-    loud = cold_open.loud_moments(cold_open.loudness(Path(src), t0_s, dur))
-    frames = fr.keyframes_lowres(
-        src, t0_s, dur, n=fr.frame_count(dur), peak_rel=cand.peak_s - cand.start_s,
-        size=(int(size[0]), int(size[1])), quality=int(jcfg.get("frame_quality", 65)),
-        out_dir=Path(src).parent / "frames",  # inside the clip's work dir, removed with it
-    )  # fmt: skip
+    frames, loud = [], []
+    try:  # a failed frame or audio read means judging from transcript and chat, not a failed clip
+        loud = cold_open.loud_moments(cold_open.loudness(Path(src), t0_s, dur))
+        frames = fr.keyframes_lowres(
+            src, t0_s, dur, n=fr.frame_count(dur), peak_rel=cand.peak_s - cand.start_s,
+            size=(int(size[0]), int(size[1])), quality=int(jcfg.get("frame_quality", 65)),
+            out_dir=Path(src).parent / "frames",  # inside the clip's work dir, removed with it
+        )  # fmt: skip
+    except Exception as e:  # noqa: BLE001
+        log.warning("%s: frames/loudness for the judge failed (%s); judging without", cand.stream, e)
     return claude.judge_clip(cand, words, chat_lines, frames, game=game, language=language, loud=loud)
 
 
