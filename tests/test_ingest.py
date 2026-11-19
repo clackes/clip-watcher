@@ -112,7 +112,8 @@ def test_pdtmap_interp_and_gap():
 
 
 def test_streamlink_cmd():
-    c = build_streamlink_cmd("twitch", "foo")
+    # binary given: this is about the flags; finding streamlink is the next test (it needs it installed)
+    c = build_streamlink_cmd("twitch", "foo", binary="streamlink")
     assert (
         c[-3:] == ["--stdout", "https://twitch.tv/foo", "720p60,720p,best"][-3:]
         or c[-2] == "https://twitch.tv/foo"
@@ -125,7 +126,7 @@ def test_streamlink_cmd():
         "--twitch-supported-codecs",
     ):
         assert f in c
-    k = build_streamlink_cmd("kick", "bar", "1080p60,best")
+    k = build_streamlink_cmd("kick", "bar", "1080p60,best", binary="streamlink")
     assert "https://kick.com/bar" in k and "--twitch-supported-codecs" not in k and k[-1] == "1080p60,best"
 
 
@@ -332,8 +333,14 @@ def test_covered_until_ms(tmp_path):
 
 def test_streamlink_bin_found_without_activated_venv(monkeypatch):
     # Regression: a bare "streamlink" made every recorder exit at once when the venv wasn't on PATH.
+    import sys
+
+    import pytest
+
     from clipwatcher import config
 
+    if not (Path(sys.executable).parent / "streamlink").exists():
+        pytest.skip("streamlink is not installed next to this Python (pip install streamlink)")
     config.streamlink_bin.cache_clear()
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
     monkeypatch.delenv("CLIPWATCHER_STREAMLINK", raising=False)

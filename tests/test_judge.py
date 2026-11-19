@@ -108,6 +108,10 @@ def test_load_wav_returns_float_samples(tmp_path):
     import struct
     import wave
 
+    import pytest
+
+    pytest.importorskip("numpy")  # comes with the judge extra (faster-whisper), not with dev
+
     from clipwatcher.judge.transcribe import load_wav
 
     p = tmp_path / "a.wav"
