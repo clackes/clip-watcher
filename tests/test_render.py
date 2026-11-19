@@ -449,10 +449,11 @@ def flash_src(tmp_path_factory):
     return p
 
 
-def flash_times(p, fps=FLASH_FPS) -> list[float]:
-    """Times at which the picture of p turns white."""
+def flash_times(p, fps=FLASH_FPS, crop=None) -> list[float]:
+    """Times at which the picture of p (or its crop "w:h:x:y") turns white."""
+    vf = (f"crop={crop}," if crop else "") + "scale=16:16,format=gray"
     raw = subprocess.run(
-        [ffmpeg_bin(), "-v", "error", "-i", str(p), "-vf", "scale=16:16,format=gray", "-f", "rawvideo", "-"],
+        [ffmpeg_bin(), "-v", "error", "-i", str(p), "-vf", vf, "-f", "rawvideo", "-"],
         capture_output=True, check=True,
     ).stdout  # fmt: skip
     bright = [sum(raw[i : i + 256]) / 256 > 110 for i in range(0, len(raw), 256)]
@@ -622,3 +623,48 @@ def test_short_renders_from_an_oddly_named_work_folder(synth_src, tmp_path, monk
         profile="cpu_live", layout=layout,
     )  # fmt: skip
     check_short(out, 2.0)
+
+
+# -- a source with dropped frames --------------------------------------------------------------------------
+@pytest.fixture(scope="session")
+def gap_src(tmp_path_factory):
+    """flash_src, 12 s long, with half a second of frames missing (5.2-5.7 s): the timestamps keep the
+    gap, as in a live recording whose encoder dropped frames."""
+    p = tmp_path_factory.mktemp("gap") / "gap.ts"
+    on = "lt(mod(t,1),0.1)"
+    cmd = [
+        ffmpeg_bin(), "-y", "-hide_banner", "-loglevel", "error",
+        "-f", "lavfi", "-i", f"color=c=black:s=1280x720:r={FLASH_FPS}:d=12",
+        "-f", "lavfi", "-i", f"aevalsrc='0.5*sin(2*PI*1000*t)*{on}':s=48000:d=12",
+        "-vf", f"drawbox=x=0:y=0:w=iw:h=ih:color=white:t=fill:enable='{on}',select='not(between(t,5.2,5.7))'",
+        "-fps_mode", "passthrough", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+        "-g", "60", "-c:a", "aac", "-b:a", "128k", "-f", "mpegts", str(p),
+    ]  # fmt: skip
+    subprocess.run(cmd, check=True)
+    return p
+
+
+@pytest.mark.ffmpeg
+@pytest.mark.parametrize(
+    "layout,extra",
+    [
+        ("split", {"beats": [(1.5, "hype", "", "")]}),  # a zoom punch on the webcam half
+        ("split", {"cold_open": (2.5, 2.0)}),  # the cold open (zoomed) spans the missing frames
+        ("stack", {"cold_open": (2.5, 2.0)}),
+    ],
+)
+def test_zoom_keeps_time_when_the_source_dropped_frames(gap_src, tmp_path, layout, extra):
+    """zoompan numbers its output frames 0, 1, 2 ... at the output rate and forgets their timestamps. Half
+    a second of dropped frames in the source therefore put the zoomed picture half a second ahead of the
+    sound for the rest of the clip (and, in the split layout, the webcam ahead of the gameplay)."""
+    out = tmp_path / "gap.mp4"
+    render_short(
+        gap_src, 2.0, 8.0, out, clip_id="gap", streamer="tester", words=[], hook=None, profile="cpu_live",
+        captions="word", layout=layout, **extra,
+    )  # fmt: skip
+    heard = beep_times(out)
+    cam, game = flash_times(out, crop="1080:300:0:500"), flash_times(out, crop="1080:300:0:1000")
+    assert len(cam) >= 6 and len(game) >= 6
+    for seen in (cam, game):  # every flash on a beep, to the end of the clip
+        late = [round(min((t - h for h in heard), key=abs), 3) for t in seen]
+        assert max(abs(d) for d in late) <= 1.5 / FLASH_FPS, late

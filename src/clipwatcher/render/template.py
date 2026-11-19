@@ -153,6 +153,11 @@ def _verify(out: Path, want_s: float) -> None:
 
 
 LOUDNORM = "loudnorm=I=-14:TP=-1.5:LRA=11"
+# CFR: zoompan numbers its output frames 0, 1, 2 ... at the rate it is given and forgets their timestamps.
+# Fed a picture with holes (a live recording whose encoder dropped frames) it closes them: after half a
+# second of dropped frames the zoomed webcam ran half a second ahead of the sound and of the gameplay.
+# So every picture that can reach a zoom is first put on the constant output frame grid (fps filter,
+# which fills a hole by repeating the frame before it), where frame number and time are the same thing.
 
 
 def _segments(
@@ -160,13 +165,15 @@ def _segments(
 ) -> str:
     """src -> out: the kept stretches of the clip (jump cuts), back to back. 15 ms fades on audio cuts.
 
-    With cuts, keep lies on the frame grid of fps (jumpcut.on_frames): the picture is put on that grid
-    first and cut by frame number, the sound at the same instants, so both pieces are equally long."""
+    The picture is always put on the constant frame grid of fps first (see CFR). With cuts, keep lies on
+    that grid (jumpcut.on_frames): the picture is cut by frame number, the sound at the same instants, so
+    both pieces are equally long."""
     n = len(keep)
     tr, sp = ("atrim", "asetpts") if audio else ("trim", "setpts")
     if n == 1:
         a, b = keep[0]
-        return f"{src}{tr}=start={trim + a:.3f}:duration={b - a:.3f},{sp}=PTS-STARTPTS{out}"
+        grid = "" if audio else f",fps={fps:g}"
+        return f"{src}{tr}=start={trim + a:.3f}:duration={b - a:.3f},{sp}=PTS-STARTPTS{grid}{out}"
     tag = "ja" if audio else "jv"
     outs = "".join(f"[{tag}{i}]" for i in range(n))
     if audio:
@@ -318,7 +325,7 @@ def build_short_graph(
         cs, cd = cold_open
         g.append(
             "[0:v]split=2[cov][mnv];"
-            f"[cov]trim=start={trim + cs:.3f}:duration={cd:.3f},setpts=PTS-STARTPTS[cov1];"
+            f"[cov]trim=start={trim + cs:.3f}:duration={cd:.3f},setpts=PTS-STARTPTS,fps={fps:g}[cov1];"  # CFR
             f"[mnv]trim=start={trim:.3f}:duration={dur:.3f},setpts=PTS-STARTPTS[srcv]"
         )
         trimmed = "[srcv]null"
@@ -515,7 +522,7 @@ def build_split_graph(
         cs, cd = cold_open
         g.append(
             "[0:v]split=2[cov][mnv];"
-            f"[cov]trim=start={trim + cs:.3f}:duration={cd:.3f},setpts=PTS-STARTPTS[cov1];"
+            f"[cov]trim=start={trim + cs:.3f}:duration={cd:.3f},setpts=PTS-STARTPTS,fps={fps:g}[cov1];"  # CFR
             + _segments("[mnv]", trim, keep, "[mnv1]", audio=False, fps=fps)
             + ";[cov1][mnv1]concat=n=2:v=1:a=0[sv]"
         )
