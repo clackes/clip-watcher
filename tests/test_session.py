@@ -6,7 +6,7 @@ from clipwatcher import config
 from clipwatcher.detect.detector import _FLOORS, _kw_patterns, confirm, detect, loud_z
 from clipwatcher.detect.live import LiveDetector
 from clipwatcher.detect.session import SessionTable
-from clipwatcher.models import ChatMessage
+from clipwatcher.models import Candidate, ChatMessage
 
 BASE = 1_790_000_000
 _WORDS = "the a so that was this is what how did he she they just really when why who then now look".split()
@@ -211,3 +211,19 @@ def test_viewer_clip_rescues_a_spike_that_fired_under_the_keep_gate():
     saved = det.rescue(near.peak_s + 12)  # a viewer clipped this one
     assert saved == [near] and saved[0].signals["viewer_clip"] == 1.0 and not det.near  # handed out once
     assert confirm(saved[0], [near.peak_s + 12]).final_score == near.chat_score + 1.5
+
+
+def test_viewer_clips_confirm_a_moment_only_when_they_stand_out():
+    """One clip confirms a moment where clips are rare. On a 37k-viewer Kick stream viewers made four clips a
+    minute, so some clip covered every moment and "a viewer clipped it" said nothing."""
+    from clipwatcher.detect.detector import clip_confirmed
+
+    assert clip_confirmed([(965.0, 1000.0)], 990.0) and not clip_confirmed([(965.0, 1000.0)], 1100.0)
+    assert not clip_confirmed([], 990.0)
+    # a busy channel: a 60 s clip saved every 15 s for half an hour -> four clips cover any instant
+    busy = [(t - 60.0, float(t)) for t in range(0, 1800, 15)]
+    assert not clip_confirmed(busy, 1700.0)
+    burst = busy + [(1640.0 + i, 1705.0 + i) for i in range(8)]  # eight more on one moment
+    assert clip_confirmed(burst, 1700.0) and not clip_confirmed(burst, 1000.0)
+    c = Candidate("s", 990.0, 950.0, 1009.0, 4.0, 4.0)
+    assert confirm(c, [1000.0]).final_score == 5.5 and confirm(c, [2000.0]).final_score == 4.0

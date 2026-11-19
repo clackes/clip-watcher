@@ -368,6 +368,26 @@ def loud_z(
     return (max(near) - med) / max(1.4826 * mad, 1.0)
 
 
+def clip_confirmed(
+    windows: Sequence[tuple[float, float]], moment_s: float, pad_s: float = 5.0, base_s: float = 1800.0
+) -> bool:
+    """Did viewers clip this moment, and more than they clip any moment of this channel?
+
+    windows = the stretch each viewer clip covers. One clip is a confirmation on a channel where clips are
+    rare. On a big channel viewers clip something every few seconds (four clips a minute on a 37k-viewer Kick
+    stream), so some clip covers every moment: there the moment needs at least twice the clips that cover
+    an ordinary instant of the half hour before it.
+    """
+    near = sum(1 for a, b in windows if a - pad_s <= moment_s <= b + pad_s)
+    if not near:
+        return False
+    before = [(a, b) for a, b in windows if moment_s - base_s <= b < moment_s - 60]
+    # the half hour before, or as much of it as there are clips for (the bot may have joined ten minutes ago)
+    span = max(60.0, moment_s - 60 - max(moment_s - base_s, min(a for a, _ in windows)))
+    usual = sum(b - a + 2 * pad_s for a, b in before) / span  # clips covering an ordinary instant
+    return near >= max(1.0, 2.0 * usual)
+
+
 def confirm(
     candidate: Candidate,
     viewer_clip_times: Sequence[float] = (),
@@ -377,7 +397,7 @@ def confirm(
     """Optional confirmation hooks: viewer-made clips near the peak and audio loudness z-score."""
     bonus = 0.0
     sig = dict(candidate.signals)
-    if any(abs(t - candidate.peak_s) <= clip_tol_s for t in viewer_clip_times):
+    if clip_confirmed([(t - clip_tol_s, t + clip_tol_s) for t in viewer_clip_times], candidate.peak_s, 0.0):
         bonus += 1.5
         sig["viewer_clip"] = 1.0
     if loud_z is not None and loud_z > 0:
