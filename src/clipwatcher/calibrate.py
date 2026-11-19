@@ -128,7 +128,7 @@ def overlay_rect(frames: list[Path], face: Box, fw: int, fh: int) -> Rect | None
     x, y, w, h = face
     cx, cy = x + w / 2, y + h / 2
     span_x = slice(int(max(0, x - w)), int(min(fw, x + 2 * w)))
-    span_y = slice(int(max(0, y - h / 2)), int(min(fh, y + 1.5 * h)))
+    span_y = slice(int(max(0, y)), int(min(fh, y + h)))  # inside the cam, never the chat under it
     rows = np.abs(np.diff(g[:, :, span_x], axis=1)).mean(axis=2).min(axis=0)  # edge after row i
     cols = np.abs(np.diff(g[:, span_y, :], axis=2)).mean(axis=1).min(axis=0)
     floor_r = max(EDGE_MIN, 8 * float(np.median(rows)))
