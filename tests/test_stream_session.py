@@ -33,9 +33,9 @@ def _msg(ts_s, text):
 
 
 def _session(tmp_path, now_s, replay, lookups, calls):
-    def fetch(vod_id, start_s, end_s):
-        calls.append((vod_id, round(start_s), round(end_s)))
-        return [m for m in replay if 1000 + start_s <= m.ts_ms / 1000 <= 1000 + end_s]
+    def fetch(session, a_ms, b_ms, budget_s):  # the history source: everything strictly between two instants
+        calls.append((session.vod_id, round(a_ms / 1000), round(b_ms / 1000)))
+        return [m for m in replay if a_ms < m.ts_ms < b_ms], int(a_ms)
 
     def lookup(login):
         return lookups.pop(0) if lookups else None
@@ -59,8 +59,8 @@ def test_session_joins_mid_stream_with_the_whole_chat(tmp_path):
         s.feed(_msg(4602, "live 2"))
 
     asyncio.run(go())
-    assert calls[0] == ("42", -30, 3630)  # from the first second of the stream to now
-    assert calls[1] == ("42", 3540, 3631)  # ... and the last half minute again, up to the first live message
+    assert calls[0] == ("42", 1000, 4600)  # from the first second of the stream to now
+    assert calls[1] == ("42", 4570, 4601)  # ... and the last half minute again, up to the first live message
     assert [m.text for m in s.detector.primed] == [m.text for m in replay]
     assert [m.text for m in s.detector.fed] == ["live 1", "live 2"]  # history is baseline, live is detection
     saved = [
@@ -79,8 +79,8 @@ def test_session_restart_reads_its_log_and_fetches_only_the_gap(tmp_path):
     replay = [_msg(t, f"gap {t}") for t in range(1000, 3000, 100)]
     s = _session(tmp_path, 3000.0, replay, [twitch_replay.Session("777", 1_000_000, "42")], calls)
     asyncio.run(s.refresh())
-    # only the 1950 -> 3000 hole (padded 30 s), then a second look at the last half minute before "now"
-    assert [c[1:] for c in calls] == [(920, 2030), (1940, 2030)]
+    # only the 1950 -> 3000 hole, then a second look at the last half minute before "now"
+    assert [c[1:] for c in calls] == [(1950, 3000), (2970, 3000)]
     texts = [m.text for m in s.detector.primed]
     assert texts[:20] == [f"saved {t}" for t in range(1000, 2000, 50)]
     assert texts[20:] == [f"gap {t}" for t in range(2000, 3000, 100)]
@@ -131,25 +131,29 @@ def test_session_viewer_clip_of_a_near_miss_reaches_the_lane(tmp_path):
     near = Candidate("streamer", 2000.0, 1960.0, 2019.0, 3.5, 3.5)
 
     class Det(_Det):
-        def rescue(self, moment_s):
-            return [near] if abs(moment_s - 2000.0) < 30 else []
+        def __init__(self, login):
+            super().__init__(login)
+            self.near = [near]  # fired at 2000, peaked under the keep threshold
+
+        def rescue(self, moment_s, tol_s=30.0):
+            hit = [c for c in self.near if abs(c.peak_s - moment_s) <= tol_s]
+            self.near = [c for c in self.near if c not in hit]
+            return hit
 
     class Poller:
         def __init__(self, s):
-            self.session = s
+            self.seen = {}
 
         async def run(self, on_clip):
-            on_clip(ViewerClip("other", 5000.0))
-            on_clip(ViewerClip("abc", 2020.0))  # created at 2020: covers 1985-2020, the near miss
-
-        def moment_times(self):
-            return [2002.5]
+            for clip in (ViewerClip("other", 5000.0), ViewerClip("abc", 2020.0)):  # 2020: covers 1985-2020
+                self.seen[clip.id] = clip
+                on_clip(clip)
 
     made, rescued = [], []
     live = twitch_replay.Session("777", 1_000_000, None, "4242")
 
-    def make(s):
-        made.append(s.user_id)
+    def make(s, login):
+        made.append((s.user_id, login))
         return Poller(s)
 
     s = StreamSession(
@@ -162,7 +166,8 @@ def test_session_viewer_clip_of_a_near_miss_reaches_the_lane(tmp_path):
         await asyncio.sleep(0)  # let the poller task run
 
     asyncio.run(go())
-    assert made == ["4242"] and rescued == [near] and s.moment_times() == [2002.5]
+    assert made == [("4242", "streamer")] and rescued == [near]  # the clip of 5000 rescued nothing
+    assert s.clip_confirms(2000.0) and not s.clip_confirms(3000.0) and len(s.clip_windows()) == 2
     s.close()
 
 
@@ -178,3 +183,70 @@ def test_session_has_no_clip_poller_without_helix_credentials(tmp_path, monkeypa
     poller = helix_clip_poller(live)
     assert poller.broadcaster_id == "4242" and poller.started_at == 1000.0
     assert helix_clip_poller(twitch_replay.Session("777", 1_000_000, None)) is None  # broadcaster unknown
+    # Kick lists a channel's clips to anyone: always a poller, for this broadcast's clips only
+    kick_live = twitch_replay.Session("138939992", 1_000_000, "1227772", "1227772", "kick")
+    monkeypatch.delenv("TWITCH_CLIENT_ID")
+    kp = helix_clip_poller(kick_live, "N3on")
+    assert (kp.slug, kp.livestream_id) == ("n3on", "138939992")
+
+
+def test_kick_session_starts_on_recent_chat_and_rebuilds_on_the_whole_stream(tmp_path):
+    """Kick paces its chat history: a long busy stream takes minutes to read. Detection starts on the newest
+    stretch; the rest is read in the background and the detector rebuilt on it all, between two messages."""
+    # the stream started at 1000 s; it is 5000 s now; one message every 10 s since the start
+    history = [_msg(t, f"old {t}") for t in range(1000, 5000, 10)]
+    calls, made = [], []
+
+    def fetch(session, a_ms, b_ms, budget_s):
+        calls.append((round(a_ms / 1000), round(b_ms / 1000), budget_s))
+        got = [m for m in history if a_ms < m.ts_ms < b_ms]
+        if budget_s is None:
+            return got, int(a_ms)
+        reached = max(a_ms, b_ms - 1_500_000)  # a budget buys the newest 1500 s of what was asked for
+        return [m for m in got if m.ts_ms >= reached], int(reached)
+
+    class Det(_Det):
+        def __init__(self, login):
+            super().__init__(login)
+            self._last_keep, self._last_keep_score, self._kept, self.near, self._maturing = (
+                0.0,
+                0.0,
+                [],
+                [],
+                [],
+            )
+            made.append(self)
+
+        def prime(self, history):
+            self.primed += list(history)
+            return len(self.primed)
+
+    live = twitch_replay.Session("138939992", 1_000_000, "1227772", "1227772", "kick")
+    s = StreamSession(
+        "n3on", root=tmp_path, platform="kick", make_detector=Det, lookup=lambda login: live, fetch=fetch,
+        clock=lambda: 5000.0, make_poller=lambda s, login: None, cfg={"rebuild_every_s": 0},
+    )  # fmt: skip
+
+    async def go():
+        await s.refresh()
+        first = s.detector
+        assert [m.text for m in first.primed] == [f"old {t}" for t in range(3500, 5000, 10)]  # newest 1500 s
+        first._last_keep, first._last_keep_score = 4990.0, 7.5  # it kept a spike just before the swap
+        s.feed(_msg(5001, "live 1"))
+        await s._deepen_task
+        s.feed(_msg(5002, "live 2"))
+        return first
+
+    first = asyncio.run(go())
+    assert calls[0] == (1000, 5000, 60.0) and (1000, 3500, 30.0) in calls and (1000, 2000, 30.0) in calls
+    final = s.detector
+    assert final is not first and s.rebuilds >= 2 and final is made[-1]
+    texts = [m.text for m in final.primed]
+    assert texts == [f"old {t}" for t in range(1010, 5000, 10)] + ["live 1"]  # the whole stream, in order
+    assert [m.text for m in final.fed] == ["live 2"] and [m.text for m in first.fed] == ["live 1"]
+    assert (final._last_keep, final._last_keep_score) == (4990.0, 7.5)  # the cooldown moved over
+    saved = [
+        json.loads(ln)["text"] for ln in (tmp_path / "n3on" / "138939992.jsonl").read_text().splitlines()
+    ]
+    assert saved == texts + ["live 2"]  # the log on disk has the older chat too, in order
+    s.close()

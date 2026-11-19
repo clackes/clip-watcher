@@ -265,8 +265,8 @@ def test_confirmation_raises_the_final_score_and_reaches_the_card(tmp_path):
     steps.stage = lambda cid, short, clean, meta, **kw: staged.update(meta) or Path("/staged") / cid
 
     class Clips:
-        def moment_times(self):
-            return [t0 / 1000 - 10 + 12]  # a viewer clipped 12 s from the peak
+        def clip_confirms(self, moment_s):
+            return abs(moment_s - (t0 / 1000 - 10)) < 1  # viewers clipped the peak
 
     lane = fastlane.FastLane(
         "zack", FakeChat([ChatMessage(t0, "u", "fire")]), FakeDetector({"fire"}), FakeRing(log), steps=steps,

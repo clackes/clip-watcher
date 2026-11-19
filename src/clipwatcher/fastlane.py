@@ -228,7 +228,7 @@ class FastLane:
         self._sem: asyncio.Semaphore | None = None
         self._tasks: set[asyncio.Task] = set()
         self._started: set[str] = set()  # clip ids already taken: the detector can fire twice on one window
-        self.clips = clips  # viewer-made clips of this broadcast: anything with moment_times() (D3)
+        self.clips = clips  # viewer-made clips of this broadcast: anything with clip_confirms(moment) (D3)
         self._lines: dict[str, list[str]] = {}  # chat of a moment, taken when it fired
         self._last: tuple[float, float] | None = None  # (chat time, our clock) of the newest message
 
@@ -340,8 +340,8 @@ class FastLane:
         from .detect.detector import confirm, loud_z
 
         series = await self._timed("loudness", timings, self.steps.loudness, src, t0_s, dur)
-        times = self.clips.moment_times() if self.clips is not None else ()
-        return confirm(cand, times, loud_z(series, cand.peak_s - cand.start_s))
+        clipped = self.clips is not None and self.clips.clip_confirms(cand.peak_s)
+        return confirm(cand, [cand.peak_s] if clipped else (), loud_z(series, cand.peak_s - cand.start_s))
 
     async def _timed(self, name: str, timings: dict[str, float], fn: Callable[..., Any], *a: Any, **k: Any):
         t0 = time.perf_counter()
