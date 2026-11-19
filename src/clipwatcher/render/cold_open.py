@@ -234,7 +234,7 @@ def plan(
     media: Path, win_start: float, win_dur: float, chat_peak_rel: float, jr: Any, words: list[Word]
 ) -> Plan:
     """Trim + cold open for one candidate. jr is a JudgeResult or its dict; words relative to the window."""
-    from clipwatcher.judge.snap import heuristic_trim, reaction_s, snap_trim
+    from clipwatcher.judge.snap import clip_bounds, fit_length, heuristic_trim, reaction_s, snap_trim
 
     get = jr.get if isinstance(jr, dict) else lambda k, d=None: getattr(jr, k, d)
     judged = get("source") == "claude"
@@ -254,8 +254,12 @@ def plan(
     if not judged:
         t0, t1 = heuristic_trim(react if react is not None else reaction_s(None, chat_peak_rel), win_dur)
         t0, t1 = snap_trim(t0, t1, words, win_dur)
-    if not (0 <= t0 < t1 <= win_dur + 0.5 and t1 - t0 >= 12):
+    if not (0 <= t0 < t1 <= win_dur + 0.5):
         t0, t1 = 0.0, win_dur
+    f0, f1 = fit_length(t0, t1, win_dur)
+    if (f0, f1) != (round(t0, 2), round(t1, 2)):  # stretched or shortened: the new edges must not cut a word
+        t0, t1 = snap_trim(f0, f1, words, win_dur)
+        t0 = max(t0, t1 - clip_bounds()[1])
     beats = [(onset(series, t) if series else t, k, lb, sx) for t, k, lb, sx in raw_beats]
     return Plan(t0, t1, react, window(react, t0, t1 - t0, words), beats)
 

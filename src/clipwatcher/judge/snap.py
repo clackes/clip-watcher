@@ -6,6 +6,7 @@ No extra audio pass: the live lane cannot afford one, and word gaps already mark
 
 from __future__ import annotations
 
+from clipwatcher import config
 from clipwatcher.models import Word
 
 LEAD_S = 0.15  # silence kept before the first word
@@ -64,8 +65,30 @@ def reaction_s(judge_peak: float | None, chat_peak_rel: float) -> float:
     return float(judge_peak) if judge_peak is not None else max(0.0, chat_peak_rel - CHAT_LAG_S)
 
 
+def clip_bounds() -> tuple[float, float]:
+    """(shortest, longest) clip in seconds: render.clip_min_s / clip_max_s (owner, 19 Nov: 30-59 s)."""
+    r = config.global_config().get("render", {})
+    return float(r.get("clip_min_s", 12.0)), float(r.get("clip_max_s", 59.0))
+
+
+def fit_length(t0: float, t1: float, dur: float) -> tuple[float, float]:
+    """Bring a trim inside the allowed clip length without leaving [0, dur].
+
+    Too short: more setup first (start earlier), then more aftermath. Too long: the oldest part goes, so the
+    clip still ends on the punchline.
+    """
+    lo, hi = clip_bounds()
+    if t1 - t0 > hi:
+        t0 = t1 - hi
+    if t1 - t0 < lo:
+        t0 = max(0.0, t1 - lo)
+        t1 = min(float(dur), t0 + lo)
+    return round(t0, 2), round(t1, 2)
+
+
 def heuristic_trim(reaction_rel: float, dur: float) -> tuple[float, float]:
-    """Start late without the judge: HEURISTIC_LEAD_S before the reaction, keeping at least 12 s."""
+    """Start late without the judge: HEURISTIC_LEAD_S before the reaction, keeping at least the shortest
+    allowed clip."""
     t0 = max(0.0, reaction_rel - HEURISTIC_LEAD_S)
-    t0 = min(t0, max(0.0, dur - 12.0))
+    t0 = min(t0, max(0.0, dur - clip_bounds()[0]))
     return round(t0, 2), float(dur)

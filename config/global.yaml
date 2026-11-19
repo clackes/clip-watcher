@@ -87,8 +87,8 @@ detector:                   # D3 + D13
 
 vod:                        # Day-0 VOD lane defaults (21A)
   top: 5
-  before_s: 20
-  after_s: 10
+  before_s: 40              # 59 s of footage around the moment, as in the live lane (detector.before_s / after_s)
+  after_s: 19
   gap_s: 90
   bucket_s: 10
   pad_s: 6                  # D9 seek fix padding
@@ -102,6 +102,8 @@ render:
   logo: true                # small ClipVault logo at the top of the split layout
   sfx: true                 # meme sound effect on every judge beat (assets/sfx/<kind>/, split layout)
   sfx_gain_db: -4           # sound effect level against the -14 LUFS clip
+  clip_min_s: 30            # owner, 19 Nov: clips run 30-59 s. A shorter judge trim gets more setup (starts earlier),
+  clip_max_s: 59            # a longer one loses its oldest part; jump cuts never go below clip_min_s
   jump_cuts: true           # cut pauses without speech (beats and judge action labels are kept)
   jump_gap_s: 0.8           # a pause this long is dead air
   captions: word            # word (one word on the seam) | pop | classic | bounce | ab; stored in meta.captions

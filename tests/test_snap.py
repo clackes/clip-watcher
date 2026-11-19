@@ -30,9 +30,20 @@ def test_start_never_cuts_a_word_and_never_rewinds_to_the_sentence_start():
 
 
 def test_heuristic_trim_starts_late():
-    assert heuristic_trim(17.0, 30.0) == (7.0, 30.0)  # start 10 s before the reaction
-    assert heuristic_trim(2.0, 30.0) == (0.0, 30.0)
-    assert heuristic_trim(26.0, 30.0) == (16.0, 30.0)  # 14 s left, >= 12 s kept
+    assert heuristic_trim(37.0, 59.0) == (27.0, 59.0)  # start 10 s before the reaction
+    assert heuristic_trim(2.0, 59.0) == (0.0, 59.0)
+    assert heuristic_trim(50.0, 59.0) == (29.0, 59.0)  # never shorter than render.clip_min_s (30 s)
+
+
+def test_fit_length_keeps_clips_between_30_and_59_seconds():
+    from clipwatcher.judge.snap import clip_bounds, fit_length
+
+    assert clip_bounds() == (30.0, 59.0)
+    assert fit_length(30.0, 44.0, 59.0) == (14.0, 44.0)  # too short: more setup, the ending stays
+    assert fit_length(4.0, 20.0, 59.0) == (0.0, 30.0)  # no more setup to take: more aftermath
+    assert fit_length(0.0, 75.0, 80.0) == (16.0, 75.0)  # too long: the oldest part goes
+    assert fit_length(10.0, 45.0, 59.0) == (10.0, 45.0)
+    assert fit_length(2.0, 9.0, 20.0) == (0.0, 20.0)  # a window shorter than 30 s is used whole
     assert reaction_s(12.5, 20.0) == 12.5 and reaction_s(None, 20.0) == 17.0
 
 
@@ -57,3 +68,20 @@ def test_far_sentence_end_is_not_chased():
 def test_no_words_or_tiny_result_returns_input():
     assert snap_trim(1.0, 5.0, [], 10) == (1.0, 5.0)
     assert snap_trim(0.0, 0.5, [W(0.1, 0.3, "x.")], 10) == (0.0, 0.5)
+
+
+def test_plan_stretches_a_short_judge_trim_to_the_shortest_clip_without_cutting_a_word(tmp_path):
+    from clipwatcher.render import cold_open
+
+    # a line every 4 s across a 59 s window; the judge kept only 30.0-44.0 (14 s)
+    words = [W(t, t + 1.5, f"line{t}.") for t in range(0, 58, 4)]
+    judged = {"source": "claude", "trim_start_s": 30.0, "trim_end_s": 44.0, "peak_rel_s": 41.0}
+    pl = cold_open.plan(tmp_path / "x.mp4", 0.0, 59.0, 41.0, judged, words)
+    assert 30.0 <= pl.t1 - pl.t0 <= 59.0 and pl.t1 >= 44.0  # more setup in front, the ending stays
+    assert not any(w.start < pl.t0 < w.end for w in words)  # the new start is between words
+    long = {"source": "claude", "trim_start_s": 0.0, "trim_end_s": 75.0, "peak_rel_s": 70.0}
+    pl = cold_open.plan(tmp_path / "x.mp4", 0.0, 80.0, 70.0, long, [])
+    assert pl.t1 - pl.t0 <= 59.0 and pl.t1 == 75.0  # too long: the oldest part goes
+    ok = {"source": "claude", "trim_start_s": 10.0, "trim_end_s": 45.0, "peak_rel_s": 40.0}
+    pl = cold_open.plan(tmp_path / "x.mp4", 0.0, 59.0, 41.0, ok, words)
+    assert (pl.t0, pl.t1) == (10.0, 45.0)  # inside the bounds: the judge's trim is used as it is
