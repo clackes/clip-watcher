@@ -30,6 +30,19 @@ CREATE TABLE IF NOT EXISTS audit(
 );
 """
 
+# Columns added to clips after the first release; _migrate() adds them to an existing file.
+COLUMNS = {
+    # the clip's approval card in Telegram: where it is, whether it carries the video, and the lease of
+    # whoever is posting it right now (the live lane or the approval bot)
+    "card_chat_id": "INTEGER",
+    "card_message_id": "INTEGER",
+    "card_video": "INTEGER",
+    "card_lease_until": "REAL",
+    "card_attempts": "INTEGER",
+}
+LEGACY_CARD = 0  # card_message_id of clips queued before cards were tracked: taken as posted, never re-posted
+CARD_MAX_ATTEMPTS = 3
+
 
 class ClipDB:
     def __init__(self, path: str | Path):
@@ -38,6 +51,26 @@ class ClipDB:
         c = self._conn()
         c.execute("PRAGMA journal_mode=WAL")
         c.executescript(SCHEMA)
+        self._migrate(c)
+
+    def _migrate(self, c: sqlite3.Connection) -> None:
+        """Add COLUMNS to a file made by an older version (CREATE TABLE IF NOT EXISTS leaves it alone)."""
+        have = {r["name"] for r in c.execute("PRAGMA table_info(clips)")}
+        if all(name in have for name in COLUMNS):
+            return
+        c.execute("BEGIN IMMEDIATE")  # the lane and the bot may open the same file at the same moment
+        try:
+            have = {r["name"] for r in c.execute("PRAGMA table_info(clips)")}
+            for name, kind in COLUMNS.items():
+                if name in have:
+                    continue
+                c.execute(f"ALTER TABLE clips ADD COLUMN {name} {kind}")
+                if name == "card_message_id":
+                    c.execute("UPDATE clips SET card_message_id=?", (LEGACY_CARD,))
+            c.execute("COMMIT")
+        except Exception:
+            c.execute("ROLLBACK")
+            raise
 
     def _conn(self) -> sqlite3.Connection:
         c = getattr(self._local, "c", None)
@@ -185,6 +218,40 @@ class ClipDB:
             args.append(v)
         self._conn().execute(f"UPDATE clips SET {', '.join(sets)} WHERE id=?", (*args, clip_id))
         self.log(actor, f"state:{state}", clip_id)
+
+    # -- approval cards ----------------------------------------------------
+    def reserve_card(self, clip_id: str, lease_s: float = 300) -> int:
+        """Atomically take the right to post a clip's card. Returns the attempt number (1, 2, ...), or 0 when
+        the clip has a card or someone holds the lease (is posting it, or failed less than lease_s ago)."""
+        now = time.time()
+        cur = self._conn().execute(
+            "UPDATE clips SET card_lease_until=?, card_attempts=COALESCE(card_attempts,0)+1 "
+            "WHERE id=? AND card_message_id IS NULL AND (card_lease_until IS NULL OR card_lease_until<?)",
+            (now + lease_s, clip_id, now),
+        )
+        if cur.rowcount != 1:
+            return 0
+        return int((self.get(clip_id) or {}).get("card_attempts") or 1)
+
+    def set_card(self, clip_id: str, chat_id: int, message_id: int, video: bool = False) -> None:
+        self._conn().execute(
+            "UPDATE clips SET card_chat_id=?, card_message_id=?, card_video=?, card_lease_until=NULL "
+            "WHERE id=?",
+            (chat_id, message_id, int(video), clip_id),
+        )
+        self.log("system", "card", clip_id, f"chat={chat_id} message={message_id}")
+
+    def cardless(self, grace_s: float = 120, max_age_s: float = 24 * 3600) -> list[dict[str, Any]]:
+        """READY clips no operator can see: no card, nobody posting one, fewer than CARD_MAX_ATTEMPTS tries.
+        Younger than grace_s is left to the lane that staged it; older than max_age_s is left alone."""
+        now = time.time()
+        rows = self._conn().execute(
+            "SELECT * FROM clips WHERE state='READY' AND card_message_id IS NULL "
+            "AND (card_lease_until IS NULL OR card_lease_until<?) AND COALESCE(card_attempts,0)<? "
+            "AND updated_at<=? AND created_at>=? ORDER BY created_at",
+            (now, CARD_MAX_ATTEMPTS, now - grace_s, now - max_age_s),
+        )
+        return [dict(r) for r in rows.fetchall()]
 
     # -- jobs --------------------------------------------------------------
     def enqueue_job(self, stage: str, payload: dict[str, Any] | None = None) -> int:

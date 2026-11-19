@@ -10,10 +10,13 @@ from typing import Any
 
 from .. import config
 from . import staging
-from .db import ClipDB
+from .db import CARD_MAX_ATTEMPTS, ClipDB
 
 log = logging.getLogger(__name__)
 MAX_VIDEO_BYTES = 50 * 1024 * 1024
+CAPTION_MAX, TEXT_MAX = 1024, 4096  # Telegram limits for a video caption and a text message
+CARD_LEASE_S = 300  # how long one attempt to post a card keeps every other poster away
+CARD_GRACE_S = 120  # the lane that staged a clip posts its card itself; the bot only steps in after this
 
 
 def operator_for(telegram_id: int, operators: dict[str, Any] | None = None) -> str | None:
@@ -142,17 +145,30 @@ def handle_edit_reply(
 
 
 def build_application(db: ClipDB, token: str | None = None, root: Path | None = None) -> Any:
-    """Create the python-telegram-bot Application (lazy import). root: staging folder (staging_root())."""
-    from telegram import ForceReply, InlineKeyboardButton, InlineKeyboardMarkup
+    """Create the python-telegram-bot Application (lazy import). root: staging folder (staging_root()).
+
+    run_polling() (the approval bot) also starts housekeeping(); a caller that only initialize()s the
+    application to post cards (the live lane) does not.
+    """
+    import asyncio
+
+    from telegram import ForceReply
     from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
+    async def started(application: Any) -> None:
+        application.bot_data["housekeeping"] = asyncio.create_task(housekeeping(application, db, root))
+
+    async def stopping(application: Any) -> None:
+        task = application.bot_data.pop("housekeeping", None)
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
     token = token or os.environ["TELEGRAM_BOT_TOKEN"]
-    app = Application.builder().token(token).build()
+    app = Application.builder().token(token).post_init(started).post_stop(stopping).build()
 
     def markup(row: dict[str, Any]) -> Any:
-        return InlineKeyboardMarkup(
-            [[InlineKeyboardButton(label, callback_data=cb) for label, cb in r] for r in buttons_for(row)]
-        )
+        return _markup(buttons_for(row))
 
     async def on_button(update: Any, context: Any) -> None:
         q = update.callback_query
@@ -225,30 +241,93 @@ async def _publish(message: Any, db: ClipDB, clip_id: str, root: Path | None = N
         await message.reply_text(f"YouTube {privacy}: {res}")
 
 
-async def post_card(app: Any, db: ClipDB, clip_id: str, video: Path | None = None) -> None:
+def _markup(rows: list[list[tuple[str, str]]]) -> Any:
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(label, callback_data=cb) for label, cb in r] for r in rows]
+    )
+
+
+def _fit(text: str, limit: int) -> str:
+    """Telegram refuses a caption over 1024 or a message over 4096 characters: cut it, keep the card."""
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+async def post_card(app: Any, db: ClipDB, clip_id: str, video: Path | None = None) -> bool:
+    """Post the approval card of a clip and remember where it is. True when a card was posted.
+
+    Safe to call again for the same clip: the queue hands out the card once (atomic reservation), so a second
+    call while the clip has a card, or while the live lane or the approval bot is sending it, posts nothing.
+    A send error is raised; the reservation then runs out after CARD_LEASE_S and post_missing_cards() tries
+    again (CARD_MAX_ATTEMPTS in all, the last one without the video).
+    """
     chat_id = _chat_id()
     row = db.get(clip_id)
     if not row or not chat_id:
-        return
-    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-
-    kb = InlineKeyboardMarkup(
-        [[InlineKeyboardButton(label, callback_data=cb) for label, cb in r] for r in buttons_for(row)]
-    )
-    if video and Path(video).exists() and Path(video).stat().st_size < MAX_VIDEO_BYTES:
+        return False
+    attempt = db.reserve_card(clip_id, CARD_LEASE_S)
+    if not attempt:
+        return False
+    kb = _markup(buttons_for(row))
+    has_video = bool(video) and Path(video).exists() and Path(video).stat().st_size < MAX_VIDEO_BYTES
+    if has_video and attempt < CARD_MAX_ATTEMPTS:
         attrs = video_attrs(Path(video))
         thumb = thumbnail(Path(video))
-        with open(video, "rb") as f:
-            # Without explicit width/height/duration Telegram's iOS player guesses the shape and stretches
-            # the 9:16 video (the downloaded file is fine); the thumbnail keeps the preview vertical too.
-            await app.bot.send_video(
-                chat_id, f, caption=card_text(row), reply_markup=kb, supports_streaming=True,
-                thumbnail=thumb.read_bytes() if thumb else None, **attrs,
-            )  # fmt: skip
-        if thumb:
-            thumb.unlink(missing_ok=True)
+        try:
+            with open(video, "rb") as f:
+                # Without explicit width/height/duration Telegram's iOS player guesses the shape and stretches
+                # the 9:16 video (the downloaded file is fine); the thumbnail keeps the preview vertical too.
+                # Long timeouts: the answer to a 30 MB upload can take a while, and a card that timed out here
+                # but did arrive would be posted a second time by the retry.
+                msg = await app.bot.send_video(
+                    chat_id, f, caption=_fit(card_text(row), CAPTION_MAX), reply_markup=kb,
+                    supports_streaming=True, thumbnail=thumb.read_bytes() if thumb else None,
+                    read_timeout=60, write_timeout=120, **attrs,
+                )  # fmt: skip
+        finally:
+            if thumb:
+                thumb.unlink(missing_ok=True)
     else:
-        await app.bot.send_message(chat_id, card_text(row), reply_markup=kb)
+        has_video = False
+        msg = await app.bot.send_message(chat_id, _fit(card_text(row), TEXT_MAX), reply_markup=kb)
+    db.set_card(clip_id, chat_id, msg.message_id, has_video)
+    return True
+
+
+async def post_missing_cards(app: Any, db: ClipDB, root: Path | None = None) -> list[str]:
+    """Post a card for every READY clip that has none: the lane's own post_card failed, the lane was
+    restarted between staging and posting, or the clip came from a lane without a bot (VOD, worker).
+    Clips queued more than publish.card_max_age_h ago (24; 0 turns this off) are left alone."""
+    max_age_h = float(config.global_config().get("publish", {}).get("card_max_age_h", 24))
+    if max_age_h <= 0:
+        return []
+    root = Path(root) if root else staging.staging_root()
+    posted = []
+    for row in db.cardless(CARD_GRACE_S, max_age_h * 3600):
+        try:
+            if await post_card(app, db, row["id"], root / row["id"] / "short_9x16.mp4"):
+                posted.append(row["id"])
+        except Exception:  # noqa: BLE001 - one card that cannot be sent must not hold up the others
+            log.exception("card for %s not posted", row["id"])
+    return posted
+
+
+async def sweep(app: Any, db: ClipDB, root: Path | None = None) -> None:
+    """One housekeeping pass of the approval bot."""
+    await post_missing_cards(app, db, root)
+
+
+async def housekeeping(app: Any, db: ClipDB, root: Path | None = None, every_s: float = 60.0) -> None:
+    """Run sweep() for as long as the approval bot runs (started by build_application's post_init)."""
+    import asyncio
+
+    while True:
+        try:
+            await sweep(app, db, root)
+        except Exception:  # noqa: BLE001 - the next pass tries again
+            log.exception("housekeeping pass failed")
+        await asyncio.sleep(every_s)
 
 
 def video_attrs(video: Path) -> dict[str, int]:
@@ -299,7 +378,8 @@ async def alert(app: Any, text: str) -> None:
 
 
 def main() -> None:
-    """Run the approval bot (button presses, title edits). The live lane posts cards with its own client."""
+    """Run the approval bot: button presses, title edits and housekeeping(). The live lane posts its cards
+    with its own client; the bot posts the ones that went missing."""
     root = staging.staging_root()
     root.mkdir(parents=True, exist_ok=True)
     build_application(ClipDB(root / "clips.db"), root=root).run_polling()
