@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -25,12 +26,21 @@ def operator_for(telegram_id: int, operators: dict[str, Any] | None = None) -> s
     return None
 
 
+def claim_expired(row: dict[str, Any] | None, now: float | None = None) -> bool:
+    """True for a CLAIMED row whose TTL ran out: the holder lost the lock and anyone may claim the clip."""
+    if not row or row.get("state") != "CLAIMED":
+        return False
+    return float(row.get("claim_until") or 0) < (time.time() if now is None else now)
+
+
 def card_text(row: dict[str, Any]) -> str:
     import json
 
     meta = json.loads(row.get("meta_json") or "{}")
     lines = [f"Clip {row['id']} - {row['streamer']}", f"State: {row['state']}"]
-    if row.get("claimed_by"):
+    if claim_expired(row):
+        lines.append(f"Claim by {row['claimed_by']} expired: free to claim")
+    elif row.get("claimed_by"):
         lines.append(f"Held by: {row['claimed_by']}")
     for k in ("title", "hook", "why"):
         if meta.get(k):
@@ -46,9 +56,10 @@ def card_text(row: dict[str, Any]) -> str:
 
 
 def buttons_for(row: dict[str, Any], operators: dict[str, Any] | None = None) -> list[list[tuple[str, str]]]:
-    """Rows of (label, callback_data). READY -> one Claim button per operator; CLAIMED -> holder actions."""
+    """Rows of (label, callback_data). READY or an expired claim -> one Claim button per operator;
+    CLAIMED -> holder actions."""
     cid = row["id"]
-    if row["state"] == "READY":
+    if row["state"] == "READY" or claim_expired(row):
         ops = config.operators() if operators is None else operators
         return [[(f"Claim: {o.get('label', n)}", f"claim:{cid}:{n}") for n, o in ops.items()]]
     if row["state"] == "CLAIMED":
@@ -78,7 +89,10 @@ def handle_action(
         if who != op:
             return "That claim button is not yours.", db.get(clip_id)
         ok, holder = db.claim(clip_id, op)
-        return ("Claimed." if ok else f"Already held by {holder}."), db.get(clip_id)
+        row = db.get(clip_id)
+        if ok:
+            return "Claimed.", row
+        return (f"Already held by {holder}." if holder else _refusal(row, "claim")), row
     if action == "approve":
         ok = db.approve(clip_id, op)
         if ok:
@@ -86,19 +100,36 @@ def handle_action(
                 staging.mark_approved(clip_id, op, root)
             except FileNotFoundError:
                 log.warning("staging folder missing for %s", clip_id)
-        return ("Approved." if ok else "Only the holder can approve."), db.get(clip_id)
+        row = db.get(clip_id)
+        return ("Approved." if ok else _refusal(row, "approve")), row
     if action == "reject":
         ok = db.reject(clip_id, op)
-        return ("Rejected." if ok else "Only the holder can reject."), db.get(clip_id)
+        row = db.get(clip_id)
+        return ("Rejected." if ok else _refusal(row, "reject")), row
     if action == "release":
         ok = db.release(clip_id, op)
-        return ("Released." if ok else "Only the holder can release."), db.get(clip_id)
+        row = db.get(clip_id)
+        return ("Released." if ok else _refusal(row, "release")), row
     if action == "edit":
         row = db.get(clip_id)
-        if not row or row["claimed_by"] != op:
-            return "Only the holder can edit.", row
+        if not row or row["state"] != "CLAIMED" or row["claimed_by"] != op or claim_expired(row):
+            return _refusal(row, "edit"), row
         return "Reply with the new title.", row
     return "Unknown action.", db.get(clip_id)
+
+
+def _refusal(row: dict[str, Any] | None, verb: str) -> str:
+    """Why a holder action was refused. The card is redrawn from the same row, so after an expired claim it
+    shows the Claim buttons again."""
+    if row is None:
+        return "This clip is no longer in the queue."
+    if claim_expired(row):
+        return f"The claim expired. Claim the clip again to {verb} it."
+    if row["state"] == "READY":
+        return f"Claim the clip first to {verb} it."
+    if row["state"] != "CLAIMED":
+        return f"Already {row['state'].lower()}."
+    return f"Only the holder can {verb}."
 
 
 def handle_edit_reply(

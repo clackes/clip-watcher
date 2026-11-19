@@ -163,6 +163,28 @@ def test_bot_logic(db, tmp_path, monkeypatch):
     assert telegram_bot.handle_action(db, 11, "approve:c1", operators=OPS)[0] == "Approved."
 
 
+def test_expired_claim_can_be_taken_over_from_the_card(db):
+    """After the TTL the row stays CLAIMED and the card still shows the holder's buttons, which nobody may
+    use any more: a press has to say so and bring the Claim buttons back."""
+    assert db.claim("c1", "manu", ttl_min=0.001)[0]
+    time.sleep(0.1)
+    assert db.state("c1") == "CLAIMED"
+    for who in (11, 22):
+        for action in ("approve", "reject", "release", "edit"):
+            text, row = telegram_bot.handle_action(db, who, f"{action}:c1", operators=OPS)
+            assert "expired" in text and row["state"] == "CLAIMED"
+    assert [b[0] for b in telegram_bot.buttons_for(row, OPS)[0]] == ["Claim: Manu", "Claim: Samu"]
+    assert "expired" in telegram_bot.card_text(row)
+    text, row = telegram_bot.handle_action(db, 22, "claim:c1:samu", operators=OPS)
+    assert text == "Claimed." and row["claimed_by"] == "samu"
+    assert [b[0] for b in telegram_bot.buttons_for(row, OPS)[0]] == ["Approve", "Edit"]
+    assert "expired" not in telegram_bot.card_text(row)
+    assert telegram_bot.handle_action(db, 11, "approve:c1", operators=OPS)[0].startswith("Only")
+    assert telegram_bot.handle_action(db, 22, "approve:c1", operators=OPS)[0] == "Approved."
+    # stale buttons on a card that moved on answer with the state instead of "only the holder"
+    assert telegram_bot.handle_action(db, 22, "reject:c1", operators=OPS)[0] == "Already approved."
+
+
 def test_approve_and_publish_follow_clipwatcher_staging(db, tmp_path, monkeypatch):
     """Docker sets CLIPWATCHER_STAGING: Approve builds the approved package there, the publishers read it."""
     from clipwatcher.publish import youtube, youtube_browser
