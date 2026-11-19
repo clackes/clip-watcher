@@ -153,6 +153,12 @@ def resolve(
             for f in calibrate.stable_faces(boxes, len(frames), fw, fh)
             if f[3] <= calibrate.FULL_CAM_FACE_H * fh
         ]
+        big_frames = sum(any(b[3] > calibrate.FULL_CAM_FACE_H * fh for b in bs) for bs in per_frame)
+        if 0 < big_frames < math.ceil(0.75 * len(frames)):
+            # Game close-ups on screen (GTA cutscene): the big face won the cluster vote and the small
+            # webcam was dropped (kaicenat, 19 Nov). Only faces that stay put are cams here.
+            cams = calibrate.steady_faces(boxes, len(frames), fw, fh)
+            face = cams[0] if cams else None
         multi = len(cams) >= 2 and (peak_s is not None or cam_hint is not None)
         if multi:
             face = reacting_face(media, cams, fw, fh, peak_s, cam_hint, Path(td))

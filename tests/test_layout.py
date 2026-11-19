@@ -178,3 +178,28 @@ def test_no_face_is_not_reframed_and_a_passing_closeup_is_not_a_full_cam(monkeyp
     closeup = {frames[0][1], frames[1][1]}  # the character's face in 2 of 4 frames only
     lay = layout.resolve(tmp_path / "x.mp4", "x", detector=lambda p: [big] if p in closeup else [])
     assert lay.source == "no-face" and not lay.has_webcam and not lay.as_render_kwargs()["reframe"]
+
+
+def test_small_steady_webcam_wins_over_moving_game_closeups(monkeypatch, tmp_path):
+    """Regression (kaicenat, GTA 6 cutscene, 19 Nov): big character faces took the cluster vote, were then
+    dropped as a passing close-up, and the small webcam in the corner was never used. Real boxes, 1280x720."""
+    from PIL import Image
+
+    frames = []
+    for i in range(4):
+        f = tmp_path / f"f{i}.png"
+        Image.new("RGB", (1280, 720)).save(f)
+        frames.append((float(i), f))
+    per = {
+        frames[0][1]: [(293, 170, 175, 175), (892, 197, 119, 119), (605, 264, 103, 103), (84, 356, 80, 80)],
+        frames[1][1]: [(248, 186, 144, 144), (83, 358, 73, 73)],
+        frames[2][1]: [(757, 190, 85, 85)],
+        frames[3][1]: [(566, 178, 116, 116)],
+    }
+    monkeypatch.setattr(layout.config, "streamer", lambda n: {})
+    monkeypatch.setattr(layout.calibrate, "sample_frames", lambda m, d, n: frames[:n])
+    for peak in (None, 10.0):
+        lay = layout.resolve(tmp_path / "x.mp4", "x", detector=lambda p: per[p], peak_s=peak)
+        assert lay.has_webcam and lay.source == "auto-new", lay
+        w, h, x, y = (int(v) for v in lay.cam.split(":"))
+        assert x <= 120 <= x + w and y <= 395 <= y + h  # the webcam face, not a game character

@@ -337,6 +337,33 @@ def stable_faces(
     return out
 
 
+STEADY_JITTER = 0.35  # a webcam face keeps its place and size within this share of its width
+
+
+def steady_faces(boxes: list[Box], n_frames: int, fw: int, fh: int) -> list[Box]:
+    """Webcam-sized faces that stay put across the sampled frames, most-seen first.
+
+    A webcam overlay never moves; faces of game characters (GTA cutscenes) jump and rescale with every
+    camera cut, so a cluster whose members drift or change size is not a cam (kaicenat, 19 Nov).
+    """
+    need = max(2, math.ceil(0.3 * n_frames))
+    out: list[Box] = []
+    for c in cluster_boxes(boxes):
+        if len(c) < need:
+            continue
+        f: Box = tuple(statistics.median(b[i] for b in c) for i in range(4))  # type: ignore[assignment]
+        if f[3] < 0.04 * fh or f[3] > FULL_CAM_FACE_H * fh:
+            continue
+        cx, cy = f[0] + f[2] / 2, f[1] + f[3] / 2
+        if all(
+            math.hypot(b[0] + b[2] / 2 - cx, b[1] + b[3] / 2 - cy) <= STEADY_JITTER * f[2]
+            and abs(b[3] - f[3]) <= STEADY_JITTER * f[3]
+            for b in c
+        ):
+            out.append(f)
+    return out
+
+
 def face_motion(frames: list[Path], face: Box, fw: int, pad: float = 0.5) -> float:
     """Mean frame-to-frame pixel change around a face (source px box; frames may be downscaled).
 
