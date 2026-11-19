@@ -136,3 +136,21 @@ def test_loudness_pass_measures_the_clip_that_is_rendered(ts):
     assert silent is None or float(silent["input_i"]) < -60
     with_beep = _measure(ts, *_seek(10.9), 1.2)  # 10.9-12.1 s
     assert with_beep is not None and float(with_beep["input_i"]) > -40
+
+
+def test_calibrate_frames_are_the_moments_asked_for(ts, tmp_path):
+    """Layout detection reads single frames too. With a plain -ss on a .ts whose keyframes are 4 s apart,
+    most of the six frames around a peak came back as one and the same keyframe: no motion to compare."""
+    from clipwatcher import calibrate
+    from clipwatcher.layout import PEAK_OFFSETS
+
+    times = [9.75 + o for o in PEAK_OFFSETS]  # 8.25, 8.75, ... 10.75 s
+    peak = calibrate.frames_at(ts, tmp_path / "peak", times, height=None)
+    assert [t for t, _ in peak] == times
+    assert [second_shown(p) for _, p in peak] == [int(t) for t in times]
+    small = calibrate.frames_at(ts, tmp_path / "small", times[:2], height=90)
+    with Image.open(small[0][1]) as im:
+        assert im.size == (160, 90)
+    spread = calibrate.sample_frames(ts, tmp_path / "all", 6)  # about 2.5, 5.5, ... 17.5 s of the 20 s
+    assert len(spread) == 6
+    assert [second_shown(p) for _, p in spread] == [int(t) for t, _ in spread]

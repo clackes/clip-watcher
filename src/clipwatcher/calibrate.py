@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import config
+from .render import seek
 
 log = logging.getLogger(__name__)
 
@@ -274,20 +275,29 @@ def media_duration(media: Path) -> float:
     return float(json.loads(r.stdout)["format"]["duration"])
 
 
+def grab_frame(media: Path, t: float, out: Path, height: int | None = None) -> bool:
+    """One PNG of the frame at t seconds. D9: a plain -ss on a .ts lands on a keyframe, often the one after
+    t (six "peak" frames half a second apart came back as one picture), so the input seek is coarse and
+    the frame is picked by trim in the graph (render/seek.py)."""
+    inp, trim = seek.one_stream(media, max(0.0, t))
+    vf = f"trim=start={trim:.3f},setpts=PTS-STARTPTS" + (f",scale=-2:{height}" if height else "")
+    r = subprocess.run(
+        [config.ffmpeg_bin(), "-y", "-hide_banner", "-loglevel", "error", *inp, "-vf", vf, "-frames:v", "1",
+         str(out)],
+        capture_output=True,
+    )  # fmt: skip
+    return r.returncode == 0 and out.exists()
+
+
 def sample_frames(media: Path, out_dir: Path, n: int = 10) -> list[tuple[float, Path]]:
-    """n PNG frames spread over the middle 90% of the media (single-frame grabs, no trimming)."""
+    """n PNG frames spread over the middle 90% of the media (single-frame grabs)."""
     out_dir.mkdir(parents=True, exist_ok=True)
     dur = media_duration(media)
     res = []
     for i in range(n):
         t = dur * (0.05 + 0.9 * (i + 0.5) / n)
         p = out_dir / f"frame_{i:02d}.png"
-        subprocess.run(
-            [config.ffmpeg_bin(), "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{t:.3f}",
-             "-i", str(media), "-frames:v", "1", str(p)],
-            check=True, capture_output=True,
-        )  # fmt: skip
-        if p.exists():
+        if grab_frame(media, t, p):
             res.append((t, p))
     return res
 
@@ -300,12 +310,7 @@ def frames_at(
     res = []
     for i, t in enumerate(times):
         p = out_dir / f"peak_{i:02d}.png"
-        r = subprocess.run(
-            [config.ffmpeg_bin(), "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{max(0.0, t):.3f}",
-             "-i", str(media), "-frames:v", "1", *(["-vf", f"scale=-2:{height}"] if height else []), str(p)],
-            capture_output=True,
-        )  # fmt: skip
-        if r.returncode == 0 and p.exists():
+        if grab_frame(media, t, p, height):
             res.append((t, p))
     return res
 
