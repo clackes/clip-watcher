@@ -52,6 +52,32 @@ def test_end_finishes_the_sentence_and_keeps_a_tail():
     assert e == 13.35
 
 
+def test_end_in_a_pause_does_not_run_into_the_next_sentence():
+    """Regression: the last word before the judge's end had no full stop (Whisper leaves it out often) and
+    the end sat in the pause after it. The end was pushed on to the full stop of the NEXT sentence."""
+    words = [
+        W(10.0, 10.4, "No"), W(10.5, 10.9, "way"), W(11.0, 11.5, "bro"),  # ... 1.5 s pause ...
+        W(13.0, 13.4, "Anyway"), W(13.5, 13.8, "next"), W(13.9, 14.2, "round."),
+    ]  # fmt: skip
+    assert snap_trim(2.0, 12.0, words, 20) == (2.0, 12.0)  # was (2.0, 14.55)
+    assert snap_trim(2.0, 11.3, words, 20) == (2.0, 11.85)  # inside "bro": the word is finished, no more
+    assert snap_trim(2.0, 11.6, words, 20) == (2.0, 11.85)  # right after it: only the tail
+    # mid-line without punctuation: the line in progress is finished, up to its pause and not beyond
+    run = [W(0.0, 0.3, "bro"), W(0.35, 0.6, "what"), W(0.65, 0.9, "the"), W(0.95, 1.4, "hell")]
+    run += [W(2.4, 2.7, "ok"), W(2.75, 3.0, "so.")]
+    assert snap_trim(0.0, 0.7, run, 10) == (0.0, 1.75)  # was (0.0, 3.35)
+
+
+def test_a_pause_ends_a_sentence_exactly_where_the_judge_sees_a_new_line():
+    from clipwatcher.judge import snap
+    from clipwatcher.judge.compact import PHRASE_GAP_S, serialize_transcript_compact
+
+    g = PHRASE_GAP_S
+    words = [W(0.0, 0.4, "one"), W(0.4 + g + 0.05, 1.5, "two"), W(1.5 + g - 0.05, 2.5, "three")]
+    assert [p[2] for p in serialize_transcript_compact(words)] == ["one", "two three"]
+    assert snap._finished(words, 0) and not snap._finished(words, 1) and snap._finished(words, 2)
+
+
 def test_end_tail_is_clamped_by_next_word_and_duration():
     _, e = snap_trim(2.0, 15.2, WORDS, 15.1)
     assert e == 15.1
