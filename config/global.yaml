@@ -144,6 +144,8 @@ publish:
   auto_approve_min: 8
   claim_ttl_min: 15
   youtube_on_approve: true  # Approve in Telegram uploads at once (private while DRY_RUN=1)
+  resume_max_h: 24          # after a bot restart, upload clips approved up to N hours ago that never got there
+  card_max_age_h: 24        # the bot posts a card for READY clips that have none (VOD / batch clips too); 0 = off
   youtube_mode: browser     # browser: real Chrome via patchright (scripts/yt_browser_login.py); api: Data API (publish/youtube.py)
 
 fastlane:                   # live lane (python -m clipwatcher.live)

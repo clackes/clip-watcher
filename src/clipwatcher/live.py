@@ -113,8 +113,9 @@ async def supervise(login: str, **kw) -> None:
 
 async def main_async(logins: list[str], minutes: float) -> None:
     from clipwatcher.queue.db import ClipDB
+    from clipwatcher.queue.staging import staging_root as shared_root
 
-    staging_root = Path(os.environ.get("CLIPWATCHER_STAGING", config.ROOT / "staging"))
+    staging_root = shared_root()  # the same folder the approval bot and the publishers use
     staging_root.mkdir(parents=True, exist_ok=True)
     db = ClipDB(staging_root / "clips.db")
     bot = None

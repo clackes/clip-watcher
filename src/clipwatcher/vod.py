@@ -19,6 +19,7 @@ from clipwatcher import config
 from clipwatcher.chat.convert import read_jsonl, tdl_to_messages, write_jsonl
 from clipwatcher.detect.detector import confirm, detect, loud_z
 from clipwatcher.models import Candidate, ChatMessage
+from clipwatcher.queue.staging import staging_root
 from clipwatcher.render import cold_open
 
 log = logging.getLogger(__name__)
@@ -278,12 +279,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--before", type=float, default=vcfg.get("before_s", 20))
     ap.add_argument("--after", type=float, default=vcfg.get("after_s", 10))
     ap.add_argument("--gap", type=float, default=vcfg.get("gap_s", 90))
-    ap.add_argument("--out", type=Path, default=Path("staging"))
+    ap.add_argument("--out", type=Path, help="staging folder (default: the shared one, CLIPWATCHER_STAGING)")
     ap.add_argument("--work", type=Path, default=Path("work"))
     ap.add_argument("--no-judge", action="store_true")
     ap.add_argument("--no-viewer-clips", action="store_true", help="skip the viewer-clip confirmation (D3)")
     ap.add_argument("--language", help="spoken language (default: streamers.yaml, then en)")
     a = ap.parse_args(argv)
+    a.out = a.out or staging_root()
 
     streamer = a.streamer.lower()
     vid = vod_id(a.vod)

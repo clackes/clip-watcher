@@ -337,3 +337,22 @@ def test_quiet_chat_is_ticked_and_the_last_spike_is_drained(tmp_path):
     out = asyncio.run(lane.run())
     assert det.ticks == [t0 / 1000 + 10.0 - 5.0]  # chat time: last message + the silence, less the margin
     assert len(out) == 2 and {o.status for o in out} == {"staged"}  # the ticked spike and the drained one
+
+
+def test_a_card_that_cannot_be_posted_does_not_fail_the_staged_clip(tmp_path):
+    """The clip is staged before its card goes out; a Telegram error there used to count the clip as failed
+    and left its pins behind. The approval bot posts the missing card."""
+    log: list = []
+    t0 = 1_700_000_000_000
+    steps = _steps(log)
+
+    async def no_telegram(app, db, cid, video):
+        raise TimeoutError("Telegram did not answer")
+
+    steps.post_card = no_telegram
+    lane = fastlane.FastLane(
+        "zack", FakeChat([ChatMessage(t0, "u", "fire")]), FakeDetector({"fire"}), FakeRing(log), steps=steps,
+        cfg={"work_dir": str(tmp_path)}, db=object(), bot=object(),
+    )  # fmt: skip
+    out = asyncio.run(lane.run())
+    assert [o.status for o in out] == ["staged"] and any(e[0] == "unpin" for e in log)

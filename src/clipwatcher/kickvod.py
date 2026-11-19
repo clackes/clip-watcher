@@ -133,11 +133,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--before", type=float, default=vcfg.get("before_s", 20))
     ap.add_argument("--after", type=float, default=vcfg.get("after_s", 10))
     ap.add_argument("--gap", type=float, default=vcfg.get("gap_s", 90))
-    ap.add_argument("--out", type=Path, default=Path("staging"))
+    ap.add_argument("--out", type=Path, help="staging folder (default: the shared one, CLIPWATCHER_STAGING)")
     ap.add_argument("--work", type=Path, default=Path("work"))
     ap.add_argument("--no-judge", action="store_true")
     ap.add_argument("--language", help="spoken language (default: streamers.yaml, then en)")
     a = ap.parse_args(argv)
+    a.out = a.out or vod.staging_root()
 
     streamer = a.streamer.lower()
     vid = kick_vod_id(a.vod)

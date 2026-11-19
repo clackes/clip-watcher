@@ -21,6 +21,7 @@ from typing import Any
 
 from . import config
 from .models import Candidate, JudgeResult, Word
+from .queue import staging
 from .queue.db import ClipDB
 
 log = logging.getLogger(__name__)
@@ -207,7 +208,7 @@ class Worker:
         self.db = db
         self.handlers = {**DEFAULT_HANDLERS, **(handlers or {})}
         self.clips_root = Path(clips_root) if clips_root else config.ROOT / "clips"
-        self.staging_root = Path(staging_root) if staging_root else config.ROOT / "staging"
+        self.staging_root = Path(staging_root) if staging_root else staging.staging_root()
         self.lease_s, self.max_attempts, self.profile = lease_s, max_attempts, profile
 
     @staticmethod
@@ -265,7 +266,7 @@ class Worker:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="clipwatcher.worker")
     ap.add_argument("--once", action="store_true", help="drain the queue and exit")
-    ap.add_argument("--db", type=Path, default=config.ROOT / "staging" / "clips.db")
+    ap.add_argument("--db", type=Path, default=staging.staging_root() / "clips.db")
     ap.add_argument("--enqueue-media", type=Path)
     ap.add_argument("--chat", type=Path)
     ap.add_argument("--streamer")
