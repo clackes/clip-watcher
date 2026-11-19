@@ -168,6 +168,8 @@ def resolve(
             if face is None:  # still nothing: a typical webcam face at the judge's point
                 fs = 0.09 * fh
                 face, judge_cam = (cam_hint[0] * fw - fs / 2, cam_hint[1] * fh - fs / 2, fs, fs), True
+        # The overlay's real borders when they can be seen; the guessed box around the face otherwise.
+        overlay = calibrate.overlay_rect([p for _, p in frames], face, fw, fh) if face else None
     # A real full-screen camera shows the big face in nearly every frame; a game character's close-up
     # (GTA cutscene, club scene) only in some, and must not turn gameplay into an IRL reframe.
     big_face = bool(face) and face[3] > calibrate.FULL_CAM_FACE_H * fh
@@ -196,7 +198,7 @@ def resolve(
     if face is None or full_cam:
         return Layout(False, None, None, "fullcam" if full_cam else "no-face")
     if judge_cam and not hit:
-        cam = calibrate.facecam_from_face(face, fw, fh)
+        cam = overlay or calibrate.facecam_from_face(face, fw, fh)
         return Layout(
             True,
             calibrate.rect_str(cam),
@@ -205,7 +207,7 @@ def resolve(
             None,
         )
     if multi:  # the reacting cam is not a confirmed scene: crop it from its face
-        cam = calibrate.facecam_from_face(face, fw, fh)
+        cam = overlay or calibrate.facecam_from_face(face, fw, fh)
         others = [calibrate.facecam_from_face(f, fw, fh) for f in cams]
         game = calibrate.gameplay_between(others, fw, fh) or calibrate.gameplay_avoiding(cam, fw, fh)
         return Layout(
@@ -216,7 +218,7 @@ def resolve(
             fstr,
         )
     # New, unconfirmed scene: still rendered, but flagged in meta so an operator checks the crop.
-    cam = calibrate.facecam_from_face(face, fw, fh)
+    cam = overlay or calibrate.facecam_from_face(face, fw, fh)
     return Layout(
         True,
         calibrate.rect_str(cam),

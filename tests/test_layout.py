@@ -203,3 +203,35 @@ def test_small_steady_webcam_wins_over_moving_game_closeups(monkeypatch, tmp_pat
         assert lay.has_webcam and lay.source == "auto-new", lay
         w, h, x, y = (int(v) for v in lay.cam.split(":"))
         assert x <= 120 <= x + w and y <= 395 <= y + h  # the webcam face, not a game character
+
+
+def test_overlay_rect_finds_the_cam_borders_not_the_chat_under_it(tmp_path):
+    """A small cam (0..260 x 288..434) with chat lines right under it, over gameplay that changes every
+    frame: the crop is the overlay itself, not a guessed box sliding into the chat (kaicenat, 19 Nov)."""
+    import random
+
+    from PIL import Image, ImageDraw
+
+    from clipwatcher import calibrate
+
+    rnd = random.Random(1)
+    frames = []
+    for i in range(4):
+        im = Image.new("RGB", (1280, 720), (rnd.choice([30, 60, 230]),) * 3)
+        d = ImageDraw.Draw(im)
+        for _ in range(30):  # gameplay: shapes that move between frames
+            x, y = rnd.randrange(0, 1200), rnd.randrange(0, 650)
+            d.rectangle([x, y, x + 80, y + 60], fill=(rnd.randrange(256),) * 3)
+        d.rectangle([0, 288, 259, 433], fill=(200, 120, 220))  # the cam (pink room)
+        d.ellipse([90, 360, 150, 430], fill=(90 + 20 * i, 60, 50))  # the streamer, moving a little
+        d.rectangle([0, 434, 259, 520], fill=(10, 10, 10))  # chat box under the cam
+        for k in range(4):
+            d.text((6, 440 + 20 * k), f"user{k + i}: lol", fill=(255, 255, 255))
+        p = tmp_path / f"f{i}.png"
+        im.save(p)
+        frames.append(p)
+    r = calibrate.overlay_rect(frames, (90.0, 360.0, 60.0, 70.0), 1280, 720)
+    assert r is not None
+    x, y, w, h = r
+    assert x == 0 and abs(y - 288) <= 2 and abs(w - 260) <= 2 and abs(h - 146) <= 2, r
+    assert calibrate.overlay_rect(frames[:1], (90.0, 360.0, 60.0, 70.0), 1280, 720) is None

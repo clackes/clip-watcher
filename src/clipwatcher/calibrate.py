@@ -108,6 +108,50 @@ def facecam_from_face(face: Box, fw: int, fh: int, snap: float = 0.08) -> Rect:
     return _even(left), _even(top), cw, ch
 
 
+EDGE_MIN = 6.0  # a webcam border: mean luma step along the face's span, in every sampled frame
+
+
+def overlay_rect(frames: list[Path], face: Box, fw: int, fh: int) -> Rect | None:
+    """The webcam overlay's real borders around a face, or None.
+
+    The overlay's edges stay put in every frame while the gameplay behind it changes, so the per-frame edge
+    profiles are combined with min(): only persistent lines survive. Each side takes the strongest such
+    line near the face, else the frame border. A guessed 2.25:1 box around the face slid into the on-screen
+    chat under a small cam and cut its top (kaicenat, 19 Nov).
+    """
+    import numpy as np
+    from PIL import Image
+
+    if len(frames) < 2:
+        return None
+    g = np.stack([np.asarray(Image.open(p).convert("L").resize((fw, fh)), dtype=np.float32) for p in frames])
+    x, y, w, h = face
+    cx, cy = x + w / 2, y + h / 2
+    span_x = slice(int(max(0, x - w)), int(min(fw, x + 2 * w)))
+    span_y = slice(int(max(0, y - h / 2)), int(min(fh, y + 1.5 * h)))
+    rows = np.abs(np.diff(g[:, :, span_x], axis=1)).mean(axis=2).min(axis=0)  # edge after row i
+    cols = np.abs(np.diff(g[:, span_y, :], axis=2)).mean(axis=1).min(axis=0)
+    floor_r = max(EDGE_MIN, 8 * float(np.median(rows)))
+    floor_c = max(EDGE_MIN, 8 * float(np.median(cols)))
+
+    def side(prof, lo: float, hi: float, floor: float, border: int) -> int | None:
+        a, b = int(max(0, lo)), int(min(len(prof), hi))
+        if b > a and prof[a:b].max() >= floor:
+            return a + int(prof[a:b].argmax()) + 1
+        return border if (lo <= 0 or hi >= len(prof)) else None
+
+    top = side(rows, cy - 3 * h, y, floor_r, 0)
+    bottom = side(rows, y + h, cy + 3 * h, floor_r, fh)
+    left = side(cols, cx - 5 * w, x, floor_c, 0)
+    right = side(cols, x + w, cx + 5 * w, floor_c, fw)
+    if None in (top, bottom, left, right):
+        return None
+    cw, ch = right - left, bottom - top  # type: ignore[operator]
+    if not (1.2 <= cw / max(ch, 1) <= 2.6 and cw >= 2.2 * w and ch >= 1.6 * h):
+        return None
+    return _even(left), _even(top), _even(cw), _even(ch)  # type: ignore[arg-type]
+
+
 def gameplay_avoiding(cam: Rect | None, fw: int, fh: int) -> Rect:
     """Largest 2:1 region not overlapping the facecam. Default (no cam): full width, centred."""
     full = (0, 0, fw, fh)
