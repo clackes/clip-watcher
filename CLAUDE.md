@@ -14,7 +14,7 @@ renders a branded 9:16 Short + clean 16:9 clip, stages them in a Telegram approv
 - The channel is GTA 6 clips from many streamers (owner, 19 Nov): `channel.games` (ingest/category.py,
   streamlink --json metadata): a lane records and reads chat only while the stream is in that category
   (`live.wait_for_game`, re-checked every 5 min: a switch or 15 min offline stops it), and moments from any
-  other category are dropped before the cut. One template for all. Schedule paused until YouTube re-login.
+  other category are dropped before the cut. One template for all. Owner, 19 Nov 15:40: schedule off, YouTube only after an operator approves in Telegram.
 - Credit the streamer in metadata (title/description). Owner, 18 Nov: no on-screen `twitch.tv/<name>` tag
   (`render.credit_on_screen: false`). Campaign link lives in streamers.yaml.
 - Do not add content filters or blocking rules the spec doesn't ask for.
