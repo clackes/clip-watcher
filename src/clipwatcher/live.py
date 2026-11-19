@@ -28,11 +28,10 @@ def data_root() -> Path:
 
 
 async def run_streamer(login: str, *, db, bot=None, staging_root: Path | None = None) -> None:
-    from clipwatcher.chat.live_log import LiveLog, logged
     from clipwatcher.chat.twitch_irc import TwitchChat
-    from clipwatcher.detect.live import LiveDetector
     from clipwatcher.fastlane import FastLane, Steps
     from clipwatcher.ingest.recorder import Recorder
+    from clipwatcher.session import StreamSession
 
     scfg = config.streamer(login)
     platform = scfg.get("platform", "twitch")
@@ -67,12 +66,17 @@ async def run_streamer(login: str, *, db, bot=None, staging_root: Path | None = 
         log.info("%s: removed stale ring %s", login, d)
     await rec.start()
     log.info("%s: recording to %s", login, rec.dir)
+    # The chat of a broadcast is kept whole on disk and read back (plus Twitch's replay of what was said
+    # before the bot joined) to build the spike baseline; the video above stays a rolling window.
+    session = StreamSession(login, root=data_root() / "chat", platform=platform)
+    watch = asyncio.create_task(session.watch())
     try:
-        chat = logged(chat_src, LiveLog(login, stream_id, data_root() / "chat"))
-        lane = FastLane(login, chat, LiveDetector(login), rec.ring, steps=steps, db=db, bot=bot,
+        lane = FastLane(login, chat_src, session, rec.ring, steps=steps, db=db, bot=bot,
                         staging_root=staging_root)  # fmt: skip
         await lane.run()
     finally:
+        watch.cancel()
+        session.close()
         await rec.stop()
 
 

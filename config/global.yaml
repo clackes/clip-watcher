@@ -16,6 +16,11 @@ buffer:
   quality: 720p,720p30,720p60,best
   lag_alert_s: 60           # recording this far behind live -> log + Telegram alert (line too slow)
 
+chat:                       # D13: the whole chat of a broadcast is kept in work/chat/<login>/<stream id>.jsonl
+  backfill: true            # on joining, read what was said before from Twitch's chat replay (needs VODs on)
+  backfill_max_h: 12        # ... at most this far back (a 48 h marathon is millions of messages)
+  session_poll_s: 60        # how often to check whether the streamer started a new broadcast
+
 detector:                   # D3 + D13
   # chat_score = sum of weight * z over a 10 s window: U unique chatters, M messages, E keyword energy,
   # S share of short / repeated messages. z = (value - level) / scale, with the scale taken from every
