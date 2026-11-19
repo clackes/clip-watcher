@@ -225,8 +225,10 @@ def test_overlay_rect_finds_the_cam_borders_not_the_chat_under_it(tmp_path):
         d.rectangle([0, 288, 259, 433], fill=(200, 120, 220))  # the cam (pink room)
         d.ellipse([90, 360, 150, 430], fill=(90 + 20 * i, 60, 50))  # the streamer, moving a little
         d.rectangle([0, 434, 259, 520], fill=(10, 10, 10))  # chat box under the cam
-        for k in range(4):
-            d.text((6, 440 + 20 * k), f"user{k + i}: lol", fill=(255, 255, 255))
+        for k in range(4):  # chat scrolls: different lines every frame
+            d.text(
+                (6, 440 + 20 * k), "".join(rnd.choice("abcdefghij KEKW") for _ in range(30)), fill=(255,) * 3
+            )
         p = tmp_path / f"f{i}.png"
         im.save(p)
         frames.append(p)

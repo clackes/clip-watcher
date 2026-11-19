@@ -115,8 +115,9 @@ def overlay_rect(frames: list[Path], face: Box, fw: int, fh: int) -> Rect | None
     """The webcam overlay's real borders around a face, or None.
 
     The overlay's edges stay put in every frame while the gameplay behind it changes, so the per-frame edge
-    profiles are combined with min(): only persistent lines survive. Each side takes the strongest such
-    line near the face, else the frame border. A guessed 2.25:1 box around the face slid into the on-screen
+    profiles are combined with min(): only persistent lines survive. Lines inside the streamer's room persist
+    too, so a border also needs moving pixels on its outer side. Each side takes the strongest such line near
+    the face, else the frame border. A guessed 2.25:1 box around the face slid into the on-screen
     chat under a small cam and cut its top (kaicenat, 19 Nov).
     """
     import numpy as np
@@ -134,16 +135,36 @@ def overlay_rect(frames: list[Path], face: Box, fw: int, fh: int) -> Rect | None
     floor_r = max(EDGE_MIN, 8 * float(np.median(rows)))
     floor_c = max(EDGE_MIN, 8 * float(np.median(cols)))
 
-    def side(prof, lo: float, hi: float, floor: float, border: int) -> int | None:
+    std = g.std(axis=0)  # how much each pixel changes over the sampled frames
+    K = 16  # strip width either side of a candidate border
+
+    def moving(lo_i: int, hi_i: int, horizontal: bool) -> float:
+        lo_i, hi_i = max(0, lo_i), min(fh if horizontal else fw, hi_i)
+        if hi_i <= lo_i:
+            return 0.0
+        strip = std[lo_i:hi_i, span_x] if horizontal else std[span_y, lo_i:hi_i]
+        return float(strip.mean())
+
+    def side(prof, lo: float, hi: float, floor: float, border: int, out: int, horizontal: bool) -> int | None:
+        """Strongest persistent line in [lo, hi) whose outer side moves (gameplay, scrolling chat) and
+        whose inner side is the calmer cam; lines inside the streamer's room are still on both sides."""
         a, b = int(max(0, lo)), int(min(len(prof), hi))
-        if b > a and prof[a:b].max() >= floor:
-            return a + int(prof[a:b].argmax()) + 1
+        for i in sorted(range(a, b), key=lambda k: -prof[k]):
+            if prof[i] < floor:
+                break
+            e = i + 1  # the border sits between pixel i and i + 1
+            outer = moving(e - K, e, horizontal) if out < 0 else moving(e, e + K, horizontal)
+            inner = moving(e, e + K, horizontal) if out < 0 else moving(e - K, e, horizontal)
+            if outer >= max(4.0, 1.5 * inner):
+                return e
         return border if (lo <= 0 or hi >= len(prof)) else None
 
-    top = side(rows, cy - 3 * h, y, floor_r, 0)
-    bottom = side(rows, y + h, cy + 3 * h, floor_r, fh)
-    left = side(cols, cx - 5 * w, x, floor_c, 0)
-    right = side(cols, x + w, cx + 5 * w, floor_c, fw)
+    # Head and hair outlines sit around the face box: no border that close above or beside it. The bottom
+    # has no margin, cams often crop at the chin or chest.
+    top = side(rows, cy - 3 * h, y - h / 2, floor_r, 0, -1, True)
+    bottom = side(rows, y + h, cy + 3 * h, floor_r, fh, 1, True)
+    left = side(cols, cx - 5 * w, x - w / 2, floor_c, 0, -1, False)
+    right = side(cols, x + 1.5 * w, cx + 5 * w, floor_c, fw, 1, False)
     if None in (top, bottom, left, right):
         return None
     cw, ch = right - left, bottom - top  # type: ignore[operator]
