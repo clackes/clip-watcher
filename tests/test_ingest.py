@@ -391,3 +391,55 @@ def test_recorder_alerts_once_when_recording_falls_behind_live(tmp_path, monkeyp
 
     asyncio.run(go())
     assert len(alerts) == 2 and "14.0 min behind live" in alerts[0]
+
+
+def test_recorder_does_not_call_a_finished_broadcast_behind_live(tmp_path, monkeypatch):
+    import asyncio
+
+    from clipwatcher.ingest.recorder import Recorder
+
+    alerts = []
+
+    async def on_alert(text):
+        alerts.append(text)
+
+    rec = Recorder("twitch", "x", "s", tmp_path, on_alert=on_alert)
+    monkeypatch.setattr(rec, "newest_segment_age_s", lambda now=None: 900.0)
+    rec._last_ingest -= 600  # the last segment arrived 10 minutes ago: the stream is over, not slow
+    asyncio.run(rec._check_lag())
+    assert alerts == [] and not rec._lagging
+
+
+def test_recorder_loop_survives_a_failed_check(tmp_path, monkeypatch):
+    """One exception in check_once used to end the loop for good while ffmpeg kept writing: nothing was
+    ingested or pruned any more, so every clip failed and the disk filled."""
+    import asyncio
+
+    from clipwatcher.ingest import recorder
+    from clipwatcher.ingest.recorder import Recorder
+
+    alerts, calls = [], []
+
+    async def on_alert(text):
+        alerts.append(text)
+
+    rec = Recorder("twitch", "x", "s", tmp_path, on_alert=on_alert, segment_s=10)
+
+    async def check():
+        calls.append(1)
+        if len(calls) <= 2:
+            raise OSError(28, "No space left on device")
+        if len(calls) == 4:
+            raise asyncio.CancelledError
+
+    async def no_wait(_):
+        return None
+
+    monkeypatch.setattr(rec, "check_once", check)
+    monkeypatch.setattr(recorder.asyncio, "sleep", no_wait)
+    try:
+        asyncio.run(rec._ingest_loop())
+    except asyncio.CancelledError:
+        pass
+    assert len(calls) == 4  # kept going after two failures, stopped only when cancelled
+    assert len(alerts) == 1 and "No space left" in alerts[0]  # one alert for the streak

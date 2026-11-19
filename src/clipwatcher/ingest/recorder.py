@@ -170,6 +170,7 @@ class Recorder:
         self.on_alert = on_alert  # async callable(text), e.g. a Telegram alert
         self.lag_alert_s = float(config.global_config().get("buffer", {}).get("lag_alert_s", 60))
         self._lagging = False
+        self._last_ingest = time.time()  # wall clock of the last segment that arrived
 
     def newest_segment_age_s(self, now: float | None = None) -> float | None:
         rows = self.ring.segments()
@@ -212,6 +213,8 @@ class Recorder:
                 self.pdt.add(int(round(s / self.segment_s)) + self._n_runs * 100_000, start)
                 n += 1
             self._ingested.add(name)
+        if n:
+            self._last_ingest = time.time()
         return n
 
     async def start(self) -> None:
@@ -266,9 +269,22 @@ class Recorder:
             self.ads.feed(raw.decode(errors="replace"))
 
     async def _ingest_loop(self) -> None:
+        """Runs for as long as the recorder does. One failed check (a full disk while rewriting the index,
+        a file another thread holds open) must not end it: ffmpeg would keep writing segments that nobody
+        ingests or prunes until the disk is full."""
+        failing = False
         while True:
             await asyncio.sleep(self.segment_s)
-            await self.check_once()
+            try:
+                await self.check_once()
+                failing = False
+            except Exception as e:  # noqa: BLE001 - keep ingesting and pruning whatever went wrong once
+                log.exception("%s: recorder check failed; retrying in %s s", self.login, self.segment_s)
+                if not failing:  # one alert per streak of failures, not one every 10 s
+                    failing = True
+                    await self._alert(
+                        f"{self.login}: recorder check failed ({type(e).__name__}: {e}); retrying"
+                    )
 
     async def check_once(self) -> None:
         """Ingest finished segments, prune, and pause/resume recording on low disk."""
@@ -300,6 +316,11 @@ class Recorder:
         quality, and clips would be cut from minutes-old video. Clears when it catches up."""
         lag = self.newest_segment_age_s()
         if lag is None or self.paused:
+            return
+        if time.time() - self._last_ingest > max(6 * self.segment_s, 60):
+            # Nothing is arriving at all: the broadcast ended or the channel is offline. Behind live means
+            # segments keep coming but old; a finished stream used to raise this alert every time.
+            self._lagging = False
             return
         if lag > self.lag_alert_s and not self._lagging:
             self._lagging = True
