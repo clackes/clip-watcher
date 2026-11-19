@@ -59,6 +59,7 @@ class FakeApp:
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     monkeypatch.delenv("CLIPWATCHER_STAGING", raising=False)
+    monkeypatch.delenv("CLIPWATCHER_YOUTUBE_MODE", raising=False)
     monkeypatch.setenv("DRY_RUN", "1")
     monkeypatch.setattr(telegram_bot, "_markup", lambda rows: rows)
     monkeypatch.setattr(telegram_bot, "_chat_id", lambda: CHAT)

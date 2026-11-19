@@ -19,8 +19,10 @@ Status (17 Nov 2026, night). Handoff and next steps: docs/HANDOFF.md.
   post with video (sent with width/height/duration + thumbnail, so iOS no longer stretches 9:16; owner
   confirmed on iPhone); card shows title, hook, judge score, flags, description. Claim/Approve/Reject/Edit/
   Release work for the owner. `/id` in the group replies with a member's Telegram ID; Manu/Samu still 0.
-- Branding: ClipVault (youtube.com/@clipvault4.0). Pill banners from assets/branding/src via
-  scripts/build_brand_assets.py: top banner @y96, SUBSCRIBE/LIKE/COMMENT banner @y1300, subs at y1495.
+- Branding: ClipVault (youtube.com/@clipvault4.0). Since 18 Nov the Short is the split layout (CLAUDE.md
+  D11): webcam over gameplay, small ClipVault logo, one caption word at a time on the seam, no CTA banner.
+  The SUBSCRIBE/LIKE/COMMENT banner was removed on 17 Nov (D5). The older stack template (top banner from
+  assets/branding/src via scripts/build_brand_assets.py, subs at y1495) is kept as `render.layout: stack`.
 - Lessons from real runs: small chats need an adaptive unique-chatter floor; bots posting every few seconds
   must not hold fires; live fires must mature ~15 s to get their real peak score; faster-whisper must not go
   through PyAV; each clip needs its own layout detection; Kick chat = web.kick.com history polling (skip the
@@ -35,7 +37,13 @@ Status (17 Nov 2026, night). Handoff and next steps: docs/HANDOFF.md.
   docs/HANDOFF.md.
 - Before launch (19 Nov): Manu/Samu IDs, streamer list for launch night, a host that stays on, maybe
   fastlane.min_score 4 for more choice, a FOLLOW banner for IG/TikTok.
-- YouTube: Approve uploads at once (dry run until scripts/youtube_auth.py has run).
+- YouTube: Approve uploads at once; nothing is published while DRY_RUN=1. Default
+  `publish.youtube_mode: browser` (real Chrome through YouTube Studio; sign in once with
+  scripts/yt_browser_login.py), `api` (Data API token from scripts/youtube_auth.py) for a server without a
+  display. Details: docs/HANDOFF.md, next step 2.
+- Queue (19 Nov): an expired claim goes back to the Claim buttons; a clip gets one card and the approval
+  bot posts the ones that went missing; a failed upload shows on the card with Retry; staging a clip id
+  again only replaces a clip that is still READY.
 - Next: ANTHROPIC_API_KEY -> `scripts/judge_cost_benchmark.py BENCH --exact` and real judge calls on staged
   clips (until then the hook is the heuristic), publishing (YouTube/IG creds; DRY_RUN=1), viewer-clip
   confirmation, ratedpicz Kick slug, minik's language.

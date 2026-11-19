@@ -240,7 +240,11 @@ def _youtube_on_approve() -> bool:
 
 
 def _youtube_mode() -> str:
-    return str(config.global_config().get("publish", {}).get("youtube_mode", "browser")).lower()
+    """browser (real Chrome on a desktop, the default) or api (YouTube Data API). CLIPWATCHER_YOUTUBE_MODE
+    wins over publish.youtube_mode: a container or a VPS has no display for Chrome and must not need an
+    edit of the tracked config to upload."""
+    mode = os.environ.get("CLIPWATCHER_YOUTUBE_MODE")
+    return str(mode or config.global_config().get("publish", {}).get("youtube_mode", "browser")).lower()
 
 
 def _publisher() -> Any:

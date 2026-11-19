@@ -11,10 +11,12 @@ services:
   telegram:
     build: {context: ../.., dockerfile: deploy/docker/Dockerfile}
     restart: unless-stopped
-    env_file: ../../.env
+    env_file: ../../.env            # TELEGRAM_BOT_TOKEN, DRY_RUN, YOUTUBE_CREDENTIALS=secrets/youtube_token.json
     volumes:
       - ${CLIPWATCHER_DATA_DIR:-./data}:/data
       # the publisher reads platform and campaign settings per streamer, like the live lane
       - ../../config/streamers.yaml:/app/config/streamers.yaml:ro
       - ../../config/operators.yaml:/app/config/operators.yaml:ro
+      # YouTube token from scripts/youtube_auth.py (the image uploads through the Data API)
+      - ../../secrets:/app/secrets:ro
     command: python -m clipwatcher.queue.telegram_bot
