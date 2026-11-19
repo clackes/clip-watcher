@@ -23,6 +23,7 @@ log = logging.getLogger(__name__)
 QUALITY_DEFAULT = "720p60,720p,best"
 # A hole this long between two segments (ad break, stall) is logged.
 GAP_LOG_MS = 15_000
+OVERLAP_SLACK_MS = 1_000  # mtime jitter absorbed by nudging a segment after the previous one
 _AD_START = re.compile(r"detected advertisement break(?: of (\d+) seconds?)?", re.I)
 _AD_END = re.compile(r"resuming stream output", re.I)
 _AD_ANY = re.compile(r"advertisement", re.I)
@@ -201,7 +202,11 @@ class Recorder:
                 if start - prev > GAP_LOG_MS:
                     log.info("%s: %.0fs of stream missing before %s (ad break or stall)", self.login,
                              (start - prev) / 1000, name)  # fmt: skip
-                start = max(start, prev)  # mtime jitter must not overlap the previous segment
+                # mtime jitter must not overlap the previous segment, but never stamp later than the file's
+                # own mtime: after a stall several segments land at once, and pushing each one past the
+                # last made every stamp run ahead of the wall clock for good (19 Nov: +70-100 s on all
+                # streams, so cuts showed what happened 1.5 min before the chat spike). A burst now overlaps.
+                start = min(max(start, prev), start + OVERLAP_SLACK_MS)
             if self.ring.add_segment(f, start, e - s):
                 self.pdt.add(int(round(s / self.segment_s)) + self._n_runs * 100_000, start)
                 self._last_end[run_id] = start + dur_ms

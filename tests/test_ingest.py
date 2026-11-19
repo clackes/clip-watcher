@@ -186,6 +186,23 @@ def test_recorder_times_segments_by_wall_clock_across_missing_stream(tmp_path):
     assert rec.newest_segment_age_s(now=1_112) == 2
 
 
+def test_recorder_burst_after_stall_never_stamps_ahead_of_mtime(tmp_path):
+    """Regression (19 Nov): segments landing together after a stall were pushed one after the other, so
+    stamps ran 70-100 s ahead of the wall clock for good and cuts missed the moment."""
+    rec = Recorder("twitch", "foo", "123", tmp_path)
+    mts = [1_010, 1_050, 1_050, 1_050, 1_060]  # stall, three segments at once, then normal again
+    rows = []
+    for i, mt in enumerate(mts):
+        (rec.dir / f"seg_d_{i:05d}.ts").write_bytes(b"1")
+        os.utime(rec.dir / f"seg_d_{i:05d}.ts", (mt, mt))
+        rows.append(f"seg_d_{i:05d}.ts,{i * 10}.0,{i * 10 + 10}.0")
+    (rec.dir / "d.csv").write_text("\n".join(rows) + "\n")
+    assert rec.ingest_run("d", 1_000_000) == 5
+    segs = rec.ring.segments()
+    assert all(r["end_ms"] <= mt * 1000 + 1_000 for r, mt in zip(segs, mts, strict=True))
+    assert abs(segs[-1]["end_ms"] - 1_060_000) <= 1_000  # back on the wall clock after the burst
+
+
 class FakeHttp:
     def __init__(self):
         self.calls = []
