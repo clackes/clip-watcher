@@ -338,27 +338,40 @@ def _chat_id() -> int | None:
 async def auto_publish(app: Any, db: ClipDB, clip_id: str) -> str | None:
     """publish.auto_approve (owner, 18 Nov): a clip scoring >= auto_approve_min is approved by the bot and
     uploaded at once; the link (or the error) goes to the operators' chat. None = not auto-approved."""
-    import asyncio
-
     if not db.auto_approve_one(clip_id):
         return None
     staging.mark_approved(clip_id, "auto")
+    return await _upload_and_report(app, db, clip_id, "🤖 Auto-published")
+
+
+async def scheduled_publish(app: Any, db: ClipDB, clip_id: str, n: int, cap: int) -> str | None:
+    """Upload a clip the publish schedule approved (queue/schedule.py) and tell the operators."""
+    return await _upload_and_report(app, db, clip_id, f"🤖 Auto-published {n}/{cap} today")
+
+
+async def _upload_and_report(app: Any, db: ClipDB, clip_id: str, label: str) -> str | None:
+    import asyncio
+
     if _youtube_mode() == "api":
         from clipwatcher.publish import youtube as pub
     else:
         from clipwatcher.publish import youtube_browser as pub
     chat_id = _chat_id()
+    meta = db.meta(db.get(clip_id) or {})
+    name = f"{meta.get('streamer', '')}: {meta.get('title', clip_id)}".strip(": ")
     try:
         res = await asyncio.to_thread(pub.publish_clip, db, clip_id)
     except Exception as e:  # noqa: BLE001 - report every failure to the operators
         log.exception("auto upload failed for %s", clip_id)
         if chat_id and app is not None:
-            await app.bot.send_message(chat_id, f"Auto-approved {clip_id}, YouTube upload failed: {e}")
+            await app.bot.send_message(chat_id, f"❌ {label} failed\n🎬 {name}\n{e}\n🆔 {clip_id}")
         return None
     if chat_id and app is not None:
-        privacy = "private (DRY_RUN=1)" if config.dry_run() else "public"
-        what = f"not uploaded (dry run: {res})" if res.startswith("dryrun-") else f"YouTube {privacy}: {res}"
-        await app.bot.send_message(chat_id, f"Auto-approved {clip_id}. {what}")
+        if res.startswith("dryrun-"):
+            what = f"not uploaded (dry run: {res})"
+        else:
+            what = f"📺 {res}" + (" (private, DRY_RUN=1)" if config.dry_run() else "")
+        await app.bot.send_message(chat_id, f"{label}\n🎬 {name}\n{what}\n🆔 {clip_id}")
     return res
 
 

@@ -118,6 +118,17 @@ def _alerter(bot):
     return send
 
 
+async def _publish_schedule(db, bot) -> None:
+    """publish.schedule: post the best waiting clip, at most max_per_day a day (owner, 19 Nov)."""
+    from clipwatcher.queue import schedule
+    from clipwatcher.queue.telegram_bot import scheduled_publish
+
+    async def upload(clip_id: str, n: int, cap: int) -> str | None:
+        return await scheduled_publish(bot, db, clip_id, n, cap)
+
+    await schedule.run(db, upload)
+
+
 async def supervise(login: str, **kw) -> None:
     delay = 5.0
     while True:
@@ -145,6 +156,7 @@ async def main_async(logins: list[str], minutes: float) -> None:
         bot = build_application(db)
         await bot.initialize()
     tasks = [asyncio.create_task(supervise(lg, db=db, bot=bot, staging_root=staging_root)) for lg in logins]
+    tasks.append(asyncio.create_task(_publish_schedule(db, bot)))
     # SIGTERM (docker stop, launchd, kill) and Ctrl-C cancel the lanes so every recorder's finally-block
     # stops its streamlink/ffmpeg group instead of leaving them recording.
     stop = asyncio.Event()

@@ -181,6 +181,32 @@ class ClipDB:
         self.log("auto", "auto_approve", clip_id, f"min={min_score}")
         return True
 
+    @staticmethod
+    def meta(row: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return json.loads(row.get("meta_json") or "{}")
+        except ValueError:
+            return {}
+
+    def published_since(self, ts: float) -> list[float]:
+        """Times of uploads (any operator or the scheduler) at or after ts, oldest first."""
+        rows = self._conn().execute(
+            "SELECT ts FROM audit WHERE action='state:PUBLISHED' AND ts>=? ORDER BY ts", (ts,)
+        )
+        return [r["ts"] for r in rows.fetchall()]
+
+    def approve_scheduled(self, clip_id: str) -> bool:
+        """The publish schedule takes this READY clip (an operator holding it keeps it)."""
+        cur = self._conn().execute(
+            "UPDATE clips SET state='APPROVED', approved_by='auto', updated_at=? "
+            "WHERE id=? AND state='READY'",
+            (time.time(), clip_id),
+        )
+        if cur.rowcount != 1:
+            return False
+        self.log("auto", "auto_approve", clip_id, "schedule")
+        return True
+
     def set_state(self, clip_id: str, state: str, actor: str = "system", **fields: Any) -> None:
         sets = ["state=?", "updated_at=?"]
         args: list[Any] = [state, time.time()]

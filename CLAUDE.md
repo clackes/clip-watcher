@@ -7,8 +7,12 @@ renders a branded 9:16 Short + clean 16:9 clip, stages them in a Telegram approv
 ## Base rules
 - `DRY_RUN=1` is the code default (`config.dry_run()`); the server runs DRY_RUN=0 since 19 Nov (owner): Publish in
   Telegram uploads public. Tests never touch the network and never upload.
-- The publisher uploads only clips in state APPROVED. Owner, 19 Nov: publish only after an operator taps Publish
-  in Telegram (`publish.auto_approve: false`). Telegram's Redo (optional note) re-cuts a clip in its live lane.
+- The publisher uploads only clips in state APPROVED. Owner, 19 Nov (later): the channel posts by itself,
+  `publish.schedule` (queue/schedule.py): at most 6 Shorts in any 24 h, >= 3 h apart, the best judge-scored
+  READY clip (>= 6, < 24 h old, never heuristic-only); operator Publish still works and counts toward the cap.
+  A failed upload puts the clip back and pauses 1 h. Telegram's Redo (optional note) re-cuts a clip.
+- The channel is GTA 6 clips from many streamers (owner, 19 Nov): `channel.games` (ingest/category.py,
+  streamlink --json metadata) drops moments from any other category before the cut. One template for all.
 - Credit the streamer in metadata (title/description). Owner, 18 Nov: no on-screen `twitch.tv/<name>` tag
   (`render.credit_on_screen: false`). Campaign link lives in streamers.yaml.
 - Do not add content filters or blocking rules the spec doesn't ask for.
@@ -126,6 +130,9 @@ uvx ruff check . && uvx ruff format --check .
   `detect/live.py` `LiveDetector(streamer, viewers=None).feed(msg) -> Candidate | None` (epoch seconds).
   `detect/viewer_clips.py` Helix Get Clips poller.
 - `fastlane.py` live lane orchestrator; `calibrate.py` facecam/gameplay rect suggestion + Telegram still.
-- `layout.py` `resolve(media, streamer) -> Layout`: per-clip scene detection. Streamers use different layouts and
+- `layout.py` `resolve(media, streamer) -> Layout`: per-clip scene detection. The webcam crop is the overlay's
+  real border (`calibrate.overlay_rect`: persistent edges with moving pixels outside), never the chat under it;
+  in game close-ups only a steady face counts as the cam (`calibrate.steady_faces`). Needs the `calibrate` extra
+  (mediapipe) and models/blaze_face_short_range.tflite (gitignored: `cwr put` it to a new box). Streamers use different layouts and
   switch scenes mid-stream, so each clip matches its face position against confirmed `layouts:` in
   streamers.yaml; unknown scenes render with an auto rect and meta.layout="auto-new" for operator review.
