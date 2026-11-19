@@ -39,6 +39,7 @@ COLUMNS = {
     "card_video": "INTEGER",
     "card_lease_until": "REAL",
     "card_attempts": "INTEGER",
+    "card_replaced": "INTEGER",  # message id of the card of an older render, to retire when the new one is up
     # why the last upload of an APPROVED clip did not finish (shown on the card); NULL once it is published
     "publish_error": "TEXT",
 }
@@ -113,14 +114,19 @@ class ClipDB:
     ) -> bool:
         """Queue a staged clip as READY. Staging the same id again refreshes meta and score only while the
         clip is still READY; a claimed, approved, rejected or published clip keeps its state, operator and
-        video ids (returns False). One atomic statement, like the claim."""
+        video ids (returns False). One atomic statement, like the claim.
+
+        A re-staged clip has a new video, so it also needs a new card: the old card's id moves to
+        card_replaced and post_card retires that card once the new one is up."""
         now = time.time()
         known = self.get(clip_id) is not None  # only picks the audit label
         cur = self._conn().execute(
             "INSERT INTO clips(id,streamer,state,meta_json,created_at,updated_at,score)"
             " VALUES(?,?,?,?,?,?,?)"
             " ON CONFLICT(id) DO UPDATE SET streamer=excluded.streamer, meta_json=excluded.meta_json,"
-            " score=excluded.score, updated_at=excluded.updated_at WHERE clips.state='READY'",
+            " score=excluded.score, updated_at=excluded.updated_at, card_replaced=CASE"
+            " WHEN clips.card_message_id>0 THEN clips.card_message_id ELSE clips.card_replaced END,"
+            " card_message_id=NULL, card_lease_until=NULL, card_attempts=NULL WHERE clips.state='READY'",
             (clip_id, streamer, READY, json.dumps(meta or {}), now, now, score),
         )
         if cur.rowcount != 1:
@@ -284,9 +290,10 @@ class ClipDB:
         return int((self.get(clip_id) or {}).get("card_attempts") or 1)
 
     def set_card(self, clip_id: str, chat_id: int, message_id: int, video: bool = False) -> None:
+        """Record the clip's card. A card it replaces (card_replaced) is the caller's to retire first."""
         self._conn().execute(
-            "UPDATE clips SET card_chat_id=?, card_message_id=?, card_video=?, card_lease_until=NULL "
-            "WHERE id=?",
+            "UPDATE clips SET card_chat_id=?, card_message_id=?, card_video=?, card_lease_until=NULL, "
+            "card_replaced=NULL WHERE id=?",
             (chat_id, message_id, int(video), clip_id),
         )
         self.log("system", "card", clip_id, f"chat={chat_id} message={message_id}")

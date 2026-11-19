@@ -25,7 +25,8 @@ approval bot (`python -m clipwatcher.queue.telegram_bot`: buttons, uploads, hous
 
 - Claim: one operator for `publish.claim_ttl_min` (15). When it runs out anyone can claim; the bot's sweep
   (once a minute) puts the clip back to READY and redraws its card with the Claim buttons.
-- Staging a clip id again (a VOD re-run) replaces the package only while the clip is still READY.
+- Staging a clip id again (a VOD re-run) replaces the package only while the clip is still READY. It then
+  gets a new card and the old one, which shows the previous render, loses its buttons.
 - One card per clip. The row keeps where the card is (`card_chat_id`, `card_message_id`) and a short lease
   while someone is sending it, so the lane and the bot never both post it. The sweep posts cards that are
   missing: 3 tries, the last without the video, clips up to `publish.card_max_age_h` (24; 0 = off) old.

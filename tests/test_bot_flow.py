@@ -110,6 +110,26 @@ def test_a_failed_card_is_posted_later_and_only_once(env):
     assert len(env.app.bot.sent) == 1
 
 
+def test_a_restaged_clip_gets_a_new_card_and_the_old_one_is_retired(env):
+    """Staging a READY clip again replaces its video: operators must not approve from a card that still
+    shows the old render."""
+    video = env.stage("c1", title="first render")
+    assert asyncio.run(telegram_bot.post_card(env.app, env.db, "c1", video))
+    video = env.stage("c1", title="second render")  # VOD re-run, or the lane re-cut the moment
+    stale = FakeQuery(11, "claim:c1:manu")  # pressed on the old card before the new one is up
+    stale.message.message_id = 101
+    assert asyncio.run(telegram_bot.press(env.app, env.db, stale, root=env.root)) == ("", None)
+    assert "older render" in stale.answers[0] and env.db.state("c1") == "READY"
+    assert asyncio.run(telegram_bot.post_card(env.app, env.db, "c1", video))
+    assert ["second render" in m.text for m in env.app.bot.sent] == [False, True]
+    (old,) = env.app.bot.edits
+    assert (old.kind, old.chat_id, old.message_id, old.kw["reply_markup"]) == ("caption", CHAT, 101, [])
+    assert "newer render" in old.text
+    row = env.db.get("c1")
+    assert (row["card_message_id"], row["card_replaced"]) == (102, None)
+    assert asyncio.run(telegram_bot.post_card(env.app, env.db, "c1", video)) is False
+
+
 def test_card_retries_are_bounded_and_end_without_the_video(env):
     env.stage("c1")
     env.app.bot.fail = 2

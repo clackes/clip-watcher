@@ -274,6 +274,12 @@ async def press(
     raise here and the upload is started last, whatever happened before. (Last and not first: an upload that
     fails at once must redraw the card after this press has, or its Retry button would be painted over.)
     """
+    if _older_render(db, q):  # the clip was staged again; this card's video is not the one in the package
+        try:
+            await q.answer("This card shows an older render of the clip. Use its new card.")
+        except Exception as e:  # noqa: BLE001
+            log.warning("answer to %s not delivered: %s", q.data, e)
+        return "", None
     text, row = handle_action(db, q.from_user.id, q.data, root=root)
     if not text:
         return text, row
@@ -289,6 +295,15 @@ async def press(
         if row is not None and _starts_upload(q.data, text):
             app.create_task(publish(app, db, row["id"], root=root, query=q))
     return text, row
+
+
+def _older_render(db: ClipDB, q: Any) -> bool:
+    """An operator pressed a button on the card that add_clip() set aside when the clip was re-staged and
+    that post_card has not retired yet."""
+    if operator_for(q.from_user.id) is None or q.message is None:
+        return False
+    row = db.get(q.data.split(":")[1]) if ":" in q.data else None
+    return bool(row and row.get("card_replaced") == getattr(q.message, "message_id", None))
 
 
 def _upload(db: ClipDB, clip_id: str, root: Path | None) -> str:
@@ -430,8 +445,24 @@ async def post_card(app: Any, db: ClipDB, clip_id: str, video: Path | None = Non
     else:
         has_video = False
         msg = await app.bot.send_message(chat_id, _fit(card_text(row), TEXT_MAX), reply_markup=kb)
+    if row.get("card_replaced"):
+        await _retire_card(app, row)
     db.set_card(clip_id, chat_id, msg.message_id, has_video)
     return True
+
+
+async def _retire_card(app: Any, row: dict[str, Any]) -> None:
+    """The clip was staged again with a new video and has a new card: take the buttons off the old one, so
+    nobody approves from a card that shows the previous render."""
+    text = f"Clip {row['id']}: replaced by a newer render, see its new card."
+    at = {"chat_id": row.get("card_chat_id"), "message_id": row["card_replaced"]}
+    try:
+        if row.get("card_video"):
+            await app.bot.edit_message_caption(caption=text, reply_markup=_markup([]), **at)
+        else:
+            await app.bot.edit_message_text(text, reply_markup=_markup([]), **at)
+    except Exception as e:  # noqa: BLE001 - the new card is up either way
+        log.warning("old card of %s not retired: %s", row["id"], e)
 
 
 async def post_missing_cards(app: Any, db: ClipDB, root: Path | None = None) -> list[str]:
