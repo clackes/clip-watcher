@@ -7,8 +7,7 @@ import tempfile
 from pathlib import Path
 
 from .. import config
-
-SEEK_PAD_S = 6.0
+from ..render import seek
 
 
 def keyframes(
@@ -19,33 +18,26 @@ def keyframes(
     height: int = 480,
     out_dir: Path | None = None,
 ) -> list[Path]:
-    """n JPEGs at `height`. Coarse seek, then trim in the graph (D9)."""
+    """n JPEGs at `height`. Coarse seek, then trim in the graph (D9).
+
+    Each frame gets its own seek (render/seek.py): seeking once to the window start made every frame decode
+    the whole window up to its own time (8 frames of a 45 s 1080p60 clip = ~200 s of decoding); now each
+    frame decodes at most ~6 s."""
     out_dir = Path(out_dir) if out_dir else Path(tempfile.mkdtemp(prefix="cw_frames_"))
     out_dir.mkdir(parents=True, exist_ok=True)
     paths: list[Path] = []
     for i in range(n):
-        seek, t = _seek_for(start_s + dur_s * (i + 0.5) / n)
+        inp, t = seek.one_stream(media, start_s + dur_s * (i + 0.5) / n)
         out = out_dir / f"frame_{i:02d}.jpg"
         vf = f"trim=start={t:.3f},setpts=PTS-STARTPTS,scale=-2:{height}"
         cmd = [
             config.ffmpeg_bin(), "-y", "-hide_banner", "-loglevel", "error",
-            "-ss", f"{seek:.3f}", "-i", str(media), "-vf", vf,
-            "-frames:v", "1", "-q:v", "3", str(out),
+            *inp, "-vf", vf, "-frames:v", "1", "-q:v", "3", str(out),
         ]  # fmt: skip
         subprocess.run(cmd, check=True, capture_output=True)
         if out.exists():
             paths.append(out)
     return paths
-
-
-def _seek_for(abs_s: float) -> tuple[float, float]:
-    """D9 per frame: coarse input seek to 6 s before this frame, exact trim in the graph.
-
-    Seeking once to the window start made every frame decode the whole window up to its own time
-    (8 frames of a 45 s 1080p60 clip = ~200 s of decoding); now each frame decodes at most ~6 s.
-    """
-    seek = max(0.0, abs_s - SEEK_PAD_S)
-    return seek, abs_s - seek
 
 
 def frame_times(dur_s: float, n: int = 8, peak_rel: float | None = None, n_peak: int = 2) -> list[float]:
@@ -92,7 +84,7 @@ def keyframes_lowres(
     w, h = size
     res: list[tuple[float, Path]] = []
     for i, t in enumerate(frame_times(dur_s, n, peak_rel)):
-        seek, trim = _seek_for(start_s + t)
+        inp, trim = seek.one_stream(media, start_s + t)
         png = out_dir / f"f{i:02d}.png"
         vf = (
             f"trim=start={trim:.3f},setpts=PTS-STARTPTS,"
@@ -100,7 +92,7 @@ def keyframes_lowres(
         )
         cmd = [
             config.ffmpeg_bin(), "-y", "-hide_banner", "-loglevel", "error",
-            "-ss", f"{seek:.3f}", "-i", str(media), "-vf", vf, "-frames:v", "1", str(png),
+            *inp, "-vf", vf, "-frames:v", "1", str(png),
         ]  # fmt: skip
         subprocess.run(cmd, check=True, capture_output=True)
         if not png.exists():

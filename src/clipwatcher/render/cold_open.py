@@ -20,6 +20,7 @@ from typing import Any
 
 from clipwatcher import config
 from clipwatcher.models import Word
+from clipwatcher.render import seek
 
 LEAD_S = 2.5  # default render.cold_open_lead_s: start this long before the peak (owner, 17 Nov: the build-up,
 # not the middle of the shout, which alone is unintelligible)
@@ -55,10 +56,10 @@ def lead() -> float:
 
 def loudness(media: Path, start: float, dur: float) -> list[tuple[float, float]]:
     """EBU R128 momentary loudness (400 ms) every 100 ms as (t relative to start, LUFS). [] on failure."""
-    coarse = max(0.0, start - 6)  # D9: coarse input seek, exact trim in the graph
+    inp, trim = seek.one_stream(media, start)  # D9: coarse input seek, exact trim in the graph
     cmd = [
-        config.ffmpeg_bin(), "-nostats", "-hide_banner", "-ss", f"{coarse:.3f}", "-i", str(media), "-vn",
-        "-af", f"atrim=start={start - coarse:.3f}:duration={dur:.3f},asetpts=PTS-STARTPTS,"
+        config.ffmpeg_bin(), "-nostats", "-hide_banner", *inp, "-vn",
+        "-af", f"atrim=start={trim:.3f}:duration={dur:.3f},asetpts=PTS-STARTPTS,"
         "ebur128=metadata=1,ametadata=print:key=lavfi.r128.M:file=-", "-f", "null", "-",
     ]  # fmt: skip
     try:

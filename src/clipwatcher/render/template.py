@@ -13,6 +13,7 @@ from pathlib import Path
 from clipwatcher import config
 from clipwatcher.config import ffmpeg_bin, ffprobe_bin
 from clipwatcher.models import Word
+from clipwatcher.render import seek
 from clipwatcher.render.branding import ACCENTS, BRANDING_DIR, FONTS_DIR, ensure_branding, hook_pill
 from clipwatcher.render.captions import caption_style, write_ass
 from clipwatcher.render.cold_open import settings as co_settings
@@ -174,11 +175,13 @@ def _audio_chain(
 
 
 def _measure(src: Path, coarse: float, trim: float, dur: float, cold_open=None, keep=None) -> dict | None:
-    """loudnorm pass 1 over the exact audio the render will use; None on failure (dynamic mode then)."""
-    chain = _audio_chain(trim, dur, cold_open, keep=keep).replace(
+    """loudnorm pass 1 over the exact audio the render will use; None on failure (dynamic mode then).
+    It decodes the sound alone, so it seeks like every single-stream read (render/seek.py)."""
+    inp, at = seek.one_stream(src, coarse + trim)
+    chain = _audio_chain(at, dur, cold_open, keep=keep).replace(
         f"{LOUDNORM},aresample=48000[a]", f"{LOUDNORM}:print_format=json[a]"
     )
-    cmd = [ffmpeg_bin(), "-hide_banner", "-nostats", "-ss", f"{coarse:.3f}", "-i", str(src)]
+    cmd = [ffmpeg_bin(), "-hide_banner", "-nostats", *inp]
     cmd += ["-filter_complex", chain, "-map", "[a]", "-f", "null", "-"]
     try:
         err = subprocess.run(cmd, capture_output=True, text=True, timeout=120).stderr
