@@ -49,29 +49,32 @@ def test_clips_of_the_same_moment_are_one_zone():
     assert lk.clip_zones(seg, clips) == [(T0 + 600, T0 + 663), (T0 + 3000, T0 + 3040)]
 
 
-def _channel(root: Path, login: str, rng: random.Random, emote: str) -> Path:
-    """Two hours of made-up chat with twelve clipped moments. In every moment chat types WASTED, in most
-    the channel's own emote, and in one of them a word about what happened there."""
+def _channel(
+    root, login, rng, emote, bursts=("WASTED", "wasted lol", "WASTEDDD"), hours=2, moments=12
+) -> Path:
+    """Made-up chat with clipped moments. In every moment chat types one of ``bursts``, in most of them
+    the channel's own emote (if it has one), and in one of them a word about what happened there."""
     d = root / login
     d.mkdir(parents=True)
     msgs, clips = [], []
-    for t in range(7200):
+    length = hours * 3600
+    for t in range(length):
         text = " ".join(rng.choice(TALK) for _ in range(rng.randint(2, 6)))
         msgs.append(ChatMessage((T0 + t) * 1000 + rng.randrange(1000), f"v{rng.randrange(400)}", text))
-    for n in range(12):
-        at = 500 + n * 520
+    for n in range(moments):
+        at = 500 + n * ((length - 900) // moments)
         clips.append(
             {"video": {"id": "1"}, "videoOffsetSeconds": at, "durationSeconds": 30, "slug": f"{login}{n}"}
         )
         for i in range(40):
-            said = rng.choice(["WASTED", "wasted lol", "WASTEDDD"])
-            if n % 4 != 3 and i % 2:
+            said = rng.choice(list(bursts))
+            if emote and n % 4 != 3 and i % 2:
                 said = emote
-            if n == 5 and i % 3 == 0:
+            if emote and n == 5 and i % 3 == 0:
                 said = "helicopter"  # what this one moment was about
             msgs.append(ChatMessage(int((T0 + at + 18 + rng.uniform(0, 12)) * 1000), f"fan{i}", said))
-    write_jsonl(sorted(msgs, key=lambda m: m.ts_ms), d / "1_0_7200.jsonl")
-    seg = {"vod": "1", "created_ms": T0 * 1000, "start_s": 0, "end_s": 7200, "category": True}
+    write_jsonl(sorted(msgs, key=lambda m: m.ts_ms), d / f"1_0_{length}.jsonl")
+    seg = {"vod": "1", "created_ms": T0 * 1000, "start_s": 0, "end_s": length, "category": True}
     (d / "segments.json").write_text(json.dumps([seg]))
     (d / "clips.json").write_text(json.dumps(clips))
     return d
@@ -119,20 +122,15 @@ def test_a_word_another_word_already_matches_is_left_out():
 
 def test_learned_words_are_merged_into_the_keyword_file(stats, tmp_path, monkeypatch):
     monkeypatch.setattr(config, "CONFIG_DIR", tmp_path)
-    (tmp_path / "keywords.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "categories": {"fortnite": {"keywords": {"cracked": 2.0}}},
-                "streamers": {"x": {"keywords": {"a": 1}}},
-            }
-        )
-    )
-    words = {"wasted": {"weight": 2.5, "moments": 70}, "busted": {"weight": 1.5, "moments": 20}}
-    streamers = {
-        "chan0": {"chan0laugh": {"weight": 2.0, "moments": 9}},
-        "other": {"zzz": {"weight": 2.0, "moments": 5}},
+    had = {
+        "categories": {"fortnite": {"keywords": {"cracked": 2.0}}},
+        "streamers": {"x": {"keywords": {"a": 1}}},
     }
-    lk.write_keywords("Grand Theft Auto VI", words, streamers, stats, only={"chan0"})
+    (tmp_path / "keywords.yaml").write_text(yaml.safe_dump(had))
+    words = {"wasted": {"weight": 2.5, "moments": 70}, "busted": {"weight": 1.5, "moments": 20}}
+    lk.write_keywords(
+        "Grand Theft Auto VI", words, {"chan0": {"chan0laugh": {"weight": 2.0, "moments": 9}}}, stats
+    )
     got = yaml.safe_load((tmp_path / "keywords.yaml").read_text())
     gta = got["categories"]["grand-theft-auto-vi"]
     assert gta["keywords"] == {"wasted": 2.5, "busted": 1.5} and gta["match"] == ["grand theft auto vi"]
@@ -144,3 +142,38 @@ def test_learned_words_are_merged_into_the_keyword_file(stats, tmp_path, monkeyp
         "KEKW": 2, "wasted": 2.5, "busted": 1.5, "chan0laugh": 2.0,
     }  # fmt: skip
     assert config.keywords_for("chan0", "Just Chatting") == {"KEKW": 2, "chan0laugh": 2.0}
+
+
+def _learn(tmp_path, monkeypatch, capsys, bursts, *more):
+    """collect's folders made up, then `learn --write` as the command line runs it (in this process)."""
+    (tmp_path / "config").mkdir(parents=True)
+    monkeypatch.setattr(config, "CONFIG_DIR", tmp_path / "config")
+    monkeypatch.setattr(config, "streamers", lambda: {})
+    monkeypatch.setattr(lk, "CORPUS", tmp_path / "corpus")
+    rng = random.Random(3)
+    for i in range(3):
+        _channel(tmp_path / "corpus" / "grand-theft-auto-vi", f"chan{i}", rng, "", bursts, hours=1, moments=8)
+    args = ["learn", "--category", "Grand Theft Auto VI", "--write", "--jobs", "1", "--per-hour", "8"]
+    args += ["--min-channels", "2", "--min-moments-channel", "6", *more]
+    assert lk.learn(lk.parser().parse_args(args)) == 0
+    return capsys.readouterr().out, tmp_path / "config" / "keywords.yaml"
+
+
+def test_words_that_find_nothing_more_are_not_written(tmp_path, monkeypatch, capsys):
+    # Chat reacting with LMAO next to its own word: the detector finds those moments already, so the word
+    # the learner found (it is typed in every moment) is reported and left out of the file.
+    out, path = _learn(tmp_path, monkeypatch, capsys, ["LMAO wasted", "LMAOOO wasted", "wasted LMAO"])
+    assert "  wasted " in out and "category keywords not written" in out and not path.exists()
+    same = {"clips": 12, "global": 10, "category": 10, "without_streamer": 10, "streamer": 10}
+    monkeypatch.setattr(lk, "validate", lambda stats, own, a: same)  # the test above ran it for real
+    out, path = _learn(tmp_path / "again", monkeypatch, capsys, ["LMAO wasted", "wasted LMAO"], "--force")
+    assert "wasted" in yaml.safe_load(path.read_text())["categories"]["grand-theft-auto-vi"]["keywords"]
+
+
+def test_words_that_find_more_viewer_clips_are_written(tmp_path, monkeypatch, capsys):
+    found = {"clips": 100, "global": 20, "category": 26, "without_streamer": 26, "streamer": 27}
+    monkeypatch.setattr(lk, "validate", lambda stats, own, a: found)
+    out, path = _learn(tmp_path, monkeypatch, capsys, ["WASTED"], "--streamers", "all")
+    got = yaml.safe_load(path.read_text())
+    assert got["categories"]["grand-theft-auto-vi"]["keywords"]["wasted"] >= 2  # 6 more clips of 20: written
+    assert "streamers" not in got and "per-streamer keywords not written" in out  # 1 more: not enough

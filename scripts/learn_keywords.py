@@ -9,13 +9,12 @@ days, cut to the stretches Twitch marks as that category, chat read from the rep
 viewed viewer-made clips. Everything lands in work/corpus/<category>/<login>/ and is only downloaded once;
 run it again to continue or to add newer broadcasts and clips. Twitch only, no login needed.
 
-learn: a channel's moments are what its viewers clipped plus what the detector would clip today with the
-global keywords. A word (or a pair of words) becomes a keyword when chatters type it far more during moments
-than in the rest of the chat, moment after moment: across many channels it is the category's, in one channel
-it is that streamer's (its emotes, its in-jokes). A word of a single moment is what that moment was about and
-is left out. --validate runs the real detector with and without the result and counts the viewer clips it
-finds, on clips no word was learned from. --write puts the result into config/keywords.yaml, which the
-detector reads.
+learn: a channel's moments are what its viewers clipped. A word (or a pair of words) is a keyword when
+chatters type it far more during moments than in the rest of the chat, moment after moment: across many
+channels it is the category's, in one channel it is that streamer's (its emotes, its in-jokes). A word of a
+single moment is what that moment was about and is left out. --validate runs the real detector with and
+without the result and counts the viewer clips it finds, on clips no word was learned from. --write saves to
+config/keywords.yaml, which the detector reads, only what found more clips in that test.
 """
 
 from __future__ import annotations
@@ -307,13 +306,13 @@ def detector_moments(msgs: list, login: str, per_hour: float) -> list[tuple[floa
         return [(c.peak_s, c.peak_s + 30) for c in detector.detect(msgs, streamer=login, top=top)]
 
 
-def channel_stats(d: Path, per_hour: float = 4.0) -> dict | None:
-    """One channel's numbers. Its moments are what viewers clipped plus what the detector would clip today
-    (global keywords). Per word (and per pair of words): the chatters who typed it during a moment, the
-    messages holding it in the rest of the chat, in how many moments it was up (twice its usual share of
-    the chat or more), the most chatters it had in one moment; then the first, third and fourth again
-    without the moments around every second viewer clip (those are kept to test the result on).
-    Cached in stats.json until the channel's files change."""
+def channel_stats(d: Path, per_hour: float = 0.0) -> dict | None:
+    """One channel's numbers. Its moments are what viewers clipped (with ``per_hour`` also what the
+    detector would clip today with the global keywords, that many an hour). Per word (and per pair of
+    words): the chatters who typed it during a moment, the messages holding it in the rest of the chat, in
+    how many moments it was up (twice its usual share of the chat or more), the most chatters it had in one
+    moment; then the first, third and fourth again without the moments around every second viewer clip
+    (those are kept to test the result on). Cached until the channel's files change."""
     from bisect import bisect_right
     from collections import Counter, defaultdict
 
@@ -327,7 +326,7 @@ def channel_stats(d: Path, per_hour: float = 4.0) -> dict | None:
     clips_file = d / "clips.json"
     stamp = [[f.name, f.stat().st_size] for f, _ in files]
     stamp.append(["clips", clips_file.stat().st_size if clips_file.exists() else 0])
-    cache = d / "stats.json"
+    cache = d / f"stats_{per_hour:g}.json"
     if cache.exists():
         got = json.loads(cache.read_text())
         if got.get("stamp") == stamp and got.get("version") == STATS_VERSION:
@@ -349,7 +348,7 @@ def channel_stats(d: Path, per_hour: float = 4.0) -> dict | None:
             known.update(raw_tokens(m.text))
         known_all.update(known)
         zones = clip_zones(seg, clips)
-        spikes = detector_moments(every, d.name, per_hour)
+        spikes = detector_moments(every, d.name, per_hour) if per_hour > 0 else []
         marked = [(a, b, (n_clip + i) % 2 == 0, True) for i, (a, b) in enumerate(zones)]
         marked += [(a, b, True, False) for a, b in spikes]
         n_clip += len(zones)
@@ -542,30 +541,43 @@ def global_weight(word: str) -> float:
     return max(got, default=0.0)
 
 
-def load_stats(category: str) -> tuple[list[dict], list[dict]]:
-    """(channels of the category, the project's own streamers collected whatever they streamed)."""
+def _map(fn, jobs: list, workers: int) -> list:
+    """fn over jobs, in ``workers`` processes (1: here, in order)."""
     from concurrent.futures import ProcessPoolExecutor
+
+    if workers <= 1 or len(jobs) <= 1:
+        return [fn(j) for j in jobs]
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(fn, jobs))
+
+
+def _stats_job(job: tuple[Path, float]) -> dict | None:
+    return channel_stats(*job)
+
+
+def load_stats(category: str, per_hour: float = 0.0, workers: int = 6) -> tuple[list[dict], list[dict]]:
+    """(channels of the category, the project's own streamers collected whatever they streamed)."""
 
     def dirs(root: Path) -> list[Path]:
         return sorted(p for p in root.iterdir() if p.is_dir()) if root.exists() else []
 
     cat, own = dirs(CORPUS / slug(category)), dirs(CORPUS / OWN)
-    with ProcessPoolExecutor(max_workers=5) as pool:
-        got = list(pool.map(channel_stats, cat + own))
+    got = _map(_stats_job, [(d, per_hour) for d in cat + own], workers)
     return [s for s in got[: len(cat)] if s], [s for s in got[len(cat) :] if s]
 
 
 def learn(a: argparse.Namespace) -> int:
-    stats, own = load_stats(a.category)
+    stats, own = load_stats(a.category, a.detector_moments, a.jobs)
     if not stats:
         raise SystemExit(f"no chat in {CORPUS / slug(a.category)}: run collect first")
     used = [s for s in stats if s["moments"] >= a.min_moments_channel and s["english"] >= a.min_english]
     hours, msgs = sum(s["hours"] for s in stats), sum(s["messages"] for s in stats)
     print(f"{a.category}: {len(stats)} channels, {hours:.0f} h of chat, {msgs} messages")
     clipped, spikes = sum(s["clipped"] for s in used), sum(s["spikes"] for s in used)
+    also = f" and {spikes} moments the detector clips today" if spikes else ""
     print(
-        f"{sum(s['moments'] for s in used)} moments with a reaction in chat ({clipped} clipped by viewers, "
-        f"{spikes} found by the detector) in the {len(used)} channels that chat in English"
+        f"{sum(s['moments'] for s in used)} moments with a reaction in chat, from {clipped} viewer clips"
+        f"{also}, in the {len(used)} channels that chat in English"
     )
     left = [
         f"{s['login']} ({'not English' if s['english'] < a.min_english else str(s['moments']) + ' moments'})"
@@ -595,13 +607,28 @@ def learn(a: argparse.Namespace) -> int:
     print(f"\nper-streamer keywords ({len(streamers)} channels)")
     for login, words in sorted(streamers.items()):
         print(f"  {login}: " + ", ".join(f"{x} ({i['weight']:g})" for x, i in words.items()))
-    if a.validate:
-        validate(stats, own, a)
+    tested = validate(stats, own, a) if a.validate or a.write else None
     if a.write:
+        # Only what finds more viewer clips than the detector does without it is written (--force: anyway)
+        need = max(a.min_gain_clips, a.min_gain * tested["global"])
+        if tested["category"] - tested["global"] < need and not a.force:
+            print(
+                f"\ncategory keywords not written: with them the detector found {tested['category']} of "
+                f"{tested['clips']} viewer clips, without them {tested['global']} (asked: {need:.0f} more)"
+            )
+            category = {}
+        if tested["streamer"] - tested["without_streamer"] < need and not a.force:
+            print(
+                f"per-streamer keywords not written: with them {tested['streamer']} viewer clips found, "
+                f"without them {tested['without_streamer']}"
+            )
+            streamers = {}
         category = {x: i for x, i in category.items() if i["weight"] > i["global"]}
         named = {x.strip().lower() for x in (a.streamers or "").split(",") if x.strip()}
         only = None if named == {"all"} else named or {k.lower() for k in config.streamers()}
-        write_keywords(a.category, category, streamers, used, only)
+        streamers = {k: v for k, v in streamers.items() if only is None or k in only}
+        if category or streamers:
+            write_keywords(a.category, category, streamers, used)
     return 0
 
 
@@ -632,70 +659,73 @@ def _hits(job: tuple) -> tuple[str, int, list[int]]:
     return d.name, total, found
 
 
-def validate(stats: list[dict], own: list[dict], a: argparse.Namespace) -> None:
+def validate(stats: list[dict], own: list[dict], a: argparse.Namespace) -> dict[str, int]:
     """Does the result find more of what viewers clipped? Every channel is tested on the half of its viewer
     clips that no word was learned from, with category words learned from the other channels only. Our own
-    streamers (collected whatever they streamed) are tested with their own words alone."""
-    from concurrent.futures import ProcessPoolExecutor
-
+    streamers (collected whatever they streamed) are tested with their own words alone. Returns the
+    counts: clips, found with the global list, with the category words too, with the streamer's too."""
     base = dict(config.global_config().get("detector", {}).get("keywords", {}))
     chans = [s for s in stats if s["clipped"] >= 6 and s["english"] >= a.min_english]
     plain = plain_words(stats + own, a)
+    cap = a.max_weight
+
+    def added(words: dict[str, dict]) -> dict[str, float]:
+        return {
+            x: min(cap, i["weight"]) for x, i in words.items() if min(cap, i["weight"]) > global_weight(x)
+        }
+
     jobs = []
     for n, s in enumerate(chans):
         others = [o for m, o in enumerate(chans) if m % a.folds != n % a.folds]
-        cat = category_words(others, a)
-        mine = streamer_words(s, cat, plain, a, part="even")
-        cat_kw = {**base, **{x: i["weight"] for x, i in cat.items() if i["weight"] > global_weight(x)}}
-        lists = [base, cat_kw, {**cat_kw, **{x: i["weight"] for x, i in mine.items()}}]
-        jobs.append((CORPUS / slug(a.category) / s["login"], lists, a.per_hour))
+        cat = category_words(stats if a.ceiling else others, a)
+        mine = streamer_words(s, cat, plain, a, part="all" if a.ceiling else "even")
+        cat_kw = {**base, **added(cat)}
+        jobs.append(
+            (CORPUS / slug(a.category) / s["login"], [base, cat_kw, {**cat_kw, **added(mine)}], a.per_hour)
+        )
     every = category_words(stats, a)
     for s in own:
         if s["clipped"] >= 6:
             mine = streamer_words(s, every, plain, a, part="even")
-            jobs.append(
-                (
-                    CORPUS / OWN / s["login"],
-                    [base, base, {**base, **{x: i["weight"] for x, i in mine.items()}}],
-                    a.per_hour,
-                )
-            )
+            jobs.append((CORPUS / OWN / s["login"], [base, base, {**base, **added(mine)}], a.per_hour))
+    got = _map(_hits, jobs, a.jobs)
     print(f"\ntested at {a.per_hour:g} clips an hour: viewer clips found, of those no word was learned from")
     print(f"  {'channel':22} {'clips':>7} {'global':>7} {'+category':>10} {'+streamer':>10}")
-    tot = [0, 0, 0, 0]
-    with ProcessPoolExecutor(max_workers=6) as pool:
-        for n, (login, total, found) in enumerate(pool.map(_hits, jobs)):
-            if n == len(chans):
-                print(f"  {'all, category':22} {tot[0]:7d} {tot[1]:7d} {tot[2]:10d} {tot[3]:10d}")
-                print("  our own streamers, any category (no category words):")
-                tot = [0, 0, 0, 0]
-            print(f"  {login:22} {total:7d} {found[0]:7d} {found[1]:10d} {found[2]:10d}", flush=True)
+    sums = []
+    for title, rows in (("", got[: len(chans)]), ("our own streamers, any category:", got[len(chans) :])):
+        if title and rows:
+            print(f"  {title}")
+        tot = [0, 0, 0, 0]
+        for login, total, found in rows:
+            print(f"  {login:22} {total:7d} {found[0]:7d} {found[1]:10d} {found[2]:10d}")
             tot = [tot[0] + total, *(t + f for t, f in zip(tot[1:], found, strict=True))]
-    print(f"  {'all':22} {tot[0]:7d} {tot[1]:7d} {tot[2]:10d} {tot[3]:10d}")
+        if rows:
+            print(f"  {'all':22} {tot[0]:7d} {tot[1]:7d} {tot[2]:10d} {tot[3]:10d}")
+        sums.append(tot)
+    cat_sum, own_sum = sums
+    return {
+        "clips": cat_sum[0], "global": cat_sum[1], "category": cat_sum[2],
+        "without_streamer": cat_sum[2] + own_sum[2], "streamer": cat_sum[3] + own_sum[3],
+    }  # fmt: skip
 
 
-def write_keywords(
-    category: str, words: dict, streamers: dict, stats: list[dict], only: set[str] | None
-) -> None:
+def write_keywords(category: str, words: dict, streamers: dict, stats: list[dict]) -> None:
     """Merge the result into config/keywords.yaml (other categories and streamers in it are kept)."""
     import yaml
 
     path = config.CONFIG_DIR / "keywords.yaml"
     data = (yaml.safe_load(path.read_text()) if path.exists() else None) or {}
-    cat = data.setdefault("categories", {}).setdefault(slug(category), {})
-    cat.setdefault("match", [category.lower()])
-    hours, moments = sum(s["hours"] for s in stats), sum(s["moments"] for s in stats)
-    clipped = sum(s["clipped"] for s in stats)
-    cat["learned"] = (
-        f"{time.strftime('%Y-%m-%d')} from {len(stats)} channels, {hours:.0f} h of chat, {moments} moments "
-        f"({clipped} clipped by viewers)"
-    )
-    cat["keywords"] = {x: i["weight"] for x, i in sorted(words.items(), key=lambda kv: -kv[1]["moments"])}
+    if words:
+        cat = data.setdefault("categories", {}).setdefault(slug(category), {})
+        cat.setdefault("match", [category.lower()])
+        hours, moments = sum(s["hours"] for s in stats), sum(s["moments"] for s in stats)
+        when = time.strftime("%Y-%m-%d")
+        cat["learned"] = f"{when} from {len(stats)} channels, {hours:.0f} h of chat, {moments} moments"
+        ranked = sorted(words.items(), key=lambda kv: -kv[1]["moments"])
+        cat["keywords"] = {x: i["weight"] for x, i in ranked}
     for login, ws in streamers.items():
-        if only is None or login in only:
-            data.setdefault("streamers", {}).setdefault(login, {})["keywords"] = {
-                x: i["weight"] for x, i in ws.items()
-            }
+        entry = data.setdefault("streamers", {}).setdefault(login, {})
+        entry["keywords"] = {x: i["weight"] for x, i in ws.items()}
     head = (
         "# Keywords learned from real chat by scripts/learn_keywords.py (D16). The detector adds a\n"
         "# category's words when a stream is in it and a streamer's words on that channel, on top of\n"
@@ -724,8 +754,12 @@ def parser() -> argparse.ArgumentParser:
     c.set_defaults(fn=collect)
     ln = sub.add_parser("learn", help="find the words that mark a clipped moment, per category and streamer")
     ln.add_argument("--category", required=True)
-    ln.add_argument("--write", action="store_true", help="save to config/keywords.yaml")
-    ln.add_argument("--validate", action="store_true", help="test the result on clipped moments held out")
+    ln.add_argument("--validate", action="store_true", help="test the result on viewer clips held out")
+    ln.add_argument("--write", action="store_true", help="save what passes that test to config/keywords.yaml")
+    ln.add_argument("--force", action="store_true", help="write even what the test found no gain in")
+    ln.add_argument("--min-gain", type=float, default=0.05, help="write: share more viewer clips found")
+    ln.add_argument("--min-gain-clips", type=int, default=3, help="... and at least this many more")
+    ln.add_argument("--jobs", type=int, default=6, help="worker processes")
     ln.add_argument("--streamers", help="whose words to write: logins, or all (default: streamers.yaml)")
     ln.add_argument("--min-english", type=float, default=0.03, help="share of plain English words in a chat")
     ln.add_argument("--min-moments-channel", type=int, default=10, help="moments a channel needs to count")
@@ -747,6 +781,14 @@ def parser() -> argparse.ArgumentParser:
     ln.add_argument("--streamer-share", type=float, default=0.12, help="share of the streamer's moments")
     ln.add_argument("--streamer-one-moment", type=float, default=0.3)
     ln.add_argument("--streamer-max", type=int, default=20)
+    ln.add_argument(
+        "--detector-moments", type=float, default=0.0,
+        help="also learn from what the detector clips today, this many an hour (0: viewer clips only)",
+    )  # fmt: skip
+    ln.add_argument("--max-weight", type=float, default=3.0, help="validate: no learned weight above this")
+    ln.add_argument(
+        "--ceiling", action="store_true", help="validate: learn from the test clips too (upper bound)"
+    )
     ln.add_argument("--folds", type=int, default=4, help="validate: channel groups for the category words")
     ln.add_argument(
         "--per-hour", type=float, default=3.0, help="validate: clips an hour the detector may pick"
