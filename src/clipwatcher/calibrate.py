@@ -289,13 +289,20 @@ def grab_frame(media: Path, t: float, out: Path, height: int | None = None) -> b
     return r.returncode == 0 and out.exists()
 
 
-def sample_frames(media: Path, out_dir: Path, n: int = 10) -> list[tuple[float, Path]]:
-    """n PNG frames spread over the middle 90% of the media (single-frame grabs)."""
+def sample_frames(
+    media: Path, out_dir: Path, n: int = 10, window: tuple[float, float] | None = None
+) -> list[tuple[float, Path]]:
+    """n PNG frames spread over the middle 90% of the media (single-frame grabs), or evenly over
+    window = (start s, end s) when that lies inside the media: the stretch a clip is about, not the
+    hours of VOD around it."""
     out_dir.mkdir(parents=True, exist_ok=True)
     dur = media_duration(media)
+    lo, hi = 0.05 * dur, 0.95 * dur
+    if window and min(dur, window[1]) - max(0.0, window[0]) >= 1.0:
+        lo, hi = max(0.0, window[0]), min(dur, window[1])
     res = []
     for i in range(n):
-        t = dur * (0.05 + 0.9 * (i + 0.5) / n)
+        t = round(lo + (hi - lo) * (i + 0.5) / n, 3)
         p = out_dir / f"frame_{i:02d}.png"
         if grab_frame(media, t, p):
             res.append((t, p))

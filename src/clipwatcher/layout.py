@@ -16,6 +16,9 @@ A single facecam_rect / gameplay_rect at the streamer level counts as one confir
 Several webcams on screen (duo streams, co-streamers, guests): the cam that goes in the layout is the one of
 the person who makes the moment. With peak_s given, frames around the peak decide: the face that moves most
 there (laughing, shouting, jumping) wins (owner, 17 Nov).
+
+Which frames: with peak_s (media time of the moment) the ones from SCENE_BEFORE_S before to SCENE_AFTER_S
+after it, without it frames spread over the whole media (calibration of a recording).
 """
 
 from __future__ import annotations
@@ -82,6 +85,10 @@ def match_scene(
 
 
 PEAK_OFFSETS = (-1.5, -1.0, -0.5, 0.0, 0.5, 1.0)
+# With peak_s the scene is read from the frames just around the moment. The media can be far longer than
+# the clip (the VOD lane's --video is the whole VOD, where frames spread over all of it showed scenes from
+# hours away), and the scene at the moment is the one the clip is about.
+SCENE_BEFORE_S, SCENE_AFTER_S = 8.0, 2.0
 
 
 STATIC_MOTION = 3.0  # in-box change below this = a still object taken for a face (posters, vests on a wall)
@@ -131,8 +138,9 @@ def resolve(
         return Layout(
             bool(s.get("has_webcam", False)), s.get("facecam_rect"), s.get("gameplay_rect"), "default"
         )
+    window = (peak_s - SCENE_BEFORE_S, peak_s + SCENE_AFTER_S) if peak_s is not None else None
     with tempfile.TemporaryDirectory() as td:
-        frames = calibrate.sample_frames(Path(media), Path(td), n_frames)
+        frames = calibrate.sample_frames(Path(media), Path(td), n_frames, window=window)
         if not frames:  # unreadable / too short media: fall back to the confirmed default scene
             s = sc[0] if sc else {}
             return Layout(

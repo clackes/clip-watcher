@@ -1,4 +1,8 @@
+import pytest
+
 from clipwatcher import layout
+
+from .test_ts_readers import second_shown
 
 SCENES = [
     {"name": "gameplay", "facecam_rect": "520:231:0:500", "gameplay_rect": "1380:690:540:250"},
@@ -33,7 +37,7 @@ def test_resolve_new_scene_is_flagged(monkeypatch, tmp_path):
     Image.new("RGB", (1920, 1080)).save(frame)
     monkeypatch.setattr(layout.config, "streamer", lambda n: {})
     monkeypatch.setattr(
-        layout.calibrate, "sample_frames", lambda m, d, n: [(float(i), frame) for i in range(n)]
+        layout.calibrate, "sample_frames", lambda m, d, n, window=None: [(float(i), frame) for i in range(n)]
     )
     lay = layout.resolve(tmp_path / "x.mp4", "x", detector=lambda p: [(1700.0, 100.0, 90.0, 100.0)])
     assert lay.source == "auto-new" and lay.has_webcam and lay.cam
@@ -74,7 +78,7 @@ def test_two_webcams_pick_the_one_reacting_at_the_peak(monkeypatch, tmp_path):
         peak.append((float(i), f))
     monkeypatch.setattr(layout.config, "streamer", lambda n: {})
     monkeypatch.setattr(
-        layout.calibrate, "sample_frames", lambda m, d, n: [(float(i), still) for i in range(n)]
+        layout.calibrate, "sample_frames", lambda m, d, n, window=None: [(float(i), still) for i in range(n)]
     )
     monkeypatch.setattr(layout.calibrate, "frames_at", lambda m, d, ts, height=None: peak)
     faces = [(100.0, 600.0, 90.0, 100.0), (1700.0, 100.0, 90.0, 100.0)]
@@ -140,7 +144,7 @@ def test_judge_point_finds_a_small_cam_the_full_pass_missed(monkeypatch, tmp_pat
     Image.new("RGB", (1920, 1080)).save(frame)
     monkeypatch.setattr(layout.config, "streamer", lambda n: {})
     monkeypatch.setattr(
-        layout.calibrate, "sample_frames", lambda m, d, n: [(float(i), frame) for i in range(n)]
+        layout.calibrate, "sample_frames", lambda m, d, n, window=None: [(float(i), frame) for i in range(n)]
     )
 
     def det(p):  # only the 2x zoom around the judge's point finds the face
@@ -153,3 +157,25 @@ def test_judge_point_finds_a_small_cam_the_full_pass_missed(monkeypatch, tmp_pat
     lay = layout.resolve(tmp_path / "x.mp4", "x", detector=lambda p: [], cam_hint=(0.8, 0.5))
     assert lay.source == "judge-cam" and lay.has_webcam
     assert layout.resolve(tmp_path / "x.mp4", "x", detector=lambda p: []).source == "no-face"
+
+
+@pytest.mark.ffmpeg
+def test_resolve_looks_at_the_moment_not_at_the_whole_recording(synth_src, monkeypatch):
+    """With the VOD lane's --video the media is the whole VOD. The frames that decide the layout must come
+    from around the moment: here the streamer changes scene at second 12 and the moment is at second 18."""
+    early = {"name": "early", "facecam_rect": "520:231:0:780", "gameplay_rect": "1380:690:540:0"}
+    late = {"name": "late", "facecam_rect": "520:231:1400:0", "gameplay_rect": "1380:690:0:300"}
+    monkeypatch.setattr(layout.config, "streamer", lambda n: {"layouts": [early, late]})
+    seen = []
+
+    def detector(p):  # the webcam face sits bottom-left until second 12, top-right after
+        seen.append(second_shown(p))
+        return [(1700.0, 100.0, 90.0, 100.0)] if seen[-1] >= 12 else [(100.0, 850.0, 90.0, 100.0)]
+
+    lay = layout.resolve(synth_src, "x", detector=detector, peak_s=18.0)
+    assert lay.source == "scene:late" and lay.cam == late["facecam_rect"]
+    assert len(seen) == 4
+    assert all(18.0 - layout.SCENE_BEFORE_S <= k <= 18.0 + layout.SCENE_AFTER_S for k in seen)
+    seen.clear()  # no moment given (calibration): the whole media, as before
+    layout.resolve(synth_src, "x", detector=detector)
+    assert len(seen) == 4 and min(seen) < 5 and max(seen) > 15

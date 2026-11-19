@@ -154,3 +154,8 @@ def test_calibrate_frames_are_the_moments_asked_for(ts, tmp_path):
     spread = calibrate.sample_frames(ts, tmp_path / "all", 6)  # about 2.5, 5.5, ... 17.5 s of the 20 s
     assert len(spread) == 6
     assert [second_shown(p) for _, p in spread] == [int(t) for t, _ in spread]
+    part = calibrate.sample_frames(ts, tmp_path / "part", 4, window=(10.0, 14.0))  # only that stretch
+    assert [t for t, _ in part] == [10.5, 11.5, 12.5, 13.5]
+    assert [second_shown(p) for _, p in part] == [10, 11, 12, 13]
+    off = calibrate.sample_frames(ts, tmp_path / "off", 4, window=(500.0, 510.0))  # past the end: whole file
+    assert [round(t) for t, _ in off] == [round(t) for t, _ in calibrate.sample_frames(ts, tmp_path / "w", 4)]
