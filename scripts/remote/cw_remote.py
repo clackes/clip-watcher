@@ -75,7 +75,8 @@ def session() -> winrm.Session:
 
 
 def ps(script: str, *, check: bool = True) -> str:
-    r = session().run_ps(f"$ProgressPreference='SilentlyContinue'; Set-Location {SRV}; " + script)
+    pre = f"$ProgressPreference='SilentlyContinue'; Set-Location {SRV} -ErrorAction SilentlyContinue; "
+    r = session().run_ps(pre + script)
     out = r.std_out.decode("utf-8", "replace")
     if r.status_code and check:
         err = r.std_err.decode("utf-8", "replace")
@@ -214,6 +215,23 @@ def cmd_stop(_: argparse.Namespace) -> None:
     )
 
 
+def cmd_bootstrap(a: argparse.Namespace) -> None:
+    """Fresh server: tools (Python, Git, ffmpeg, Chrome, VC++), then the repo from a full bundle and the venv
+    pinned to a pip freeze of the first box (--freeze). Idempotent; re-run after a timeout."""
+    ps(f"New-Item -ItemType Directory -Force {STAGE} | Out-Null")
+    if a.freeze:
+        put(Path(a.freeze), rf"{STAGE}\freeze.txt")
+    if not ps(f"Test-Path '{SRV}\\.git'").strip().startswith("True"):
+        bundle = REPO / ".git" / "cw-full.bundle"
+        git("bundle", "create", str(bundle), "main")
+        try:
+            put(bundle, rf"{STAGE}\full.bundle")
+        finally:
+            bundle.unlink(missing_ok=True)
+    put(Path(__file__).with_name("bootstrap_windows.ps1"), rf"{STAGE}\bootstrap.ps1")
+    print(ps(rf"powershell -NoProfile -ExecutionPolicy Bypass -File {STAGE}\bootstrap.ps1 2>&1", check=False))
+
+
 def cmd_ps(a: argparse.Namespace) -> None:
     src = sys.stdin.read() if a.file in (None, "-") else Path(a.file).read_text()
     print(ps(src, check=False))
@@ -224,6 +242,9 @@ def main() -> None:
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status").set_defaults(fn=cmd_status)
     sub.add_parser("install").set_defaults(fn=cmd_install)
+    b = sub.add_parser("bootstrap")
+    b.add_argument("--freeze", help="pip freeze of a working box, used as constraints")
+    b.set_defaults(fn=cmd_bootstrap)
     sub.add_parser("push").set_defaults(fn=cmd_push)
     t = sub.add_parser("test")
     t.add_argument("args", nargs="*")
