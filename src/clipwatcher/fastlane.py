@@ -383,7 +383,9 @@ class FastLane:
         cand = await self._confirmed(cand, src, t0_s, dur, timings)
         words = await self._timed("transcribe", timings, self.steps.transcribe, src, t0_s, dur, lang)
         chat_lines = self._lines.pop(cid, None) or self._chat_lines(cand)
-        title, game = scfg.get("title", f"{self.streamer} live"), scfg.get("game", "")
+        # what is on screen: set by hand in streamers.yaml, else what the platform says right now
+        game = scfg.get("game") or getattr(self.detector, "category", None) or ""
+        title = scfg.get("title", f"{self.streamer} live")
         jr = await self._timed(
             "judge", timings, self.steps.judge, cand, words, src, t0_s, dur, chat_lines, game, lang,
         )  # fmt: skip

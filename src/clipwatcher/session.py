@@ -120,6 +120,7 @@ class StreamSession:
         self.detector: Any = None
         self.log: LiveLog | None = None
         self.stream_id: str | None = None  # the broadcast being followed; None before the first one
+        self.category: str | None = None  # what it shows right now, as the platform names it (D16)
         self.primed = 0  # messages of history the current detector was loaded with
         self.rebuilds = 0  # times the detector was rebuilt on a deeper history
         self._loading = False
@@ -215,7 +216,8 @@ class StreamSession:
                     self._deepen_task.cancel()
                 new_log = LiveLog(self.login, found.stream_id, self.root)
                 history, pending = await asyncio.to_thread(self._history, new_log, found)
-                det = self._make(self.login)
+                self.category = found.category
+                det = self._new_detector()
                 self.primed = await asyncio.to_thread(det.prime, history)
                 self._open(found.stream_id, _after(history, self._held), new_log, det)
                 self._watch_clips(found)
@@ -230,6 +232,11 @@ class StreamSession:
                     self._deepen_task = asyncio.create_task(self._deepen(found, pending))
             elif first:
                 self._open(None, self._held)
+            elif found is not None and found.category != self.category:
+                log.info("%s: now streaming %s (was %s)", self.login, found.category, self.category)
+                self.category = found.category  # same broadcast, another game: its keywords apply from now
+                if hasattr(self.detector, "set_category"):
+                    self.detector.set_category(found.category)
         except Exception:  # noqa: BLE001 - history is a bonus; a failure must not stop live detection
             log.exception("%s: loading chat history failed; continuing on live chat only", self.login)
             if self.detector is None:
@@ -248,6 +255,13 @@ class StreamSession:
             self._tail.append(msg)
         if (c := self.detector.feed(msg)) is not None:
             self._ready.append(c)
+
+    def _new_detector(self) -> Any:
+        """A detector for this streamer and for the kind of stream it is showing (its keywords, D16)."""
+        det = self._make(self.login)
+        if self.category and hasattr(det, "set_category"):
+            det.set_category(self.category)
+        return det
 
     def _flush(self, held: list[ChatMessage]) -> None:
         for m in held:
@@ -339,7 +353,7 @@ class StreamSession:
         self._tail = []  # from here on live messages are also remembered: they are what the new one lacks
         saved = await asyncio.to_thread(lambda: sorted(self.log.read(), key=lambda m: m.ts_ms))
         merged = sorted(older + saved, key=lambda m: m.ts_ms)
-        det = self._make(self.login)
+        det = self._new_detector()
         primed = await asyncio.to_thread(det.prime, merged)
         for _ in range(60):  # a spike being decided right now is decided by the detector that saw it start
             if self.stream_id != s.stream_id or not getattr(self.detector, "_maturing", None):

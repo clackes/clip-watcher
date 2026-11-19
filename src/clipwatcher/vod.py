@@ -284,6 +284,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-judge", action="store_true")
     ap.add_argument("--no-viewer-clips", action="store_true", help="skip the viewer-clip confirmation (D3)")
     ap.add_argument("--language", help="spoken language (default: streamers.yaml, then en)")
+    ap.add_argument("--category", help="what was streamed, as the platform names it (default: ask Twitch)")
     a = ap.parse_args(argv)
     a.out = a.out or staging_root()
 
@@ -314,9 +315,11 @@ def main(argv: list[str] | None = None) -> int:
     clip_times = (
         [] if a.no_viewer_clips else _mod("clipwatcher.detect.viewer_clips").vod_clip_moments(streamer, vid)
     )
+    # D16: the kind of stream decides which keywords count (streamers.yaml `game` wins inside detect)
+    category = a.category or _mod("clipwatcher.chat.twitch_replay").vod_category(vid)
     cands = detect(
         messages, streamer=streamer, top=a.top * (2 if clip_times else 1), before_s=a.before, after_s=a.after,
-        gap_s=a.gap,
+        gap_s=a.gap, category=category,
     )  # fmt: skip
     cands = confirmed_top(cands, clip_times, a.top)
     print_table(cands)

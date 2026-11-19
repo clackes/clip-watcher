@@ -48,9 +48,10 @@ class LiveDetector:
         delay_s: float | None = None,
         before_s: float | None = None,
         after_s: float | None = None,
+        category: str | None = None,
     ):
-        p = self.p = settings(streamer)
-        self.streamer = streamer
+        p = self.p = settings(streamer, category)
+        self.streamer, self.category = streamer, category
         self.before_s = p["before_s"] if before_s is None else before_s
         self.after_s = p["after_s"] if after_s is None else after_s
         self.win = p["win"]
@@ -65,7 +66,7 @@ class LiveDetector:
         self.other_weight = p["other_weight"]
         self.prompt_max = p["prompt_share"]
         self._laugh = re.compile(p["laughter"]) if p["laughter"] else None
-        self._pats = _kw_patterns(config.keywords_for(streamer))
+        self._pats = _kw_patterns(config.keywords_for(streamer, category))
         self._wmap = {k: w for k, _, w in self._pats}
         self.table = new_table(p)
         self.spikes: list[tuple[float, Row, Row]] = []  # kept: (fire_s, peak row, last-hour medians then)
@@ -109,6 +110,17 @@ class LiveDetector:
         self._out.clear()
         self._maturing = []
         return out
+
+    def set_category(self, category: str | None) -> None:
+        """The streamer moved to another kind of stream (or it just became known): its keywords apply from
+        the next message on. The baseline stays: it is this broadcast's chat, whatever is on screen."""
+        if category == self.category:
+            return
+        self.category = category
+        self._pats = _kw_patterns(config.keywords_for(self.streamer, category))
+        self._wmap = {k: w for k, _, w in self._pats}
+        self._match_cache.clear()
+        self._hits.clear()
 
     def rescue(self, moment_s: float, tol_s: float = 30.0) -> list[Candidate]:
         """A viewer clipped ``moment_s`` (D3 confirmation): hand out the spikes of the last minutes that

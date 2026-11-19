@@ -57,7 +57,7 @@ def h_detect(p: dict[str, Any], w: Worker) -> list[dict[str, Any]]:
     msgs = read_jsonl(p["chat"])
     cands = detect(
         msgs, streamer=p["streamer"], top=vod.get("top", 5), before_s=vod.get("before_s", 20),
-        after_s=vod.get("after_s", 10), gap_s=vod.get("gap_s", 90),
+        after_s=vod.get("after_s", 10), gap_s=vod.get("gap_s", 90), category=p.get("category"),
     )  # fmt: skip
     return [{**p, "cand": asdict(c), "chat_lines": _lines(msgs, c)} for c in cands]
 

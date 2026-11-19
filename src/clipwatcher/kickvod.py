@@ -62,6 +62,7 @@ def fetch_vod_meta(slug: str, vid: str, get: Callable[..., Any] | None = None) -
                 "channel_id": v.get("channel_id"),
                 "source": v.get("source"),
                 "stream_id": str(v.get("id")),
+                "category": ((v.get("categories") or [{}])[0] or {}).get("name"),
             }
     raise LookupError(f"{slug} has no listed VOD {vid}")
 
@@ -135,6 +136,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-judge", action="store_true")
     ap.add_argument("--no-viewer-clips", action="store_true", help="skip the viewer-clip confirmation (D3)")
     ap.add_argument("--language", help="spoken language (default: streamers.yaml, then en)")
+    ap.add_argument("--category", help="what was streamed, as Kick names it (default: what the VOD says)")
     a = ap.parse_args(argv)
     a.out = a.out or vod.staging_root()
 
@@ -185,7 +187,7 @@ def main(argv: list[str] | None = None) -> int:
         clip_times = kick_vod_clip_moments(streamer, meta["stream_id"], meta["start_ms"])
     cands = detect(
         messages, streamer=streamer, top=a.top * (2 if clip_times else 1), before_s=a.before, after_s=a.after,
-        gap_s=a.gap,
+        gap_s=a.gap, category=a.category or meta.get("category"),
     )  # fmt: skip
     cands = vod.confirmed_top(cands, clip_times, a.top)
     vod.print_table(cands)

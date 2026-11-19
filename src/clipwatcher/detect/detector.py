@@ -85,10 +85,12 @@ def _kw_patterns(keywords: dict[str, float]) -> list[tuple[str, re.Pattern[str],
     ]
 
 
-def settings(streamer: str) -> dict[str, Any]:
-    """Detector settings for one streamer: config/global.yaml ``detector`` with per-streamer overrides."""
-    cfg = config.global_config().get("detector", {})
+def settings(streamer: str, category: str | None = None) -> dict[str, Any]:
+    """Detector settings for one stream: config/global.yaml ``detector``, the overrides of the kind of
+    stream it is (``categories.<kind>.detector``, D16) and the per-streamer ones."""
     sc = config.streamer(streamer)
+    kind = config.category_profile(category or sc.get("game"))[1]
+    cfg = {**config.global_config().get("detector", {}), **(kind.get("detector") or {})}
     return {
         "weights": dict(cfg.get("weights") or _WEIGHTS),  # a column without a weight does not count
         "win": int(cfg.get("window_s", 10)),
@@ -241,9 +243,11 @@ def detect(
     gap_s: float = 90,
     delay_s: float | None = None,
     bucket_s: int = 10,
+    category: str | None = None,
 ) -> list[Candidate]:
-    """Top moments of a finished chat. All of it is known, so every second is scored against the whole."""
-    p = settings(streamer)
+    """Top moments of a finished chat. All of it is known, so every second is scored against the whole.
+    ``category``: the kind of stream, as the platform names it (its keywords and settings apply, D16)."""
+    p = settings(streamer, category)
     win, cooldown, other_w = p["win"], p["cooldown"], p["other_weight"]
     if delay_s is None:
         delay_s = p["delay_s"]
@@ -257,7 +261,7 @@ def detect(
     base = first_s if first_s >= _EPOCH_S else 0
     if base:
         msgs = [replace(m, ts_ms=m.ts_ms - base * 1000) for m in msgs]
-    recs = _build_records(msgs, config.keywords_for(streamer), other_w, p["laughter"])
+    recs = _build_records(msgs, config.keywords_for(streamer, category), other_w, p["laughter"])
     spans = _mute_spans(msgs, p["mute_s"], p["min_unique"])
     horizon = int(msgs[-1].ts_ms // 1000) + 1
     per_sec: list[list[_Rec]] = [[] for _ in range(horizon + 1)]

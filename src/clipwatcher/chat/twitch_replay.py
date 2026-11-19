@@ -32,8 +32,10 @@ log = logging.getLogger(__name__)
 
 GQL_URL = "https://gql.twitch.tv/gql"
 WEB_CLIENT_ID = "kimne78kx3ncx6brgo4mv6wki5h1ko"  # twitch.tv's own public player id, not a secret
+_VOD_GAME_Q = "query($id: ID!) { video(id: $id) { game { name } } }"
 _SESSION_Q = (
-    "query($login: String!) { user(login: $login) { id stream { id createdAt archiveVideo { id } } } }"
+    "query($login: String!) { user(login: $login) { id stream { id createdAt game { name }"
+    " archiveVideo { id } } } }"
 )
 _PAGE_Q = (
     "query($id: ID!, $off: Int) { video(id: $id) { lengthSeconds comments(contentOffsetSeconds: $off) {"
@@ -59,6 +61,7 @@ class Session:
     vod_id: str | None
     user_id: str | None = None  # the broadcaster, for Helix (viewer clips)
     platform: str = "twitch"  # kick: vod_id is the channel id, which is what its chat replay goes by
+    category: str | None = None  # what is being streamed, as the platform names it ("Grand Theft Auto VI")
 
 
 def _post(payload: dict[str, Any]) -> dict[str, Any]:
@@ -87,7 +90,10 @@ def live_session(login: str, *, post: Post | None = None) -> Session | None:
         return None
     vod = (stream.get("archiveVideo") or {}).get("id")
     uid = str(user["id"]) if user.get("id") else None
-    return Session(str(stream["id"]), _iso_ms(stream["createdAt"]), str(vod) if vod else None, uid)
+    game = (stream.get("game") or {}).get("name")
+    return Session(
+        str(stream["id"]), _iso_ms(stream["createdAt"]), str(vod) if vod else None, uid, category=game
+    )
 
 
 def node_to_message(node: dict[str, Any], bots: set[str] | frozenset[str] = frozenset()) -> ChatMessage:
@@ -202,6 +208,16 @@ def fetch(
     msgs = [node_to_message(n, bots) for part in parts for n in part]
     msgs.sort(key=lambda m: m.ts_ms)
     return msgs
+
+
+def vod_category(vod_id: str, post: Callable[[dict[str, Any]], dict[str, Any]] | None = None) -> str | None:
+    """What a VOD shows, as Twitch names it ("Grand Theft Auto VI"); None when Twitch does not say. A VOD
+    that went through several games carries the one it was filed under."""
+    try:
+        d = (post or _post)({"query": _VOD_GAME_Q, "variables": {"id": str(vod_id)}})
+        return (((d.get("data") or {}).get("video") or {}).get("game") or {}).get("name") or None
+    except Exception:  # noqa: BLE001 - offline, schema change: the category is a bonus
+        return None
 
 
 def fetch_between(

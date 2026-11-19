@@ -29,6 +29,13 @@ kick:
                             # passes, but over a minute Kick lets about 1.6/s through and answers 429 beyond.
                             # Live chat is a websocket and costs none; history reads at ~35 messages a second.
 
+categories:                 # D16: kinds of stream. A stream belongs to the first kind one of whose `match` texts
+  grand-theft-auto-vi:      # is in the category name its platform reports ("Grand Theft Auto VI" on Twitch,
+    match: ["grand theft auto vi", "gta vi", "gta 6", "gta6"]   # "Grand Theft Auto VI (GTA)" on Kick).
+    # keywords: {wasted: 2}       # hand-picked extras; the learned ones are in config/keywords.yaml
+    # detector: {keep_q: 0.985}   # any detector.* setting can differ for a kind of stream
+  # Add a kind:  python scripts/learn_keywords.py collect --category "<name on Twitch>"  then  learn --write
+
 detector:                   # D3 + D13
   # chat_score = sum of weight * z over a 10 s window: U unique chatters, M messages, E keyword energy,
   # S share of short / repeated messages. z = (value - level) / scale, with the scale taken from every

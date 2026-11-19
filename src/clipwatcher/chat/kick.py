@@ -121,6 +121,7 @@ class Channel:
     slug: str
     stream_id: str | None = None  # the broadcast running right now
     started_ms: int | None = None
+    category: str | None = None  # what it shows, as Kick names it ("Grand Theft Auto VI (GTA)")
 
 
 def iso_to_ms(s: str) -> int:
@@ -142,6 +143,7 @@ def channel(slug: str, *, fetch: Fetch | None = None) -> Channel:
         str(d.get("slug") or slug).lower(),
         str(ls["id"]) if live and ls.get("id") else None,
         iso_to_ms(start) if live and start else None,
+        ((ls.get("categories") or [{}])[0] or {}).get("name") if live else None,
     )
 
 
@@ -155,7 +157,7 @@ def live_session(slug: str, *, fetch: Fetch | None = None) -> Session | None:
     ch = channel(slug, fetch=fetch)
     if not (ch.stream_id and ch.started_ms):
         return None
-    return Session(ch.stream_id, ch.started_ms, str(ch.id), str(ch.id), "kick")
+    return Session(ch.stream_id, ch.started_ms, str(ch.id), str(ch.id), "kick", ch.category)
 
 
 # ------------------------------------------------------------------------------------ messages

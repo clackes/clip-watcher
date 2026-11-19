@@ -107,6 +107,7 @@ def main() -> int:
     ap.add_argument("--login", help="channel login: compare with its viewer-made clips (needs --vod)")
     ap.add_argument("--kick", action="store_true", help="--vod is the uuid of a Kick VOD of channel --login")
     ap.add_argument("--hours", type=float, help="only the first N hours of the VOD")
+    ap.add_argument("--category", help='the kind of stream ("Grand Theft Auto VI"): its keywords apply (D16)')
     ap.add_argument(
         "--join-at-h", type=float, default=0.0, help="the bot joins this far in, primed with history"
     )
@@ -126,7 +127,7 @@ def main() -> int:
     streamer = a.login or owner
     t0 = t0_ms / 1000
     cut_ms = t0_ms + a.join_at_h * 3.6e6
-    det = LiveDetector(streamer)
+    det = LiveDetector(streamer, category=a.category)
     primed = det.prime(m for m in msgs if m.ts_ms < cut_ms) if a.join_at_h else 0
     live = [c for m in msgs if m.ts_ms >= cut_ms and (c := det.feed(m))] + det.drain()
     hours = (msgs[-1].ts_ms - max(cut_ms, msgs[0].ts_ms)) / 3.6e6
@@ -142,7 +143,8 @@ def main() -> int:
             f"{c.unique_chatters:3d} chatters  x{c.x_normal:.1f} normal  "
             f"above {100 * s.get('session_pct', 0):.2f}% of the stream, rank {s.get('session_rank', 0):.0f}"
         )
-    batch = detect([m for m in msgs if m.ts_ms >= cut_ms], streamer=streamer, top=10, gap_s=90)
+    later = [m for m in msgs if m.ts_ms >= cut_ms]
+    batch = detect(later, streamer=streamer, top=10, gap_s=90, category=a.category)
     same = sum(1 for b in batch if any(abs(c.peak_s - b.peak_s) <= 30 for c in live))
     print(f"batch top {len(batch)}: live found {same} of them")
     if a.vod and a.login:

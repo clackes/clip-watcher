@@ -60,11 +60,54 @@ def allowed_streamer(name: str) -> bool:
     return stream_language(name) == channel_language()
 
 
-def keywords_for(name: str | None) -> dict[str, float]:
-    """D3: global reaction keyword weights merged with per-streamer extras."""
+_LEARNED: tuple[float, dict[str, Any]] = (0.0, {})
+
+
+def learned() -> dict[str, Any]:
+    """config/keywords.yaml: what scripts/learn_keywords.py found in real chat (D16). Re-read when the
+    file changes, so a new learn run reaches a bot that is already running."""
+    global _LEARNED
+    p = CONFIG_DIR / "keywords.yaml"
+    try:
+        mtime = p.stat().st_mtime
+    except OSError:
+        return {}
+    if _LEARNED[0] != mtime:
+        _LEARNED = (mtime, yaml.safe_load(p.read_text()) or {})
+    return _LEARNED[1]
+
+
+def category_profile(category: str | None) -> tuple[str | None, dict[str, Any]]:
+    """(name, settings) of the kind of stream a platform's category belongs to, or (None, {}).
+
+    Kinds are listed under ``categories:`` in global.yaml (hand-set: what to match, detector overrides,
+    extra keywords) and in keywords.yaml (learned keywords). A stream belongs to the first kind one of whose
+    ``match`` texts is in the category name: "grand theft auto vi" is in Twitch's "Grand Theft Auto VI" and
+    in Kick's "Grand Theft Auto VI (GTA)".
+    """
+    if not category:
+        return None, {}
+    hand, auto = global_config().get("categories") or {}, learned().get("categories") or {}
+    text = category.lower()
+    for name in [*hand, *(k for k in auto if k not in hand)]:
+        prof_h, prof_a = hand.get(name) or {}, auto.get(name) or {}
+        needles = [*(prof_h.get("match") or []), *(prof_a.get("match") or [])] or [name.replace("-", " ")]
+        if any(str(n).lower() in text for n in needles):
+            kw = {**(prof_a.get("keywords") or {}), **(prof_h.get("keywords") or {})}
+            return name, {**prof_a, **prof_h, "keywords": kw}
+    return None, {}
+
+
+def keywords_for(name: str | None, category: str | None = None) -> dict[str, float]:
+    """Reaction keyword weights for one stream (D3, D16): the global list, then the words of the kind of
+    stream it is (``category``, as the platform names it; the streamer's ``game`` in streamers.yaml when not
+    given), then the words learned for this streamer's chat, then the streamer's hand-set extras."""
     kw = dict(global_config().get("detector", {}).get("keywords", {}))
+    scfg = streamer(name) if name else {}
+    kw.update(category_profile(category or scfg.get("game"))[1].get("keywords") or {})
     if name:
-        kw.update(streamer(name).get("keywords", {}))
+        kw.update(((learned().get("streamers") or {}).get(name.lower()) or {}).get("keywords") or {})
+        kw.update(scfg.get("keywords") or {})
     return kw
 
 
