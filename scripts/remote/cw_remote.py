@@ -15,7 +15,7 @@
 
 Password: macOS Keychain item "clipwatcher-winrm" (account Administrator; "clipwatcher-winrm-<host>" for
 any other host), or CW_WINRM_PASSWORD.
-Host: CW_WINRM_HOST (default 207.148.28.168).
+Host: CW_WINRM_HOST (default 140.82.40.80, the box since 19 Nov).
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from pathlib import Path
 import requests
 import winrm
 
-HOST = os.environ.get("CW_WINRM_HOST", "207.148.28.168")
+HOST = os.environ.get("CW_WINRM_HOST", "140.82.40.80")  # since 19 Nov; the first box was 207.148.28.168
 USER = os.environ.get("CW_WINRM_USER", "Administrator")
 # one Keychain item per server: the first box keeps the old name
 KEYCHAIN = "clipwatcher-winrm" if HOST == "207.148.28.168" else f"clipwatcher-winrm-{HOST}"

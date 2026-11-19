@@ -5,9 +5,10 @@ renders a branded 9:16 Short + clean 16:9 clip, stages them in a Telegram approv
 (owner, Manu, Samu). Spec: "Clip Watcher Blueprint v2.1". Roadmap: docs/ROADMAP.md.
 
 ## Base rules
-- `DRY_RUN=1` is the default (`config.dry_run()`). Tests never touch the network and never upload.
-- The publisher uploads only clips in state APPROVED. `publish.auto_approve` (on since 18 Nov, owner) lets the
-  bot approve and upload clips scoring >= `auto_approve_min` (7) itself; the link goes to Telegram.
+- `DRY_RUN=1` is the code default (`config.dry_run()`); the server runs DRY_RUN=0 since 19 Nov (owner): Publish in
+  Telegram uploads public. Tests never touch the network and never upload.
+- The publisher uploads only clips in state APPROVED. Owner, 19 Nov: publish only after an operator taps Publish
+  in Telegram (`publish.auto_approve: false`). Telegram's Redo (optional note) re-cuts a clip in its live lane.
 - Credit the streamer in metadata (title/description). Owner, 18 Nov: no on-screen `twitch.tv/<name>` tag
   (`render.credit_on_screen: false`). Campaign link lives in streamers.yaml.
 - Do not add content filters or blocking rules the spec doesn't ask for.
@@ -19,14 +20,16 @@ renders a branded 9:16 Short + clean 16:9 clip, stages them in a Telegram approv
 
 ## Dev
 Code is edited and committed on the Mac (`main`); the bot runs only on the Windows Server 2025 box
-(`C:\clip-watcher`, since 18 Nov), driven from the Mac over WinRM. No GitHub and no SSH (owner's choice).
+140.82.40.80 (`C:\clip-watcher`, since 19 Nov; the 18 Nov box 207.148.28.168 is stopped), driven from the Mac over WinRM. No GitHub and no SSH (owner's choice).
 The Mac has no venv (space): tests run on the server.
 ```
-cwr() { uv run -q --with pywinrm==0.5.0 scripts/remote/cw_remote.py "$@"; }   # password: Keychain "clipwatcher-winrm"
+cwr() { uv run -q --with pywinrm==0.5.0 scripts/remote/cw_remote.py "$@"; }   # Keychain "clipwatcher-winrm-<host>"
 cwr push            # commit first; sends the server's missing commits as a git bundle
 cwr test            # pytest on the server (default -m "not ffmpeg"; pass args for more)
 cwr restart [xqc,lacy|all]   # restart the bot (new code); a list is saved in config\live_streamers.txt
 cwr status ; cwr logs -n 80 -g 'judge|ERROR' ; cwr stop ; cwr put/get <file> ; cwr ps script.ps1
+cwr asuser script.ps1   # in a password-logon task: the only way to touch the YouTube Chrome profile
+cwr bootstrap --freeze freeze.txt   # set up a fresh server
 uvx ruff check . && uvx ruff format --check .
 ```
 - On the server: scheduled task `cw-live` runs `scripts\run_live_windows.ps1` (loads .env, restarts a crashed
@@ -37,6 +40,7 @@ uvx ruff check . && uvx ruff format --check .
 - Remote desktop (YouTube login, watching windows): `scripts/remote/clipwatcher-server.rdp` in Windows App.
   YouTube login: `run_live_windows.ps1 -YtLogin -Account <username>` on the server desktop.
 - Logs: `work\logs\live-<yyyymmdd>.log` (UTF-8). ffmpeg 8.1 (libass) in `C:\ffmpeg\bin` via CLIPWATCHER_FFMPEG.
+- Never open the YouTube Chrome profile over WinRM (network logon): Chrome replaces its cookie key and signs out.
 - YouTube uploads use the patchright Chrome profile `~\.clipwatcher\yt-profiles\<YT_BROWSER_ACCOUNT>` (capybarasking).
 - Windows needs the VC++ runtime for Whisper (installed). Mac/Linux: `.venv/bin/...` equivalents still work.
 
