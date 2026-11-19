@@ -53,3 +53,11 @@ def _no_face_detection_in_pipeline_tests(request, monkeypatch):
     from clipwatcher import layout
 
     monkeypatch.setattr(layout, "resolve", lambda *a, **k: layout.Layout(False, None, None, "test"))
+
+
+@pytest.fixture(autouse=True)
+def _no_category_lookup(monkeypatch):
+    """Tests never run streamlink: the live category is unknown (allowed) unless a test sets it."""
+    from clipwatcher.ingest import category
+
+    monkeypatch.setattr(category, "stream_category", lambda *a, **k: None)

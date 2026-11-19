@@ -325,3 +325,33 @@ def test_auto_publish_runs_after_staging(tmp_path):
     out = _one_clip(tmp_path, st, db=object(), bot=object())
     assert [o.status for o in out] == ["staged"]
     assert any(e[0] == "auto" for e in log)
+
+
+def test_other_category_is_dropped_before_the_cut(tmp_path):
+    """Owner, 19 Nov: a GTA 6 clips channel. A moment while the streamer is in Just Chatting is not cut."""
+    log: list = []
+    t0 = 1_700_000_000_000
+    msgs = [ChatMessage(t0 + i * 1000, f"u{i}", "hi") for i in range(60)]
+    msgs[41] = ChatMessage(t0 + 41_000, "late", "fire")
+    seen: list = []
+
+    def run(game):
+        st = _steps(log)
+        st.category = lambda platform, login: seen.append((platform, login)) or game
+        st.screen = lambda cand, words, chat, title, g: log.append(("screen", g)) or {
+            "funny_score": 7, "hype_score": 7, "reject_reason": None,
+        }  # fmt: skip
+        lane = fastlane.FastLane(
+            "zack", FakeChat(msgs), FakeDetector({"fire"}), FakeRing(log), steps=st,
+            cfg={"work_dir": str(tmp_path), "pin_pad_s": 60}, db=object(), bot=object(),
+        )  # fmt: skip
+        return asyncio.run(lane.run())
+
+    out = run("Just Chatting")
+    assert out[0].status == "rejected" and "Just Chatting" in out[0].error
+    assert not [e for e in log if e[0] in ("cut", "transcribe", "render_short")]
+    assert seen and seen[0][1] == "zack"
+    log.clear()
+    out = run("Grand Theft Auto VI")
+    assert out[0].status == "staged"
+    assert ("screen", "Grand Theft Auto VI") in log  # the judge sees the live game

@@ -199,6 +199,7 @@ class Steps:
     auto_publish: Callable[..., Any] | None = None  # async (app, db, clip_id): publish.auto_approve
     judge: Callable[..., JudgeResult | None] = _default_judge  # None -> screen + heuristic path
     still_edges: Callable[..., tuple[float, float]] = _default_still_edges  # (head, tail) s of frozen picture
+    category: Callable[..., str | None] | None = None  # (platform, login) -> live category; None = streamlink
 
 
 @dataclass
@@ -400,6 +401,18 @@ class FastLane:
             return Outcome(cid, "rejected", {}, error="before recording start")
         lang = config.stream_language(self.streamer)
         scfg = config.streamer(self.streamer)
+        games = list(config.global_config().get("channel", {}).get("games") or [])
+        live_game = None
+        if games:
+            from .ingest import category
+
+            look = self.steps.category or category.stream_category
+            live_game = await asyncio.to_thread(look, scfg.get("platform", "twitch"), self.streamer)
+            if not category.allowed(live_game, games):
+                # The channel is one game only (owner, 19 Nov): drop the moment before any cut or render.
+                log.info("%s: skip %s, playing %r", self.streamer, cid, live_game)
+                self._unpin(cand)
+                return Outcome(cid, "rejected", {}, error=f"category {live_game!r}")
         timings: dict[str, float] = {}
         t_all = time.perf_counter()
         self._pin(cand)  # idempotent; also covers direct calls
@@ -420,7 +433,7 @@ class FastLane:
 
         words = await self._timed("transcribe", timings, self.steps.transcribe, src, t0_s, dur, lang)
         chat_lines = self._chat_lines(cand)
-        title, game = scfg.get("title", f"{self.streamer} live"), scfg.get("game", "")
+        title, game = scfg.get("title", f"{self.streamer} live"), live_game or scfg.get("game", "")
         jr = await self._timed(
             "judge", timings, self.steps.judge, cand, words, src, t0_s, dur, chat_lines, game, lang,
         )  # fmt: skip

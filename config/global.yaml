@@ -1,6 +1,7 @@
 # Global settings. Per-streamer overrides live in streamers.yaml.
 channel:
   language: en              # English-only channel: all copy is English; only streamers with this language run
+  games: ["Grand Theft Auto VI"]   # owner, 19 Nov: a GTA 6 clips channel; moments from other categories are dropped ([] = any)
 tools:
   ffmpeg: null              # null = auto (ffmpeg-full on macOS, then PATH)
   twitch_downloader: bin/TwitchDownloaderCLI
