@@ -19,7 +19,7 @@ renders a branded 9:16 Short + clean 16:9 clip, stages them in a Telegram approv
 ## Dev
 ```
 python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
-.venv/bin/pytest -q            # -m "not ffmpeg" to skip render tests
+.venv/bin/pytest -q            # -m "not ffmpeg" to skip render tests; 2 tests skip without numpy / streamlink
 .venv/bin/ruff check . && .venv/bin/ruff format --check .
 ```
 
@@ -35,11 +35,18 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 - D1 Ingestion: streamlink -> .ts + anonymous Twitch IRC TLS (irc.chat.twitch.tv:6697) + Kick Pusher/webhooks.
   patchright only as optional Kick Cloudflare cookie adapter, never video capture.
 - D2 Ring buffer: 10 s .ts segments, 15-60 min window (default 30). Candidates pin window +/-60 s. Pins expire
-  after render or 48 h. Pruning stops and alerts below 15% free disk.
+  after render or 48 h. Recording pauses and alerts below 15% and 5 GB free; pruning never stops. One ring
+  folder per streamer for the life of the process: a lane restart records into it again (clips in flight keep
+  their pinned video), only folders of earlier processes are swept at start.
 - D3 Spike trigger: chat_score = 0.5*z(U) + 0.35*z(E) + 0.15*z(S), median/MAD over 15 min. E uses
   config/global.yaml keywords merged with per-streamer extras. Bot/spam/giveaway/raid filters. Confirm with
-  viewer clips + audio loudness (final >= 4.5; `confirm()` exists, no lane calls it yet). Formula, baseline
-  and gate are superseded by D13; window, keywords, filters and the 8 s chat delay stand.
+  viewer clips + audio loudness. Formula, baseline and gate are superseded by D13 (the fixed final >= 4.5 too);
+  window, keywords, filters and the 8 s chat delay stand. Confirmation since 19 Nov: `confirm()` adds +1.5 for
+  a viewer clip within 30 s and +0.3 per loudness z (max 1.5) to final_score, shown in meta (loud_z,
+  viewer_clip). Live: loudness of the cut window always; viewer clips through Helix when TWITCH_CLIENT_ID /
+  TWITCH_CLIENT_SECRET are set, and a viewer clip then also rescues a spike that fired under the keep gate in
+  the last `detector.rescue_s` (600). VOD: the channel's 100 most viewed clips of the week (no login) reorder
+  twice as many candidates.
 - D4 Dual export: clean_16x9.mp4 (trimmed, no overlays, -14 LUFS) + short_9x16.mp4. Profiles cpu_batch,
   cpu_live, nvenc, mac_preview.
 - D5 One 9:16 template (1080x1920; owner 17 Nov: no CTA banner, stack moved down 125 px, see template.STACK_SHIFT):
@@ -60,7 +67,8 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   trending, owner's pick; some may get audio claims). No webcam -> 1080x760 frame over a blurred copy.
 - D12 Edit like the top clip channels (owner, 18 Nov; from 20 Shorts with 0.1-130M views): open on the setup
   line, end on the punchline (cold open off, `render.cold_open_s: 0`); jump cuts drop pauses between lines
-  (render/jumpcut.py: 0.8-4 s pauses, never below 12 s / 60 %, beats and action labels protected); judge `ac`
+  (render/jumpcut.py: 0.8-4 s pauses, never below `render.clip_min_s` / 60 %, cut edges on the frame grid so
+  picture and sound stay together, beats and action labels protected); judge `ac`
   action labels (*WATCHING*) on silent stretches; labels and sounds only in pauses (template.cues); no-webcam
   full-camera / IRL clips reframed to a full-screen 9:16 window that follows the face (render/reframe.py).
   Judge: thinking on at low effort (off, the same clip scored 5-8), a frame every 2.5 s (8-16), audio peaks `au`.
@@ -89,18 +97,29 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   labelled 480x270 JPEG q65 frames + compact JSON {meta,tr,ch,task}; short-key output {ok,sc,t0,t1,hk,tt,ds,
   fl{sp,mu,gb},why}, caps/credit enforced in code (judge/compact.py). Thinking off, effort low (judge.* in
   global.yaml). judge.mode single | two_stage | off. Owner asked for spoiler/music/gambling flags; sp/mu
-  clips are rejected (judge.reject_flags); gb is informational since 17 Nov (gambling streamers are clipped). Heuristic fallback on API errors (English fallback copy, same shape). Judge t0/t1 start late (<= 2 s before the
+  clips are rejected (judge.reject_flags) in every lane, before rendering (live, VOD, batch); gb is informational since 17 Nov (gambling streamers are clipped). Heuristic fallback on API errors (English fallback copy, same shape). Judge t0/t1 start late (<= 2 s before the
   action; fallback 10 s before the reaction), never cut a word, end on a finished sentence (judge/snap.py).
 - D10 English only (owner, 17 Nov): `channel.language: en`. All copy (hook, title, description, fallbacks) is
   English; streamers whose `language` differs are skipped by live/vod. Description = 4 lines: teaser + credit,
   a clip-specific question ending in 👇, a reason to follow (no "like/comment/follow" begging, stripped in
   code by `compact.is_bait`), hashtags. Cost: scripts/judge_cost_benchmark.py.
 - D7 Telegram queue with atomic SQLite claim lock (15 min TTL), audit log, staging/<clip_id>/, staging/approved/,
-  staging/published_clips.json.
+  staging/published_clips.json. One staging folder for lanes, bot and publishers: `staging.staging_root()`
+  (CLIPWATCHER_STAGING, else <repo>/staging). Since 19 Nov: a claim that ran out goes back to READY (bot sweep
+  every minute, the card shows the Claim buttons again); staging an id again only refreshes a clip that is
+  still READY (a decided clip keeps its state and video); every READY clip gets a card: the lane posts it, the
+  bot posts the ones that are missing (VOD and batch clips too, `publish.card_max_age_h`).
 - D8 Publishing: YouTube Data API + Instagram Graph API from server, APPROVED only. TikTok/campaign forms by a
-  human with Claude in Chrome from staging/approved.
+  human with Claude in Chrome from staging/approved. `publish.youtube_mode` browser (Chrome via patchright,
+  default) | api; CLIPWATCHER_YOUTUBE_MODE overrides it (the Docker image sets api: no display). Since 19 Nov:
+  the upload starts whatever Telegram does, a failure shows on the card with a Retry button, a video id is
+  recorded as soon as YouTube gives one, and a restarted bot uploads what was approved in the last
+  `publish.resume_max_h` and never got there.
 - D9 .ts seek bug: never `-ss` exact on MPEG-TS. Coarse input seek to max(0, START-6), then
-  trim/atrim=start=TRIM in the graph, then setpts=PTS-STARTPTS. Regression test required.
+  trim/atrim=start=TRIM in the graph, then setpts=PTS-STARTPTS. Regression test required. Commands that decode
+  only the picture or only the sound (judge frames, transcript, loudness, reframe) go through
+  `render/seek.one_stream` (-copyts + the file's start time): ffmpeg's zero differs there by the file's start
+  time, 1.4 s on a ring-buffer cut. Every render is checked afterwards (streams present, length as asked).
 
 ## Module map and interfaces (keep signatures stable)
 - `models.py` ChatMessage, Candidate, JudgeResult, Word. `config.py` loaders + tool paths.
@@ -118,8 +137,9 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   `judge/claude.py` `screen(...)` (legacy), `judge_candidate(cand, words, chat_lines, frames, *, title, game,
   client=None) -> JudgeResult` (now runs v2) and `judge_clip(cand, words, chat_lines, [(t, jpg)], *, game,
   platform, language, task)`. `judge/compact.py` serializers + schema; `judge/frames.py keyframes_lowres`.
-- `queue/db.py` ClipDB (SQLite: clips, jobs, audit; atomic claim). `queue/staging.py`
-  `stage_package(clip_id, short, clean, meta) -> Path`, `mark_approved(...)`. `queue/telegram_bot.py`.
+- `queue/db.py` ClipDB (SQLite: clips, jobs, audit; atomic claim, card tracking). `queue/staging.py`
+  `staging_root()`, `stage_package(clip_id, short, clean, meta) -> Path`, `mark_approved(...)`.
+  `queue/telegram_bot.py` `post_card(app, db, clip_id, video) -> bool`, `post_missing_cards`, `sweep`.
 - `publish/youtube.py` behind DRY_RUN.
 - `vod.py` Day-0 VOD lane CLI `python -m clipwatcher.vod`.
 - Live ingest (`ingest/`): `ringbuffer.RingBuffer(root, window_min, segment_s)` with `add_segment(path, pdt_ms)`,
@@ -131,7 +151,8 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   `session.py` `StreamSession(login, root=, platform=)`: `.feed(msg)` like a detector, `.watch()` task (D13).
   `detect/live.py` `LiveDetector(streamer, viewers=None).feed(msg) -> Candidate | None` (epoch seconds),
   `.prime(history) -> int` loads earlier chat as baseline without emitting clips.
-  `detect/viewer_clips.py` Helix Get Clips poller.
+  `detect/viewer_clips.py` Helix Get Clips poller (live), `vod_clip_moments(login, vod_id)` (VOD, no login);
+  `detect/detector.py` `confirm(candidate, viewer_clip_times, loud_z)`, `loud_z(series, peak_rel)`.
 - `fastlane.py` live lane orchestrator; `calibrate.py` facecam/gameplay rect suggestion + Telegram still.
 - `layout.py` `resolve(media, streamer) -> Layout`: per-clip scene detection. Streamers use different layouts and
   switch scenes mid-stream, so each clip matches its face position against confirmed `layouts:` in
