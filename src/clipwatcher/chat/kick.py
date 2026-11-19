@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import urllib.request
 from collections.abc import AsyncIterator, Callable
@@ -18,6 +19,8 @@ from typing import Any
 from clipwatcher import config
 from clipwatcher.chat.twitch_irc import backoff_delay
 from clipwatcher.models import ChatMessage
+
+log = logging.getLogger(__name__)
 
 DEFAULT_KEY = "32cbd69e4b950bf97679"  # unverified, taken from the public web client
 CHAT_EVENT = "App\\Events\\ChatMessageEvent"
@@ -235,8 +238,18 @@ class KickHistoryChat:
         return self._run()
 
     async def _run(self) -> AsyncIterator[ChatMessage]:
-        if self.channel_id is None:
-            self.channel_id = await asyncio.to_thread(resolve_channel_id, self.slug, fetch=self.fetch)
+        attempt = 0
+        while self.channel_id is None and not self._closed:
+            # Inside the retry: a failed lookup (Cloudflare, a network blip) used to crash the whole lane,
+            # recorder included, and the supervisor restarted it in a loop.
+            try:
+                self.channel_id = await asyncio.to_thread(resolve_channel_id, self.slug, fetch=self.fetch)
+            except Exception as e:  # noqa: BLE001
+                attempt += 1
+                log.warning("kick %s: channel lookup failed (%s); retrying", self.slug, e)
+                await self.sleep(backoff_delay(attempt))
+        if self._closed:
+            return
         url = HISTORY_URL.format(channel_id=self.channel_id)
         seen: dict[str, None] = {}
         prev: set[str] = set()
@@ -260,6 +273,13 @@ class KickHistoryChat:
                 continue
             if prev and ids and not (ids & prev):
                 self.gaps += 1
+                if self.gaps in (1, 10, 100) or self.gaps % 1000 == 0:  # say so: the spike counts run low
+                    log.warning(
+                        "kick %s: chat is faster than the history endpoint returns; messages were missed "
+                        "in %d polls so far",
+                        self.slug,
+                        self.gaps,
+                    )
             prev = ids
             out = []
             for m in items:

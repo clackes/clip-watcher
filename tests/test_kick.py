@@ -188,3 +188,31 @@ def test_history_chat_skips_startup_backlog():
         return [m async for m in chat]
 
     assert [m.text for m in asyncio.run(collect())] == ["x"]  # only m3
+
+
+def test_history_chat_retries_the_channel_lookup():
+    """A failed lookup raised out of the chat iterator and took the lane and its recorder down with it."""
+    import asyncio
+
+    from clipwatcher.chat.kick import KickHistoryChat
+
+    calls = []
+
+    def fetch(url, headers):
+        calls.append(url)
+        if "channels/" in url:
+            if len(calls) < 3:
+                raise OSError("403 from Cloudflare")
+            return {"id": 77}
+        chat.close()
+        return {"data": {"messages": []}}
+
+    async def no_sleep(_):
+        return None
+
+    chat = KickHistoryChat("x", fetch=fetch, sleep=no_sleep, bots=set())
+
+    async def collect():
+        return [m async for m in chat]
+
+    assert asyncio.run(collect()) == [] and chat.channel_id == 77 and len(calls) == 4
