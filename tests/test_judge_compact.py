@@ -139,8 +139,11 @@ def test_request_system_prompt_is_static_and_cached(tmp_path):
                                transcript=[], chat=[])  # fmt: skip
     p2 = compact.build_payload(streamer="b", platform="twitch", game="h", language="en", dur=40, peak_s=9,
                                transcript=[Word(0, 1, "x")], chat=["u: y"])  # fmt: skip
-    r1 = compact.build_request("claude-haiku-5-5", [(0.0, img)], p1)
-    r2 = compact.build_request("claude-sonnet-5-5", [(1.5, img)], p2)
+    jcfg = config.global_config()["judge"]  # model IDs live only in config/global.yaml
+    screen, judge = jcfg["screen_model"], jcfg["judge_model"]
+    r1 = compact.build_request(screen, [(0.0, img)], p1)
+    r2 = compact.build_request(judge, [(1.5, img)], p2)
+    assert (r1["model"], r2["model"]) == (screen, judge)
     assert r1["system"] == r2["system"]  # identical prefix for every clip -> cache hits
     assert r1["system"][0]["cache_control"] == {"type": "ephemeral"}
     sp = r1["system"][0]["text"]
@@ -150,8 +153,10 @@ def test_request_system_prompt_is_static_and_cached(tmp_path):
     content = r1["messages"][0]["content"]
     assert content[0] == {"type": "text", "text": "[t=0.0s]"} and content[1]["type"] == "image"
     assert content[-1]["type"] == "text" and json.loads(content[-1]["text"])["meta"]["s"] == "a"
-    assert r1["thinking"] == {"type": "disabled"} and r2["thinking"] == {"type": "adaptive"}
-    assert r1["output_config"]["effort"] == "low"
+    for model, req in ((screen, r1), (judge, r2)):  # thinking as configured per model (judge.thinking)
+        mode = (jcfg.get("thinking") or {}).get(model)
+        assert req.get("thinking") == ({"type": mode} if mode else None)
+    assert r1["output_config"].get("effort") == jcfg.get("effort")
     assert r1["output_config"]["format"]["schema"] is compact.OUTPUT_SCHEMA
 
 
