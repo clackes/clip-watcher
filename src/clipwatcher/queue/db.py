@@ -96,6 +96,17 @@ class ClipDB:
             q, a = q + " WHERE clip_id=?", (clip_id,)
         return self._conn().execute(q + " ORDER BY id", a).fetchall()
 
+    def last_audit(self, clip_id: str, action_like: str) -> sqlite3.Row | None:
+        """The newest audit row of a clip whose action matches a LIKE pattern (e.g. 'youtube%')."""
+        return (
+            self._conn()
+            .execute(
+                "SELECT * FROM audit WHERE clip_id=? AND action LIKE ? ORDER BY id DESC LIMIT 1",
+                (clip_id, action_like),
+            )
+            .fetchone()
+        )
+
     # -- clips -------------------------------------------------------------
     def add_clip(
         self, clip_id: str, streamer: str, meta: dict[str, Any] | None = None, score: float = 0.0

@@ -17,6 +17,7 @@ MAX_VIDEO_BYTES = 50 * 1024 * 1024
 CAPTION_MAX, TEXT_MAX = 1024, 4096  # Telegram limits for a video caption and a text message
 CARD_LEASE_S = 300  # how long one attempt to post a card keeps every other poster away
 CARD_GRACE_S = 120  # the lane that staged a clip posts its card itself; the bot only steps in after this
+UPLOADING = "Uploading to YouTube."
 
 
 def operator_for(telegram_id: int, operators: dict[str, Any] | None = None) -> str | None:
@@ -45,6 +46,7 @@ def card_text(row: dict[str, Any]) -> str:
         lines.append(f"Claim by {row['claimed_by']} expired: free to claim")
     elif row.get("claimed_by"):
         lines.append(f"Held by: {row['claimed_by']}")
+    lines += _youtube_lines(row)
     for k in ("title", "hook", "why"):
         if meta.get(k):
             lines.append(f"{k}: {meta[k]}")
@@ -58,10 +60,32 @@ def card_text(row: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _youtube_lines(row: dict[str, Any]) -> list[str]:
+    """Where the clip is on YouTube, or why an APPROVED clip is not there yet."""
+    url = f"https://youtube.com/shorts/{row['youtube_id']}" if row.get("youtube_id") else None
+    if row["state"] == "PUBLISHED":
+        return [f"YouTube: {url}"] if url else []
+    if row["state"] != "APPROVED":
+        return []
+    lines = []
+    if row.get("publish_error"):
+        lines.append(f"⚠️ YouTube upload failed: {row['publish_error']}")
+    if url:  # the upload got a video id and then did not finish: it may be there as a draft, or even live
+        lines.append(f"⚠️ An earlier upload reached YouTube as {url}: check YouTube Studio before retrying")
+    return lines
+
+
+def upload_unfinished(row: dict[str, Any]) -> bool:
+    """An APPROVED clip whose upload failed or stopped half way: an operator decides about the retry."""
+    return row["state"] == "APPROVED" and bool(row.get("publish_error") or row.get("youtube_id"))
+
+
 def buttons_for(row: dict[str, Any], operators: dict[str, Any] | None = None) -> list[list[tuple[str, str]]]:
     """Rows of (label, callback_data). READY or an expired claim -> one Claim button per operator;
-    CLAIMED -> holder actions."""
+    CLAIMED -> holder actions; APPROVED with an upload that did not go through -> Retry."""
     cid = row["id"]
+    if upload_unfinished(row):
+        return [[("Retry YouTube upload", f"publish:{cid}")]]
     if row["state"] == "READY" or claim_expired(row):
         ops = config.operators() if operators is None else operators
         return [[(f"Claim: {o.get('label', n)}", f"claim:{cid}:{n}") for n, o in ops.items()]]
@@ -101,10 +125,17 @@ def handle_action(
         if ok:
             try:
                 staging.mark_approved(clip_id, op, root)
-            except FileNotFoundError:
-                log.warning("staging folder missing for %s", clip_id)
+            except OSError as e:  # the approval stands; the upload reports the missing package on the card
+                log.warning("approved package of %s not built: %s", clip_id, e)
         row = db.get(clip_id)
         return ("Approved." if ok else _refusal(row, "approve")), row
+    if action == "publish":  # Retry on the card of an APPROVED clip; any operator may press it
+        row = db.get(clip_id)
+        if row is None or row["state"] != "APPROVED":
+            state = row["state"].lower() if row else ""
+            return (f"Nothing to upload: the clip is {state}." if row else _refusal(row, "upload")), row
+        db.log(op, "publish_retry", clip_id)
+        return UPLOADING, row
     if action == "reject":
         ok = db.reject(clip_id, op)
         row = db.get(clip_id)
@@ -147,46 +178,51 @@ def handle_edit_reply(
 def build_application(db: ClipDB, token: str | None = None, root: Path | None = None) -> Any:
     """Create the python-telegram-bot Application (lazy import). root: staging folder (staging_root()).
 
-    run_polling() (the approval bot) also starts housekeeping(); a caller that only initialize()s the
-    application to post cards (the live lane) does not.
+    run_polling() (the approval bot) also starts housekeeping() and resume_publishing(); a caller that only
+    initialize()s the application to post cards (the live lane) does not.
     """
     import asyncio
 
     from telegram import ForceReply
     from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
+    async def resume(application: Any) -> None:
+        try:
+            await resume_publishing(application, db, root)
+        except Exception:  # noqa: BLE001 - the bot still has to come up; Retry buttons remain
+            log.exception("resuming uploads after the restart failed")
+
     async def started(application: Any) -> None:
-        application.bot_data["housekeeping"] = asyncio.create_task(housekeeping(application, db, root))
+        application.bot_data["tasks"] = [
+            asyncio.create_task(housekeeping(application, db, root)),
+            asyncio.create_task(resume(application)),
+        ]
 
     async def stopping(application: Any) -> None:
-        task = application.bot_data.pop("housekeeping", None)
-        if task is not None:
+        tasks = application.bot_data.pop("tasks", [])
+        for task in tasks:
             task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     token = token or os.environ["TELEGRAM_BOT_TOKEN"]
     app = Application.builder().token(token).post_init(started).post_stop(stopping).build()
 
     async def on_button(update: Any, context: Any) -> None:
         q = update.callback_query
-        text, row = handle_action(db, q.from_user.id, q.data, root=root)
-        if not text:
-            return
-        await q.answer(text)
-        if row is None:
-            return
-        _remember_card(db, row, q.message)
-        await refresh_card(context.application, db, row["id"], query=q)
-        if q.data.startswith("approve:") and text == "Approved." and _youtube_on_approve():
-            context.application.create_task(_publish(q.message, db, row["id"], root))
-        if q.data.startswith("edit:") and text.startswith("Reply"):
+        text, row = await press(context.application, db, q, root=root)
+        if row is not None and q.data.startswith("edit:") and text.startswith("Reply"):
             await q.message.reply_text(f"Edit {row['id']}: send the new title.", reply_markup=ForceReply())
             context.user_data["editing"] = row["id"]
 
     async def on_text(update: Any, context: Any) -> None:
         cid = context.user_data.pop("editing", None)
-        if cid and handle_edit_reply(db, update.effective_user.id, cid, update.message.text):
+        if not cid:
+            return
+        if handle_edit_reply(db, update.effective_user.id, cid, update.message.text):
             await update.message.reply_text("Title updated.")
+            await refresh_card(context.application, db, cid)
+        else:  # the claim ran out or the clip moved on while the title was being typed
+            await update.message.reply_text(f"Title not saved. {_refusal(db.get(cid), 'edit')}")
 
     async def on_id(update: Any, context: Any) -> None:
         u = update.effective_user
@@ -207,26 +243,134 @@ def _youtube_mode() -> str:
     return str(config.global_config().get("publish", {}).get("youtube_mode", "browser")).lower()
 
 
-async def _publish(message: Any, db: ClipDB, clip_id: str, root: Path | None = None) -> None:
-    """Upload right after Approve and reply under the card with the link (or the error)."""
+def _publisher() -> Any:
+    if _youtube_mode() == "api":
+        from ..publish import youtube as pub
+    else:
+        from ..publish import youtube_browser as pub
+    return pub
+
+
+def _starts_upload(data: str, text: str) -> bool:
+    action = data.split(":")[0]
+    return (action == "approve" and text == "Approved." and _youtube_on_approve()) or (
+        action == "publish" and text == UPLOADING
+    )
+
+
+async def press(
+    app: Any, db: ClipDB, q: Any, *, root: Path | None = None
+) -> tuple[str, dict[str, Any] | None]:
+    """One button press: the queue action, the answer, the redrawn card, then the upload if one is due.
+
+    Telegram failing on the answer or on the card must not cost an approved clip its upload, so neither can
+    raise here and the upload is started last, whatever happened before. (Last and not first: an upload that
+    fails at once must redraw the card after this press has, or its Retry button would be painted over.)
+    """
+    text, row = handle_action(db, q.from_user.id, q.data, root=root)
+    if not text:
+        return text, row
+    try:
+        try:
+            await q.answer(text)
+        except Exception as e:  # noqa: BLE001
+            log.warning("answer to %s not delivered: %s", q.data, e)
+        if row is not None:
+            _remember_card(db, row, q.message)
+            await refresh_card(app, db, row["id"], query=q)
+    finally:
+        if row is not None and _starts_upload(q.data, text):
+            app.create_task(publish(app, db, row["id"], root=root, query=q))
+    return text, row
+
+
+def _upload(db: ClipDB, clip_id: str, root: Path | None) -> str:
+    """The upload itself, in a worker thread. Builds the approved package first when the approval could
+    not (its failure is recorded like an upload failure), so a Retry can succeed."""
+    from ..publish.youtube import failure_recorded
+
+    row = db.get(clip_id) or {}
+    base = Path(root) if root else staging.staging_root()
+    if row.get("state") == "APPROVED" and not (base / "approved" / clip_id / "meta.json").exists():
+        with failure_recorded(db, clip_id):
+            staging.mark_approved(clip_id, row.get("approved_by") or "", base)
+    return _publisher().publish_clip(db, clip_id, root)
+
+
+async def publish(app: Any, db: ClipDB, clip_id: str, *, root: Path | None = None, query: Any = None) -> None:
+    """Upload an APPROVED clip to YouTube and tell the operators how it went: the card is redrawn (PUBLISHED
+    with the link, or the reason and a Retry button) and a line goes to the chat. Never raises.
+
+    One upload at a time (the browser publisher drives one Chrome profile), and never two of the same clip.
+    """
     import asyncio
 
-    if _youtube_mode() == "api":
-        from clipwatcher.publish import youtube as pub
-    else:
-        from clipwatcher.publish import youtube_browser as pub
+    from ..publish.youtube import NotApproved
 
-    try:
-        res = await asyncio.to_thread(pub.publish_clip, db, clip_id, root)
-    except Exception as e:  # noqa: BLE001 - report every failure to the operators
-        log.exception("youtube upload failed for %s", clip_id)
-        await message.reply_text(f"YouTube upload failed for {clip_id}: {e}")
+    running = app.bot_data.setdefault("uploading", set())
+    if clip_id in running:
         return
-    if res.startswith("dryrun-"):
-        await message.reply_text(f"DRY RUN: {clip_id} not uploaded (no YouTube credentials set).")
+    running.add(clip_id)
+    try:
+        async with app.bot_data.setdefault("upload_lock", asyncio.Lock()):
+            res = await asyncio.to_thread(_upload, db, clip_id, root)
+    except NotApproved as e:  # published or rejected in the meantime: nothing was uploaded
+        note = f"{clip_id} not uploaded: {e}"
+    except Exception as e:  # noqa: BLE001 - every failure goes to the operators (the publisher audited it)
+        log.exception("youtube upload failed for %s", clip_id)
+        note = f"YouTube upload failed for {clip_id}: {e}\nRetry with the button on its card."
     else:
-        privacy = "private (DRY_RUN=1)" if config.dry_run() else "public"
-        await message.reply_text(f"YouTube {privacy}: {res}")
+        if res.startswith("dryrun-"):
+            why = "no YouTube credentials set" if _youtube_mode() == "api" else "DRY_RUN=1"
+            note = f"DRY RUN: {clip_id} not uploaded ({why})."
+        else:
+            privacy = "private (DRY_RUN=1)" if config.dry_run() else "public"
+            note = f"YouTube {privacy}: {res}"
+    finally:
+        running.discard(clip_id)
+    await refresh_card(app, db, clip_id, query=query)
+    await _tell(app, db, clip_id, note, query)
+
+
+async def _tell(app: Any, db: ClipDB, clip_id: str, text: str, query: Any = None) -> None:
+    """A line for the operators: under the pressed card, else in the chat the clip's card is in."""
+    try:
+        if query is not None and query.message is not None:
+            await query.message.reply_text(text)
+            return
+        chat_id = (db.get(clip_id) or {}).get("card_chat_id") or _chat_id()
+        if chat_id:
+            await app.bot.send_message(chat_id, text)
+    except Exception as e:  # noqa: BLE001 - the card and the audit log carry the same news
+        log.warning("not sent to the chat (%s): %s", e, text)
+
+
+async def resume_publishing(app: Any, db: ClipDB, root: Path | None = None) -> list[str]:
+    """After a restart: upload the clips that were approved but never got to YouTube because the bot stopped
+    before or during the upload, or the upload failed. Only with publish.youtube_on_approve on.
+
+    Not uploaded here: a clip whose earlier attempt already got a video id (it may be on YouTube; its card
+    says so and offers Retry, an operator decides), a clip whose dry run went through, and approvals older
+    than publish.resume_max_h (24).
+    """
+    if not _youtube_on_approve():
+        return []
+    max_h = float(config.global_config().get("publish", {}).get("resume_max_h", 24))
+    resumed = []
+    for row in db.list_clips("APPROVED"):
+        clip_id = row["id"]
+        if float(row.get("updated_at") or 0) < time.time() - max_h * 3600:
+            continue
+        if row.get("youtube_id"):
+            await refresh_card(app, db, clip_id)
+            continue
+        last = db.last_audit(clip_id, "youtube%")
+        if last is not None and last["action"].endswith("dry_run"):
+            continue
+        log.info("%s was approved but not uploaded: uploading now", clip_id)
+        await publish(app, db, clip_id, root=root)
+        resumed.append(clip_id)
+    return resumed
 
 
 def _markup(rows: list[list[tuple[str, str]]]) -> Any:
