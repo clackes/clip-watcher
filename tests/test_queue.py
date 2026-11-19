@@ -95,6 +95,58 @@ def test_staging_flow(tmp_path, db):
     assert data["c9"]["youtube"] == "https://y/1"
 
 
+def _videos(tmp_path):
+    s, c = tmp_path / "s.mp4", tmp_path / "c.mp4"
+    s.write_bytes(b"short")
+    c.write_bytes(b"clean")
+    return s, c
+
+
+def test_restaging_never_resets_a_decided_clip(tmp_path, db, monkeypatch):
+    """A VOD re-run stages the same clip ids again: only a clip that is still READY may be replaced."""
+    from clipwatcher.publish import youtube
+
+    monkeypatch.setenv("DRY_RUN", "1")
+    root = tmp_path / "staging"
+    s, c = _videos(tmp_path)
+    staging.stage_package("v1", s, c, {"streamer": "x", "title": "first"}, root, db=db)
+    link = tmp_path / "link.mp4"
+    link.hardlink_to(root / "v1" / "short_9x16.mp4")
+    s.write_bytes(b"short v2")
+    staging.stage_package("v1", s, c, {"streamer": "x", "title": "second", "score": 7}, root, db=db)
+    row = db.get("v1")
+    assert row["state"] == "READY" and row["score"] == 7 and json.loads(row["meta_json"])["title"] == "second"
+    assert (root / "v1" / "short_9x16.mp4").read_bytes() == b"short v2"
+    assert link.read_bytes() == b"short"  # replaced by rename, never written into the shared inode
+
+    db.claim("v1", "manu")
+    db.approve("v1", "manu")
+    staging.mark_approved("v1", "manu", root)
+    db.set_state("v1", "PUBLISHED", actor="publisher", youtube_id="yt1")
+    s.write_bytes(b"short v3")
+    assert staging.stage_package("v1", s, c, {"streamer": "x", "title": "rerun"}, root, db=db) == root / "v1"
+    row = db.get("v1")
+    assert (row["state"], row["youtube_id"], row["approved_by"]) == ("PUBLISHED", "yt1", "manu")
+    assert json.loads(row["meta_json"])["title"] == "second"
+    assert (root / "approved" / "v1" / "short_9x16.mp4").read_bytes() == b"short v2"
+    assert (root / "v1" / "short_9x16.mp4").read_bytes() == b"short v2"
+    assert json.loads((root / "v1" / "meta.json").read_text())["state"] == "APPROVED"
+    assert "restage_refused" in [r["action"] for r in db.audit_rows("v1")]
+    with pytest.raises(youtube.NotApproved):  # no second approve, so no second upload
+        youtube.publish_clip(db, "v1", root)
+
+    for decided in ("claim", "approve", "reject"):
+        cid = f"v-{decided}"
+        staging.stage_package(cid, s, c, {"streamer": "x"}, root, db=db)
+        db.claim(cid, "samu")
+        if decided != "claim":
+            getattr(db, decided)(cid, "samu")
+        before = db.get(cid)
+        assert db.add_clip(cid, "x", {"title": "again"}) is False
+        staging.stage_package(cid, s, c, {"streamer": "x"}, root, db=db)
+        assert db.get(cid) == before
+
+
 OPS = {"manu": {"telegram_id": 11, "label": "Manu"}, "samu": {"telegram_id": 22, "label": "Samu"}}
 
 
@@ -109,13 +161,6 @@ def test_bot_logic(db, tmp_path, monkeypatch):
     assert telegram_bot.handle_action(db, 22, "approve:c1", operators=OPS)[0].startswith("Only")
     assert [b[0] for b in telegram_bot.buttons_for(db.get("c1"), OPS)[0]] == ["Approve", "Edit"]
     assert telegram_bot.handle_action(db, 11, "approve:c1", operators=OPS)[0] == "Approved."
-
-
-def _videos(tmp_path):
-    s, c = tmp_path / "s.mp4", tmp_path / "c.mp4"
-    s.write_bytes(b"short")
-    c.write_bytes(b"clean")
-    return s, c
 
 
 def test_approve_and_publish_follow_clipwatcher_staging(db, tmp_path, monkeypatch):

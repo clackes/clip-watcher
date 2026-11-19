@@ -64,14 +64,24 @@ class ClipDB:
     # -- clips -------------------------------------------------------------
     def add_clip(
         self, clip_id: str, streamer: str, meta: dict[str, Any] | None = None, score: float = 0.0
-    ) -> None:
+    ) -> bool:
+        """Queue a staged clip as READY. Staging the same id again refreshes meta and score only while the
+        clip is still READY; a claimed, approved, rejected or published clip keeps its state, operator and
+        video ids (returns False). One atomic statement, like the claim."""
         now = time.time()
-        self._conn().execute(
-            "INSERT OR REPLACE INTO clips(id,streamer,state,meta_json,created_at,updated_at,score)"
-            " VALUES(?,?,?,?,?,?,?)",
+        known = self.get(clip_id) is not None  # only picks the audit label
+        cur = self._conn().execute(
+            "INSERT INTO clips(id,streamer,state,meta_json,created_at,updated_at,score)"
+            " VALUES(?,?,?,?,?,?,?)"
+            " ON CONFLICT(id) DO UPDATE SET streamer=excluded.streamer, meta_json=excluded.meta_json,"
+            " score=excluded.score, updated_at=excluded.updated_at WHERE clips.state='READY'",
             (clip_id, streamer, READY, json.dumps(meta or {}), now, now, score),
         )
-        self.log("system", "add", clip_id, f"score={score}")
+        if cur.rowcount != 1:
+            self.log("system", "restage_refused", clip_id, f"state={self.state(clip_id)}")
+            return False
+        self.log("system", "restage" if known else "add", clip_id, f"score={score}")
+        return True
 
     def get(self, clip_id: str) -> dict[str, Any] | None:
         r = self._conn().execute("SELECT * FROM clips WHERE id=?", (clip_id,)).fetchone()
