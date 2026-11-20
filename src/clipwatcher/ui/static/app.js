@@ -125,7 +125,7 @@ function paintTpls() {
 }
 
 /* ---------- a run, as the server reports it ---------- */
-const R = { id: null, kind: null, es: null, params: {}, started: 0, clips: [], clip: 0, tick: 0, tests: { seen: 0, failed: [] }, ended: false };
+const R = { id: null, kind: null, es: null, params: {}, started: 0, clips: [], clip: 0, tick: 0, tests: { seen: 0, failed: [] }, ended: false, replay: false, timers: [] };
 const STEP_PHONE = { cut: 'cut', loudness: 'cut', transcribe: 'cut', judge: 'cut', screen: 'cut', layout: 'split', render_short: 'render', render_clean: 'render', stage: 'render' };
 function stepName(k) { return (S.ov && S.ov.steps[k]) || k; }
 function row(key, name, state, detail, seconds) {
@@ -140,7 +140,8 @@ function row(key, name, state, detail, seconds) {
 function logLine(text, cls, t) { const el = $('#log'), d = document.createElement('div'); d.innerHTML = `<span class="t">${clockOf(t || Date.now() / 1000)}</span><span class="${cls || ''}">${esc(text)}</span>`; el.appendChild(d); if (el.childElementCount > 1500) el.firstChild.remove(); el.scrollTop = el.scrollHeight; }
 function pill(o, cls) { const el = $(`.opill[data-o="${o}"]`); if (el) { el.classList.remove('on', 'skip'); if (cls) el.classList.add(cls); } }
 function resetRunView(kind, params) {
-  Object.assign(R, { kind, params, clips: [], clip: 0, tests: { seen: 0, failed: [] }, ended: false });
+  R.timers.forEach(clearTimeout); clearInterval(R.tick); if (R.es) { R.es.close(); R.es = null; }
+  Object.assign(R, { kind, params, clips: [], clip: 0, tests: { seen: 0, failed: [] }, ended: false, timers: [] });
   const tests = kind === 'tests', name = kind === 'live' ? 'live lane' : kind === 'vod' ? 'VOD lane' : 'test suite';
   $('#runTitle').innerHTML = kind === 'render' ? 'Rendering the Short <span class="gt">again</span>' : `Running the <span class="gt">${name}</span>`;
   $('#runNote').textContent = kind === 'live' ? `${params.streamer}, ${+params.minutes ? 'for ' + params.minutes + ' minutes' : 'until you stop it'}.` : kind === 'vod' ? `${params.streamer} on ${PFN[params.platform] || 'Twitch'}: up to ${params.top || 3} clips.` : kind === 'render' ? `${params.clip}: ${params.captions || 'the same'} captions, ${params.layout === 'stack' ? 'the older stack' : 'webcam over gameplay'}.` : 'Every test of the project, as pytest runs them.';
@@ -157,8 +158,8 @@ function onEvent(e) {
   const k = e.kind;
   if (k === 'log') return logLine(e.line, /error|traceback|failed/i.test(e.line) ? 'w' : '', e.t);
   if (k === 'start') { R.started = e.t; return; }
-  if (k === 'recording') { row('join', 'Join the stream', 'done', 'Recording into the rolling window'); pill(e.platform === 'kick' ? 'kick' : 'twitch', 'on'); $('#forceBtn').hidden = false; $('#runState').textContent = 'Recording'; return; }
-  if (k === 'baseline') { row('baseline', 'Read the chat so far', e.more ? 'run' : 'done', `<b>${(+e.messages).toLocaleString('en-US')}</b> messages, ${e.hours} h of the broadcast${e.category ? ' · ' + esc(e.category) : ''}${e.more ? '. The rest is being read in the background.' : ''}`); return; }
+  if (k === 'recording') { row('join', 'Join the stream', 'done', 'Recording into the rolling window'); pill(e.platform === 'kick' ? 'kick' : 'twitch', 'on'); $('#forceBtn').hidden = R.replay; $('#runState').textContent = 'Recording'; return; }
+  if (k === 'baseline') { row('baseline', 'Read the chat so far', e.more ? 'run' : 'done', `<b>${(+e.messages).toLocaleString('en-US')}</b> messages, ${e.hours} h of the broadcast${e.category ? ' · ' + esc(e.category) : ''}${e.more ? '. The rest is being read in the background.' : ''}`); const b = $('#steps [data-key="baseline"]'), w = $('#steps [data-key="watch"]'); if (b && w && (w.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)) $('#steps').insertBefore(b, w); return; }
   if (k === 'watching') { row('watch', 'Watch for a spike', 'run', `<b>${plural(e.messages, 'message')}</b> read${e.per_minute ? ', ' + e.per_minute + ' a minute' : ''}`); $('#runState').textContent = 'Watching the chat'; return; }
   if (k === 'step' && e.step === 'chat') { row('chat', 'Read the chat of the broadcast', e.state === 'start' ? 'run' : e.state === 'done' ? 'done' : 'failed', e.state === 'failed' ? esc(e.error) : null, e.seconds); $('#runState').textContent = 'Reading the chat'; pill(R.params.platform === 'kick' ? 'kick' : 'twitch', 'on'); return; }
   if (k === 'chat') { row('chat', 'Read the chat of the broadcast', 'done', `<b>${(+e.messages).toLocaleString('en-US')}</b> messages`); return; }
@@ -166,9 +167,9 @@ function onEvent(e) {
   if (k === 'moment') { R.clip++; const w = $(`#steps [data-key="watch"]`); if (w) w.dataset.s = 'done'; row('m' + R.clip, `Moment ${R.clip}`, 'done', `Chat score <b>${e.chat_score}</b>${e.chatters ? ', ' + e.chatters + ' chatters' : ''}, ${e.seconds} s of footage`); $('#phone').dataset.st = 'cut'; const v = $('#phoneVid'); v.hidden = true; $('#runState').textContent = 'Making a clip'; return; }
   if (k === 'step') { const key = e.step + ':' + R.clip, note = e.state === 'failed' ? esc(e.error) : e.step === 'transcribe' && e.state === 'done' && S.ov && !S.ov.speech ? 'No speech model on this machine, so no captions' : null; row(key, stepName(e.step), e.state === 'start' ? 'run' : e.state === 'done' ? 'done' : 'failed', note, e.seconds); if (e.state === 'start' && STEP_PHONE[e.step]) $('#phone').dataset.st = STEP_PHONE[e.step]; if (e.state === 'start') $('#runState').textContent = stepName(e.step); return; }
   if (k === 'judged') { const ai = e.source === 'claude'; row('judge:' + R.clip, 'Judge', ai ? 'done' : 'skip', ai ? `Claude scored it <b>${e.score}</b> of 10` : 'No API key: the fallback wrote the title'); pill('cl', ai ? 'on' : 'skip'); return; }
-  if (k === 'staged') { R.clips.push(e); row('staged:' + R.clip, e.again ? 'Rendered again' : 'Clip ready', 'done', `<b>${esc(e.title)}</b>`); const v = $('#phoneVid'); v.src = `/media/${encodeURIComponent(e.clip_id)}/short_9x16.mp4`; v.hidden = false; v.play().catch(() => {}); $('#phone').dataset.st = 'done'; pill('tg', S.ov && S.ov.telegram ? 'on' : 'skip'); pill('yt', 'skip'); toast('Clip staged: ' + e.title); S.clips = []; return; }
+  if (k === 'staged') { R.clips.push(e); row('staged:' + R.clip, e.again ? 'Rendered again' : 'Clip ready', 'done', `<b>${esc(e.title)}</b>`); const v = $('#phoneVid'); v.src = `/media/${encodeURIComponent(e.clip_id)}/short_9x16.mp4`; v.hidden = false; v.play().catch(() => {}); $('#phone').dataset.st = 'done'; pill('tg', S.ov && S.ov.telegram ? 'on' : 'skip'); pill('yt', 'skip'); if (!R.replay) { toast('Clip staged: ' + e.title); S.clips = []; } return; }
   if (k === 'rejected' || k === 'failed') { row(k + ':' + R.clip + ':' + e.seq, k === 'rejected' ? 'Not staged' : 'Could not be made', 'failed', esc(e.reason || '')); return; }
-  if (k === 'forced') { toast('Clipping the last ' + e.seconds + ' seconds'); return; }
+  if (k === 'forced') { if (!R.replay) toast('Clipping the last ' + e.seconds + ' seconds'); return; }
   if (k === 'test') { R.tests.seen++; const d = document.createElement('i'); d.className = e.outcome === 'PASSED' ? 'ok' : e.outcome === 'SKIPPED' ? '' : 'now'; d.title = `${e.file}::${e.name} ${e.outcome}`; $('#dots').appendChild(d); if (e.outcome === 'FAILED' || e.outcome === 'ERROR') R.tests.failed.push(e.file + '::' + e.name); $('#dotsNote').textContent = `${R.tests.seen} tests run, ${R.tests.failed.length} failed`; $('#totalBar').style.width = e.percent + '%'; $('#runState').textContent = e.file; row('t:' + e.file, e.file.replace('tests/', ''), 'run', null); const prev = $('#steps').children; if (prev.length > 1) { const p = prev[prev.length - 2]; if (p.dataset.s === 'run') { p.dataset.s = R.tests.failed.some(f => f.startsWith('tests/' + p.querySelector('.nm').textContent)) ? 'failed' : 'done'; p.querySelector('.bub').innerHTML = ic(p.dataset.s === 'done' ? 'check' : 'cross'); } } return; }
   if (k === 'stopping') { $('#runState').textContent = 'Stopping: finishing what is in progress'; $('#stopBtn').disabled = true; return; }
   if (k === 'end') return finish(e);
@@ -198,20 +199,31 @@ function finish(e) {
     $('#runTitle').innerHTML = e.state === 'failed' ? 'The run <span class="gt">stopped early</span>' : 'No clip <span class="gt">this time</span>';
     html = `<span class="badge"><i class="dot off"></i>${e.state === 'failed' ? 'Exit code ' + e.code : 'Nothing staged'}</span><h2>${e.state === 'failed' ? 'It ended with an error' : 'No moment stood out'}</h2><p class="lead">${e.state === 'failed' ? 'The last lines of the log say why. Open "Show the log" below.' : R.kind === 'live' ? 'Chat stayed under the bar while the bot was watching. Try a longer run, or a busier stream.' : 'Nothing in this broadcast passed the detector and the judge.'}</p>`;
   }
-  html += `<div class="row" style="margin-top:4px"><button class="btn btn-primary btn-lg" id="again">Run something else</button>${R.clips.length ? '<button class="btn btn-glass btn-lg" id="openIt">Open the clip</button>' : ''}</div>`;
+  html += `<div class="row" style="margin-top:4px"><button class="btn btn-primary btn-lg" id="again">Run something else</button>${R.clips.length ? '<button class="btn btn-glass btn-lg" id="openIt">Open the clip</button>' : ''}<button class="btn btn-ghost btn-lg" id="watchIt">Watch it again</button></div>`;
   const box = $('#resultBox'); box.innerHTML = `<div class="result">${html}</div>`; $('#stepsBox').hidden = true; box.hidden = false;
   if (e.state === 'failed' || (R.kind === 'render' && !R.clips.length && e.state !== 'stopped')) $('.logd').open = true;
   $('#again').onclick = () => { W.step = 4; goStep(1); };
+  $('#watchIt').onclick = () => replay(R.id);
   if ($('#openIt')) $('#openIt').onclick = () => { const id = R.clips[R.clips.length - 1].clip_id; location.hash = 'clips'; setTimeout(() => openClip(id), 500); };
-  S.ins = null; S.clips = [];
+  if (!R.replay) { S.ins = null; S.clips = []; }
 }
 function follow(run) {
-  R.id = run.id; resetRunView(run.kind, run.params || {}); R.started = run.started || Date.now() / 1000;
-  clearInterval(R.tick); R.tick = setInterval(() => { if (R.ended) return; const el = Date.now() / 1000 - R.started; $('#runClock').textContent = fmtS(Math.max(0, el)); if (R.kind === 'live' && +R.params.minutes) $('#totalBar').style.width = Math.min(100, 100 * el / (R.params.minutes * 60)) + '%'; }, 1000);
+  R.replay = false; R.id = run.id; resetRunView(run.kind, run.params || {}); R.started = run.started || Date.now() / 1000;
+  clearInterval(R.tick); R.tick = setInterval(() => { if (R.ended || R.replay) return; const el = Date.now() / 1000 - R.started; $('#runClock').textContent = fmtS(Math.max(0, el)); if (R.kind === 'live' && +R.params.minutes) $('#totalBar').style.width = Math.min(100, 100 * el / (R.params.minutes * 60)) + '%'; }, 1000);
   if (R.es) R.es.close();
   R.es = new EventSource(`/api/runs/${encodeURIComponent(run.id)}/events?after=0`);
   R.es.onmessage = m => { try { onEvent(JSON.parse(m.data)); } catch (err) { console.error(err); } };
   R.es.onerror = () => { if (R.ended && R.es) R.es.close(); };
+}
+async function replay(id) {
+  let run; try { run = await api.get('/api/runs/' + encodeURIComponent(id)); } catch (err) { return toast(err.message); }
+  const evs = run.events || []; if (!evs.length) return toast('This run was not kept event by event. Runs from now on are.');
+  if (run.state === 'running') return follow(run);
+  R.replay = true; R.id = run.id; resetRunView(run.kind, run.params || {});
+  W.step = 4; paintWiz(); $$('.stepbox').forEach(b => { b.hidden = b.id !== 's4'; }); $('#runCtl').hidden = true; scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' });
+  const t0 = evs[0].t, span = Math.max(1, evs[evs.length - 1].t - t0), play = reduce ? 0 : Math.min(14000, Math.max(5000, evs.length * 120)), speed = Math.max(1, Math.round(span * 1000 / (play || 1)));
+  $('#runNote').textContent = `A recording of ${when(run.started)}` + (play ? `, played ${speed} times faster.` : '.'); $('#total').classList.remove('ind');
+  evs.forEach(e => { R.timers.push(setTimeout(() => { if (!R.replay || R.id !== run.id) return; $('#runClock').textContent = fmtS(e.t - t0); if (e.kind !== 'end') $('#totalBar').style.width = Math.min(100, 100 * (e.t - t0) / span) + '%'; try { onEvent(e); } catch (err) { console.error(err); } }, play * (e.t - t0) / span)); });
 }
 async function startRun() {
   const params = W.mode === 'live' ? { streamer: W.streamer, minutes: W.minutes } : W.mode === 'vod' ? { streamer: W.vodWho, platform: W.platform, vod: W.vod, top: W.top } : {};
@@ -301,7 +313,7 @@ if (hasChart) {
   Chart.register({ id: 'tip', afterDatasetsDraw(ch) { const o = ch.options.plugins.tip; if (!o || !o.k) return; const f = FMT[o.k] || String, x = ch.ctx; x.save(); x.font = '600 11px Geologica, sans-serif'; x.fillStyle = C.text;
     ch.data.datasets.forEach((ds, di) => { ch.getDatasetMeta(di).data.forEach((el, i) => { const v = ds.data[i]; if (v == null) return; const t = f(v, i); if (!t) return; if (ch.options.indexAxis === 'y') { x.textAlign = 'left'; x.textBaseline = 'middle'; x.fillText(t, el.x + 6, el.y); } else { x.textAlign = 'center'; x.textBaseline = 'bottom'; x.fillText(t, el.x, el.y - 5); } }); }); x.restore(); } });
 }
-const bar = (labels, data, colors, o = {}) => ({ type: 'bar', data: { labels, datasets: [{ label: o.label || 'Value', data, backgroundColor: colors, borderRadius: o.h ? { topRight: 4, bottomRight: 4 } : { topLeft: 4, topRight: 4 }, borderSkipped: o.h ? 'left' : 'bottom', maxBarThickness: 24 }] }, options: { plugins: { legend: { display: false }, tip: { k: o.tip || 'str' } }, layout: { padding: { top: 18, right: o.h ? 58 : 4 } }, scales: { x: { grid: { display: !!o.h }, beginAtZero: true, ticks: { maxRotation: o.rot || 0 } }, y: { beginAtZero: true, grid: { display: !o.h } } }, ...(o.h ? { indexAxis: 'y' } : {}) } });
+const bar = (labels, data, colors, o = {}) => ({ type: 'bar', data: { labels, datasets: [{ label: o.label || 'Value', data, backgroundColor: colors, borderRadius: o.h ? { topRight: 4, bottomRight: 4 } : { topLeft: 4, topRight: 4 }, borderSkipped: o.h ? 'left' : 'bottom', maxBarThickness: 24 }] }, options: { plugins: { legend: { display: false }, tip: { k: o.tip || 'str' } }, layout: { padding: { top: 18, right: o.h ? 58 : 4 } }, scales: { x: { grid: { display: !!o.h }, beginAtZero: true, ticks: { maxRotation: o.rot || 0, ...(o.h && !o.tip ? { precision: 0 } : {}) } }, y: { beginAtZero: true, grid: { display: !o.h }, ticks: !o.h && !o.tip ? { precision: 0 } : {} } }, ...(o.h ? { indexAxis: 'y' } : {}) } });
 const donut = (labels, data, colors) => ({ type: 'doughnut', data: { labels, datasets: [{ data, backgroundColor: colors, borderColor: C.surface, borderWidth: 2, hoverOffset: 8 }] }, options: { cutout: '62%' } });
 const empty = (title, text) => ({ html: `<div class="empty"><span class="tile">${ic('insights')}</span><b>${title}</b><span>${text}</span></div>` });
 function tableOf(cfg) {
@@ -331,7 +343,7 @@ function slides(tab) {
   if (tab === 'speed') return [
     work.length ? { title: 'What each step costs', sub: `Average seconds over ${plural(sp.clips, 'clip')}`, cfg: bar(work.map(s => s.name), work.map(s => s.avg_s), work.map(s => s.step.startsWith('render') ? C.c1 : C.c0), { h: 1, tip: 's', label: 'Seconds' }) } : { title: 'What each step costs', sub: '', ...empty('No timings yet', 'Clips made from now on keep the seconds of every step. Run a lane and they show up here.') },
     sp.per_clip.length ? { title: 'Work against length, clip by clip', sub: 'Seconds of work to make each clip, next to how long the clip is', cfg: { type: 'bar', data: { labels: sp.per_clip.map(p => p.streamer + ' ' + p.id.slice(-6)), datasets: [{ label: 'Work', data: sp.per_clip.map(p => p.work_s), backgroundColor: C.c1, borderRadius: { topLeft: 4, topRight: 4 }, maxBarThickness: 24 }, { label: 'Clip length', data: sp.per_clip.map(p => p.clip_s), backgroundColor: C.c0, borderRadius: { topLeft: 4, topRight: 4 }, maxBarThickness: 24 }] }, options: { layout: { padding: { top: 18 } }, scales: { x: { grid: { display: false } }, y: { beginAtZero: true } } } } } : null,
-    sp.runs && sp.runs.length ? { title: 'Every run started from here', sub: 'Newest first', html: `<div class="tbl-wrap"><table><thead><tr><th>When</th><th>Run</th><th>What</th><th>How it went</th><th class="r">Took</th><th class="r">Clips</th></tr></thead><tbody>${sp.runs.map(r => `<tr><td>${when(r.when)}</td><td>${{ live: 'Live lane', vod: 'VOD lane', tests: 'Test suite', render: 'Render again' }[r.kind] || esc(r.kind)}</td><td class="wrapc">${esc(r.what)}</td><td>${{ done: 'finished', stopped: 'stopped', failed: 'error', running: 'running' }[r.state] || esc(r.state)}</td><td class="r">${fmtS(r.seconds)}</td><td class="r">${r.clips}</td></tr>`).join('')}</tbody></table></div>` } : null,
+    sp.runs && sp.runs.length ? { title: 'Every run started from here', sub: 'Newest first', html: `<div class="tbl-wrap"><table><thead><tr><th>When</th><th>Run</th><th>What</th><th>How it went</th><th class="r">Took</th><th class="r">Clips</th><th></th></tr></thead><tbody>${sp.runs.map(r => `<tr><td>${when(r.when)}</td><td>${{ live: 'Live lane', vod: 'VOD lane', tests: 'Test suite', render: 'Render again' }[r.kind] || esc(r.kind)}</td><td class="wrapc">${esc(r.what)}</td><td>${{ done: 'finished', stopped: 'stopped', failed: 'error', running: 'running' }[r.state] || esc(r.state)}</td><td class="r">${fmtS(r.seconds)}</td><td class="r">${r.clips}</td><td class="r"><button type="button" class="btn btn-glass btn-sm" data-watch="${esc(r.id)}">Watch</button></td></tr>`).join('')}</tbody></table></div>` } : null,
     sp.tests.length ? { title: 'The test suite, run by run', sub: 'Seconds for the whole suite', cfg: bar(sp.tests.map(t => when(t.when)), sp.tests.map(t => t.seconds), sp.tests.map(t => t.failed ? C.c2 : C.c4), { tip: 's', label: 'Seconds' }) } : null,
   ].filter(Boolean);
   if (tab === 'cost') return [
@@ -383,6 +395,7 @@ function initInsights() {
   $('#slNext').onclick = () => { ins.i = (ins.i + 1) % slides(ins.tab).length; ins.table = false; renderIns(true); };
   $('#slPrev').onclick = () => { if (ins.i > 0) { ins.i--; ins.table = false; renderIns(true); } };
   $('#slTable').onclick = () => { ins.table = !ins.table; renderIns(true); };
+  $('#slHtml').addEventListener('click', e => { const b = e.target.closest('[data-watch]'); if (!b) return; if (S.ov && S.ov.active) return toast('A run is going. Watch this one when it has ended.'); location.hash = 'run'; replay(b.dataset.watch); });
 }
 
 /* ---------- settings ---------- */
