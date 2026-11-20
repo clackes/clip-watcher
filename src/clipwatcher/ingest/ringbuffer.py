@@ -47,14 +47,14 @@ class RingBuffer:
         if not self.index_path.exists():
             return []
         rows = []
-        for ln in self.index_path.read_text().splitlines():
+        for ln in self.index_path.read_text(encoding="utf-8").splitlines():
             if ln.strip():
                 rows.append(json.loads(ln))
         return sorted(rows, key=lambda r: r["start_ms"])
 
     def _write_index(self, rows: list[dict]) -> None:
         tmp = self.index_path.with_suffix(".tmp")
-        tmp.write_text("".join(json.dumps(r) + "\n" for r in rows))
+        tmp.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
         tmp.replace(self.index_path)
 
     def add_segment(self, path: str | Path, pdt_ms: int, duration_s: float | None = None) -> dict | None:
@@ -75,14 +75,14 @@ class RingBuffer:
         if not self.pins_path.exists():
             return []
         try:
-            return json.loads(self.pins_path.read_text())
+            return json.loads(self.pins_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:  # never crash pruning on a damaged file; pins are re-made per clip
             return []
 
     def _write_pins(self, pins: list[dict]) -> None:
         """Atomic: prune (recorder) and pin/unpin (clip tasks) run concurrently in different threads."""
         tmp = self.pins_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(pins))
+        tmp.write_text(json.dumps(pins), encoding="utf-8")
         tmp.replace(self.pins_path)
 
     def pin(self, start_ms: int, end_ms: int, ttl_s: float = 48 * 3600, now: float | None = None) -> None:

@@ -256,7 +256,7 @@ def build(
         made.append(row)
         print(f"{name}: " + ", ".join(f"{m} {row[m]['render_s']}s" for m in modes), flush=True)
     shutil.rmtree(work, ignore_errors=True)
-    (out / "gallery.json").write_text(json.dumps(made, indent=1))
+    (out / "gallery.json").write_text(json.dumps(made, indent=1), encoding="utf-8")
     cards = []
     for r in made:
         cells = "".join(

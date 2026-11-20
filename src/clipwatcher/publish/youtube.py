@@ -183,7 +183,7 @@ def publish_clip(db: ClipDB, clip_id: str, root: Path | None = None) -> str:
     root = Path(root) if root else staging.staging_root()
     with failure_recorded(db, clip_id):
         folder = root / "approved" / clip_id
-        meta = json.loads((folder / "meta.json").read_text())
+        meta = json.loads((folder / "meta.json").read_text(encoding="utf-8"))
         row = db.get(clip_id) or {}
         meta.update(json.loads(row.get("meta_json") or "{}"))
         vid = upload(clip_id, meta, db, folder / "short_9x16.mp4")

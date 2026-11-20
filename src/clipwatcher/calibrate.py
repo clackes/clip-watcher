@@ -1576,7 +1576,7 @@ def calibrate(
 # --------------------------------------------------------------------------- streamers.yaml update
 def update_streamer_rects(path: Path, name: str, values: dict[str, str]) -> None:
     """Set keys inside one streamer block, editing text in place so comments and other keys survive."""
-    lines = Path(path).read_text().splitlines()
+    lines = Path(path).read_text(encoding="utf-8").splitlines()
     head = re.compile(rf"^(\s+){re.escape(name.lower())}:\s*(#.*)?$")
     start = next((i for i, ln in enumerate(lines) if head.match(ln)), None)
     if start is None:
@@ -1607,7 +1607,7 @@ def update_streamer_rects(path: Path, name: str, values: dict[str, str]) -> None
                 lines[idx] = new
     p = Path(path)
     tmp = p.with_name(p.name + ".tmp")
-    tmp.write_text("\n".join(lines) + "\n")
+    tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
     tmp.replace(p)
 
 

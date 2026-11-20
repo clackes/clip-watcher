@@ -58,7 +58,12 @@ class Logins:
         self.last: dict[str, Any] | None = None
 
     def _popen(self, cmd: list[str], log: Path) -> subprocess.Popen[bytes]:
-        env = {**os.environ, "CLIPWATCHER_ACCOUNTS": str(self.accounts.root), "PYTHONUNBUFFERED": "1"}
+        env = {
+            **os.environ,
+            "CLIPWATCHER_ACCOUNTS": str(self.accounts.root),
+            "PYTHONUNBUFFERED": "1",
+            "PYTHONUTF8": "1",
+        }
         with log.open("wb") as out:
             return subprocess.Popen(  # noqa: S603 - a fixed command list built by command()
                 cmd,

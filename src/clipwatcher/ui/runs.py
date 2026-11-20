@@ -231,7 +231,7 @@ class RunManager:
             return subprocess.Popen(  # noqa: S603 - a fixed command list built by command(), never a shell string
                 cmd,
                 cwd=config.ROOT,
-                env={**env, "PYTHONIOENCODING": "utf-8"},
+                env={**env, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,

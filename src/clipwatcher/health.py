@@ -14,7 +14,7 @@ def main() -> int:
     data = Path(os.environ.get("CLIPWATCHER_DATA", config.ROOT / "work"))
     try:
         data.mkdir(parents=True, exist_ok=True)
-        (data / ".health").write_text("ok")
+        (data / ".health").write_text("ok", encoding="utf-8")
         subprocess.run([config.ffmpeg_bin(), "-version"], capture_output=True, check=True, timeout=10)
         subprocess.run(["streamlink", "--version"], capture_output=True, check=True, timeout=20)
     except Exception as e:  # noqa: BLE001

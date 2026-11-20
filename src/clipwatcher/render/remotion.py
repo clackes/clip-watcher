@@ -327,7 +327,9 @@ def source_stamp() -> str:
 
 def bundle_stamp(bundle: Path | None = None) -> str | None:
     try:
-        return json.loads(((bundle or BUNDLE_DIR) / "clipwatcher-bundle.json").read_text())["stamp"]
+        return json.loads(((bundle or BUNDLE_DIR) / "clipwatcher-bundle.json").read_text(encoding="utf-8"))[
+            "stamp"
+        ]
     except (OSError, ValueError, KeyError):
         return None
 

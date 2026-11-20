@@ -129,7 +129,7 @@ def read_segment_list(csv_path: Path) -> list[tuple[str, float, float]]:
     """ffmpeg csv segment list: name,start,end (seconds from run start)."""
     rows = []
     if csv_path.exists():
-        for ln in csv_path.read_text().splitlines():
+        for ln in csv_path.read_text(encoding="utf-8").splitlines():
             p = ln.strip().split(",")
             if len(p) >= 3:
                 rows.append((p[0], float(p[1]), float(p[2])))
@@ -257,7 +257,7 @@ class Recorder:
                 stderr=asyncio.subprocess.PIPE,
                 start_new_session=True,
             )  # fmt: skip
-        (self.dir / "pids.json").write_text(json.dumps({"pgid": sl.pid}))
+        (self.dir / "pids.json").write_text(json.dumps({"pgid": sl.pid}), encoding="utf-8")
         self._procs = [sl]
         self._tasks.append(asyncio.create_task(self._read_stderr(sl)))
 
@@ -403,7 +403,7 @@ def sweep_stale(ring_root: Path, login: str, keep: Path | None = None) -> list[P
         pf = d / "pids.json"
         if pf.exists():
             try:
-                pgid = int(json.loads(pf.read_text())["pgid"])
+                pgid = int(json.loads(pf.read_text(encoding="utf-8"))["pgid"])
                 if still_recorder(pgid):
                     kill_group(pgid, _SIGKILL)
             except (ValueError, KeyError):
