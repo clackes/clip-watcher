@@ -27,8 +27,10 @@ watch each step as it happens (join, read the chat, spike, cut, judge, render, s
 Clips lists everything staged, with how each scored and settings for that one video (caption style, layout,
 render again). Insights answers one question at a time: what each step costs in seconds, what the judge
 costs in dollars, what the judge decided, what the detector found. Settings changes a chosen few values for
-this machine (`config/local.yaml`, laid over `config/global.yaml`). It needs nothing installed beyond the
-project, starts the same commands you would type, and never approves or uploads: that stays in Telegram.
+this machine (`config/local.yaml`, laid over `config/global.yaml`). Streamers appear with their Twitch or
+Kick picture, name and badges, fetched once a day and kept in `work/ui/profiles/`; a finished run can be
+watched again. It needs nothing installed beyond the project, starts the same commands you would type,
+and never approves or uploads: that stays in Telegram.
 
 ## Approve and publish
 
