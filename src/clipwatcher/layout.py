@@ -149,6 +149,8 @@ SIZE_ALIKE = 1.5  # cams within this factor in area are cams of one layout (a du
 CAM_MIN_AREA = 0.01  # a 'cam' under this share of the frame is a portrait in the HUD
 CUTOUT_MAX_FACE = 0.26  # a cut-out's face is at most this share of the frame's height
 GAME_STEADY = 0.02  # this share of the picture on steady edges: a HUD, so a game
+SPLIT_MAX = 0.9  # a rectangle around the face is a part of the picture up to this share of it (black
+# bars that stay are not picture); above, it is the picture itself
 GONE_RUN = 3  # the cam's border missing in this many frames in a row: the layout changes in the stretch
 CONTENT_AREA = 0.3  # share of the frame: larger rectangles with faces are content when a webcam is there too
 
@@ -161,6 +163,7 @@ class Cam:
     seen: float  # share of the frames looked at that show the face
     span: tuple[float, float, float, float]  # where the face went over the frames (x, y, w, h)
     spread: float = 0.0  # how far it went, in face sizes (icons on a minimap are 'faces' all over it)
+    full: float = 0.0  # share of the frames in which the full-frame pass saw the face (0: only enlarged)
 
 
 def _iou(a, b) -> float:
@@ -227,6 +230,8 @@ def find_cams(boxes: list, n_frames: int, maps, paths: list, detector, more: boo
         cam = _cam_of(maps, c, len(c) / n_frames)
         if cam and cam.seen < SEEN_SURE:
             cam = confirmed(cam.rect)
+        if cam:
+            cam.full = len(c) / n_frames
         add(cam)
     largest = max((c.rect[2] * c.rect[3] for c in cams), default=0)
     for prop in calibrate.cam_proposals(maps) if more else ():
@@ -294,6 +299,7 @@ def _cam_evidence(maps, pick: Cam, found: list[Cam]) -> dict:
         })  # fmt: skip
     e.update(
         seen=round(pick.seen, 2), sure=round(pick.sure, 3), spread=round(pick.spread, 2), cams=others,
+        full=round(pick.full, 2),
         face=[round(v) for v in pick.face],
     )  # fmt: skip
     return e
@@ -385,6 +391,19 @@ def _resolve(
             gone = _gone(whole, tuple(lay.evidence["rect"]), at_moment)  # type: ignore[arg-type]
             if gone:
                 return _unsure([gone], lay.sure, lay.evidence)
+        if lay.has_webcam and ev.get("cutout"):
+            # A cut-out webcam is there through the whole stretch, at its place; a person in a broadcast
+            # or in a video is there for a shot (leodsumo: a spectator at the ring).
+            fx, fy, fwd, fht = ev["cutout"]
+            look = _spread(whole, ZOOM_FRAMES)
+            hits = calibrate.zoom_faces(look, detector, _parse(lay.cam))
+            there = [b for b in hits if abs(b[0] - fx) <= fwd and abs(b[1] - fy) <= fht]
+            ev.update(cutout_there=round(len(there) / max(1, len(look)), 2))
+            if len(there) < SEEN_SURE * len(look):
+                n = f"{len(there)} of {len(look)}"
+                return _unsure(
+                    [f"a face placed like a cut-out webcam, there in {n} frames of the stretch"], 0.3, None
+                )
         rest = [(t, p) for t, p in zip(times, whole, strict=True) if p not in set(paths)]
         if lay.source == "fullcam" and len(rest) >= 6:  # a full-screen camera now; and before the cut?
             other_maps = calibrate.scene_maps([p for _, p in rest])
@@ -410,6 +429,8 @@ def doubts(e: dict, hinted: bool = False) -> list[str]:
       like what is around it: the side is a line of the game or of the room (sodapoppin, xaryu: the
       rectangle ran on to the frame's edge; k4sen: a minimap). A side put where a banner begins is sure;
     - the face is there in too few of the frames looked at (a video that is being watched);
+    - a rectangle with three sure sides in which only the enlarged look found a face (787prada: an empty
+      inventory slot). Either alone is common among real cams; together nothing else holds the panel;
     - behind a line across the rectangle a strip moves far more than the rest: a second camera attached
       to the cam (infume's keyboard cam), or the hands on the desk: the picture cannot say which;
     - several rectangles with a face, of different sizes, and no judge to say which is the streamer's
@@ -421,6 +442,8 @@ def doubts(e: dict, hinted: bool = False) -> list[str]:
         out.append(f"a side is only a faint line ({side:.2f})")
     if e["seen"] < SEEN_SURE:
         out.append(f"the face is in {e['seen']:.0%} of the frames looked at")
+    if e["sure"] <= 0.5 and e.get("full", 1.0) == 0:
+        out.append("three sure sides, and a face in it only when enlarged")
     for k, ratio in (e.get("strips") or {}).items():
         cov, depth, _jump = e["chords"][k]
         if ratio >= STRIP_LIVE and cov >= STRIP_LINE and STRIP_DEPTH[0] <= depth <= STRIP_DEPTH[1]:
@@ -531,8 +554,29 @@ def _decide(
     steady = [
         f for f in calibrate.stable_faces(boxes, len(frames), fw, fh) if seen(f) >= CUTOUT_SHARE * len(frames)
     ]
+    # A rectangle around a face that find_cams did not take as a webcam (the face barely moves, the
+    # rectangle looks like part of a room, it is half the frame) but that could be one: a split screen,
+    # a cam over a still game. While there is one the camera is not surely the whole picture.
+    held = _could_be_cam(maps, [f for f in [face, *steady] if f is not None])
+    ev.update(could_be_cam=list(held) if held else None)
+    full_scene = next(  # a confirmed scene with no webcam and no gameplay crop: the camera is the picture
+        (s for s in scfg.get("layouts") or [] if s.get("has_webcam") is False and not s.get("gameplay_rect")),
+        None,
+    )
+    open_question = (  # nothing around the face that is the size of a webcam and has drawn sides
+        held is None or calibrate.room_rectangle(maps, held) or held[2] * held[3] > CONTENT_AREA * fw * fh
+    )
+    if full_scene and face is not None and open_question and not calibrate.cam_proposals(maps):
+        # The operator confirmed that this streamer films full screen (D12: followed full screen). The
+        # picture cannot tell one face in a moving picture from a webcam it failed to read, a doorway
+        # from a cam with a faint side, or a camera beside a panel from a split screen; with no
+        # webcam-sized rectangle of drawn sides and nothing that looks like a cam in it, the confirmed
+        # scene decides.
+        ev.update(confirmed=full_scene.get("name", "?"))
+        return Layout(False, None, None, "fullcam", None, 0.9)
     if len(steady) == 1 and _cutout_like(steady[0], maps):
         cam = calibrate.cutout_box(steady[0], fw, fh)
+        ev.update(cutout=[int(v) for v in steady[0]])
         return Layout(
             True,
             calibrate.rect_str(cam),
@@ -565,15 +609,32 @@ def _decide(
     # there together (people in front of one camera). One face in a picture that moves is a webcam with
     # no rectangle to be read, a cut-out, a handheld camera or a face of the game: not sure.
     here = seen(face) >= CUTOUT_SHARE * len(frames)
+    if held is not None and (here or steady):
+        x, y, w, h = held
+        return _unsure([f"a rectangle around the face could be a webcam ({w}x{h} at {x},{y})"], 0.4, None)
     if (here and calibrate.scene_still(maps)) or len(steady) >= 2:
         no_cam = match_scene(face, True, sc)
-        if no_cam:
+        if no_cam and no_cam.get("gameplay_rect"):  # the operator's scene without a cam: its gameplay crop
             return Layout(False, None, no_cam.get("gameplay_rect"), f"scene:{no_cam.get('name', '?')}")
-        return Layout(False, None, None, "fullcam", None, 0.8)
+        return Layout(False, None, None, "fullcam", None, 0.9 if full_scene else 0.8)
     if here:
         why = ["one face, no rectangle around it, in a picture that moves: a webcam, a camera or the game?"]
         return _unsure(why, 0.3, None)
     return Layout(False, None, None, "no-face")
+
+
+def _could_be_cam(maps, faces: list) -> tuple[int, int, int, int] | None:
+    """The rectangle with sure sides around one of the faces that is a part of the picture (up to
+    SPLIT_MAX of it), whatever else is known about it; None when there is none or it is the picture."""
+    fw, fh = maps.size
+    picture = maps.active[2] * maps.active[3] if maps.active else fw * fh
+    for f in faces:
+        if f[3] < 0.025 * fh:
+            continue
+        found = calibrate.cam_rect(maps, f)
+        if found and CAM_MIN_AREA * fw * fh <= found[0][2] * found[0][3] <= SPLIT_MAX * picture:
+            return found[0]
+    return None
 
 
 def _pick_cam(found: list[Cam], media: Path, fw: int, fh: int, peak_s, cam_hint, td: Path) -> Cam:

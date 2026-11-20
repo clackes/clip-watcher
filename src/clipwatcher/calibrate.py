@@ -395,6 +395,7 @@ STILL_MIN, STILL_MOST = 8, 0.2  # such a strip: at least this many pixels deep, 
 STILL_LINE = 0.3  # the line it ends at: an edge in this share of (frames x its length)
 FRAME_LINE = 0.45  # a decorative frame: lines this steady just inside three sides or more ...
 FRAME_PAIR = 0.7  # ... or this steady inside two (a cam in a corner of the frame has only two to show)
+STRIP_BUSY = 2.0  # ... or inside one, when the strip behind it changes this much more than the rest
 MOVES_LIKE, MOVES_MIN = 0.4, 5.0  # a part moving this much of what moves around the cam is not the cam
 LIVE_SD = 4.0  # a face that changes less than this over the scene is a picture of a face (HUD portrait)
 GAME_SD = 8.0  # half the picture changes at least this much over the scene: a game, a video, a walk
@@ -733,29 +734,66 @@ def _cut(rect: Rect, side: str, at: int) -> Rect:
     return x, y, at - x, h
 
 
+def _strip_ratio(maps: SceneMaps, rect: Rect, side: str, at: int) -> float:
+    """How much the strip of rect between `side` and the line `at` changes over time, against the rest."""
+    import numpy as np
+
+    x, y, w, h = rect
+    sd = maps.sd
+    part = {
+        "t": sd[y:at, x : x + w], "b": sd[at : y + h, x : x + w],
+        "l": sd[y : y + h, x:at], "r": sd[y : y + h, at : x + w],
+    }[side]  # type: ignore[index]  # fmt: skip
+    rx, ry, rw, rh = _cut(rect, side, at)
+    rest = sd[ry : ry + rh, rx : rx + rw]  # type: ignore[index]
+    if not part.size or not rest.size:
+        return 0.0
+    return float(np.median(part)) / max(float(np.median(rest)), 0.5)
+
+
 def _tighten(maps: SceneMaps, rect: Rect, face: Box) -> Rect:
     """rect without what does not belong to the webcam picture although steady edges enclose it:
     - a decorative frame: lines a few pixels inside three sides or more are the picture's edges (inside
       two when both are strong lines);
+    - a label or counter drawn along one side: a line a few pixels inside it, behind which the strip
+      changes far more than the webcam does (aidanbeans: 8 px of sub-goal text over the cam's top).
+      Peeled last: the new side must not set off another cut;
     - a bar, a sponsor block, a second camera attached to the cam: cut at a line right across the rectangle
       (within CHORD_DEEP of a side) when that line is as constant as drawn graphics, or when the
-      rectangle's own sides change there (a bar has borders of its own).
+      rectangle's own sides change there (a bar has borders of its own). Deeper than that the same
+      signs are the edge of a wall as often as a sponsor panel (infume, 247loltyler1, pobelter against
+      genburten): no cut.
     A line of the room (a shelf, the edge of a wall) is neither and stays inside. Tried and dropped on the
     labelled moments: peeling single lines near a side and cutting at drawn lines however deep (more
     panels too tight than bars removed). The rectangle only gets smaller here, never smaller than the
     face needs."""
     overlay_rects(maps)
     fwd, fht = face[2], face[3]
+
+    def thin(rect: Rect) -> dict[str, int]:
+        """Per side, a steady line a few pixels inside it (None for the others)."""
+        x, y, w, h = rect
+        at_side = {"t": y, "b": y + h, "l": x, "r": x + w}
+        out = {}
+        for side, (cov, at) in _chords(maps, rect, face).items():
+            size = h if side in "tb" else w
+            if at >= 0 and cov >= FRAME_LINE and abs(at - at_side[side]) <= max(14, 0.05 * size):
+                out[side] = at
+        return out
+
+    def cut_all(rect: Rect, todo: dict[str, int]) -> Rect:
+        for side, at in todo.items():
+            cut = _cut(rect, side, at)
+            if cut[2] >= 1.2 * fwd and cut[3] >= 1.2 * fht:
+                rect = cut
+        return rect
+
     for _ in range(6):
         x, y, w, h = rect
         at_side = {"t": y, "b": y + h, "l": x, "r": x + w}
         chords = _chords(maps, rect, face)
-        todo: dict[str, int] = {}
-        for side, (cov, at) in chords.items():
-            size = h if side in "tb" else w
-            if at >= 0 and cov >= FRAME_LINE and abs(at - at_side[side]) <= max(14, 0.05 * size):
-                todo[side] = at
-        pair = [k for k, at in todo.items() if chords[k][0] >= FRAME_PAIR]
+        todo = thin(rect)
+        pair = [k for k in todo if chords[k][0] >= FRAME_PAIR]
         if len(todo) < 3 and len(pair) >= 2:
             todo = {k: todo[k] for k in pair}
         elif len(todo) < 3:
@@ -768,15 +806,14 @@ def _tighten(maps: SceneMaps, rect: Rect, face: Box) -> Rect:
                 if cov >= CHORD_SURE or (jump is not None and jump >= SIDE_JUMP):
                     todo = {side: at}
                     break
-        new = rect
-        for side, at in todo.items():
-            cut = _cut(new, side, at)
-            if cut[2] >= 1.2 * fwd and cut[3] >= 1.2 * fht:
-                new = cut
+        new = cut_all(rect, todo)
         if new == rect:
             break
         rect = new
-    return rect
+    # Last, and with nothing cut after it: a strip of lettering along one side.
+    return cut_all(
+        rect, {k: at for k, at in thin(rect).items() if _strip_ratio(maps, rect, k, at) >= STRIP_BUSY}
+    )
 
 
 def rect_in_frames(frames: list[Path], rect: Rect, tau: float = EDGE_TAU) -> list[float]:
@@ -1067,10 +1104,17 @@ def room_rectangle(maps: SceneMaps, rect: Rect) -> bool:
     ratio = inside / max(_around(maps, rect), 0.5)
     if not ROOM_ALIKE[0] < ratio < ROOM_ALIKE[1]:
         return False
-    known = next((r for r in overlay_rects(maps) if r.rect == rect), None)
+    overlay_rects(maps)
+    cv, chz = maps._lines  # type: ignore[attr-defined]
     fw, fh = maps.size
+    # The rectangle's own sides, as it is now: one that was tightened or trimmed is in no list, and
+    # counted as 'room' for that alone (pikabooirl's cam, a cam of grandpoobear's grid).
+    cov = (
+        float(cv[y + h, x] - cv[y, x]) / h, float(cv[y + h, x + w] - cv[y, x + w]) / h,
+        float(chz[y, x + w] - chz[y, x]) / w, float(chz[y + h, x + w] - chz[y + h, x]) / w,
+    )  # fmt: skip
     at_frame = (x == 0, x + w == fw, y == 0, y + h == fh)
-    return known is None or any(c < ROOM_SIDE for c, e in zip(known.cov, at_frame, strict=True) if not e)
+    return any(c < ROOM_SIDE for c, e in zip(cov, at_frame, strict=True) if not e)
 
 
 def scene_spread(maps: SceneMaps) -> float:
