@@ -421,3 +421,4 @@ h1{font-size:clamp(2rem,1.4rem + 2.6vw,3.25rem)}
 @media (max-width:760px){.savebar{bottom:calc(84px + env(safe-area-inset-bottom,0px))}}
 .choice.sm.off:not([aria-pressed="true"]){opacity:.55}
 .choice.sm.off:hover{opacity:1}
+.srcrow .field .seg{justify-self:start;max-width:100%}
