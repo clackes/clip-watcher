@@ -8,6 +8,8 @@
 //   --concurrency <n>    browser tabs rendering in parallel (default: all cores)
 //   --debug <file>       also write every frame's scene (positions, scales, colours) as JSON lines
 //   --all-frames         render blank frames too (the frame-by-frame harness checks them)
+//   --scene-only         no pictures: every frame is laid out and its scene written (--debug), nothing is
+//                        drawn (the frame checks' phase sweep reads positions, scales and colours only)
 //   --gl <backend>       Chromium GL backend (angle, swangle, ...), default: Remotion's
 import { openBrowser, renderFrames, selectComposition } from "@remotion/renderer";
 import fs from "node:fs";
@@ -43,6 +45,8 @@ try {
 }
 const concurrency = Math.max(1, Math.min(os.cpus().length, Number(opt("concurrency", os.cpus().length))));
 const debugFile = opt("debug", null);
+const sceneOnly = flag("scene-only");
+if (sceneOnly && !debugFile) fail("--scene-only needs --debug <file>", 2);
 const gl = opt("gl", null);
 const chromiumOptions = gl ? { gl } : {};
 const name = (f) => `${String(f).padStart(6, "0")}.png`;
@@ -72,7 +76,7 @@ try {
   const frames = [];
   let firstBlank = -1;
   for (let f = 0; f < total; f++) {
-    if (flag("all-frames") || busy(f)) frames.push(f);
+    if (flag("all-frames") || sceneOnly || busy(f)) frames.push(f);
     else if (firstBlank < 0) firstBlank = f;
   }
   if (firstBlank >= 0) frames.push(firstBlank);
@@ -88,26 +92,28 @@ try {
       inputProps,
       outputDir: null,
       frames,
-      imageFormat: "png",
+      imageFormat: sceneOnly ? "none" : "png",
       concurrency: Math.min(concurrency, frames.length),
       puppeteerInstance: browser,
       chromiumOptions,
       logLevel: "error",
       onStart: () => {},
       onFrameUpdate: () => {},
-      onFrameBuffer: (buffer, frame) => {
-        written.add(frame);
-        writes.push(fs.promises.writeFile(path.join(outDir, name(frame)), buffer));
-      },
+      onFrameBuffer: sceneOnly
+        ? undefined
+        : (buffer, frame) => {
+            written.add(frame);
+            writes.push(fs.promises.writeFile(path.join(outDir, name(frame)), buffer));
+          },
       onBrowserLog: (log) => {
         if (debug && log.text.startsWith(DEBUG_TAG)) debug.write(`${log.text.slice(DEBUG_TAG.length)}\n`);
       },
     });
   }
   await Promise.all(writes);
-  for (const f of frames) if (!written.has(f)) throw new Error(`frame ${f} was not rendered`);
+  if (!sceneOnly) for (const f of frames) if (!written.has(f)) throw new Error(`frame ${f} was not rendered`);
   let blank = 0;
-  if (firstBlank >= 0) {
+  if (firstBlank >= 0 && !sceneOnly) {
     const src = path.join(outDir, name(firstBlank));
     for (let f = 0; f < total; f++) {
       if (written.has(f)) continue;

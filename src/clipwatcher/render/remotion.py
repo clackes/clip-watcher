@@ -509,8 +509,10 @@ def build_props(
 def render_props(
     props: dict, out_dir: Path, *, y: int, debug: Path | None = None, all_frames: bool = False,
     concurrency: int | None = None, timeout_s: float | None = None, bundle: Path | None = None,
+    scene_only: bool = False,
 ) -> Overlay:  # fmt: skip
-    """Render props to a PNG sequence in out_dir. Raises RemotionError on any failure."""
+    """Render props to a PNG sequence in out_dir. Raises RemotionError on any failure. scene_only: lay
+    every frame out and write its scene to `debug`, draw nothing (no PNGs; for the frame checks)."""
     bundle = ensure_bundle(bundle)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -532,6 +534,8 @@ def render_props(
         cmd += ["--debug", str(debug)]
     if all_frames:
         cmd += ["--all-frames"]
+    if scene_only:
+        cmd += ["--scene-only"]
     t0 = time.monotonic()
     try:
         r = subprocess.run(
@@ -551,7 +555,8 @@ def render_props(
         why = (res or {}).get("error") or r.stderr[-1500:] or r.stdout[-1500:]
         raise RemotionError(f"render failed ({r.returncode}): {why}")
     n = int(res["frames"])
-    if n != props["durationInFrames"] or not (out_dir / f"{n - 1:06d}.png").is_file():
+    drawn = scene_only or (out_dir / f"{n - 1:06d}.png").is_file()
+    if n != props["durationInFrames"] or not drawn:
         raise RemotionError(f"render incomplete: {n} frames reported, {props['durationInFrames']} wanted")
     return Overlay(
         dir=out_dir, pattern=res["pattern"], fps=float(props["fps"]), frames=n, width=int(res["width"]),

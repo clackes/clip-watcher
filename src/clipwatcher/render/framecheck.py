@@ -23,6 +23,9 @@ Checks, per frame unless noted:
   font             (per case) all glyphs come from the bundled fonts; drawn widths match the font file
   contrast         every fill against the pixels right next to it, composited over adversarial backgrounds
   fps_match        (per 30/60 pair) both frame rates show the same motion
+  phase sweep      (run_sweep, --phases) all of the above again with the words moved by fractions of a frame:
+                   a fixture tests the instants its word times happen to fall on, and a change that is spread
+                   over three frames at one of them can land in a single frame at another
   deterministic    (per case, optional) a second render gives byte-identical frames
   composite        (per case, optional) ffmpeg's composite equals the exact composite on every frame
 
@@ -41,7 +44,7 @@ import subprocess
 import sys
 import time
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from clipwatcher import config
@@ -70,6 +73,22 @@ class Fixture:
 
     def word_list(self) -> list[Word]:
         return [Word(s, e, t) for s, e, t in self.words]
+
+    def shifted(self, phase: float, fps: float = 30.0) -> Fixture:
+        """The same talk `phase` of a frame later (a frame at `fps`): every word, beat and action label
+        keeps its length and its distance to the others, and all of them fall on other instants of the
+        frame. The clip is one frame longer, so nothing is cut off that was not before."""
+        if not phase:
+            return self
+        d = phase / fps
+        return replace(
+            self,
+            name=f"{self.name}+{phase:g}",
+            dur=round(self.dur + 1.0 / fps, 4),
+            words=tuple((round(s + d, 4), round(e + d, 4), t) for s, e, t in self.words),
+            beats=tuple((round(b[0] + d, 4), *b[1:]) for b in self.beats),
+            actions=tuple((round(a[0] + d, 4), round(a[1] + d, 4), *a[2:]) for a in self.actions),
+        )
 
 
 def _seq(t0: float, step: float, text: str, gap: float = 0.0) -> tuple[tuple[float, float, str], ...]:
@@ -173,6 +192,11 @@ FIXTURES: dict[str, Fixture] = {
 }
 QUICK = ("short", "single", "empty")
 FULL = ("mix", "fast", "overlap", "single", "empty", "long", "tall", "shouts")
+# The phase sweep: the words moved by these fractions of a frame at SWEEP_FPS (a quarter of a frame at
+# 30 fps is half a frame at 60), on the fixtures with the fastest talk.
+PHASES = (0.0, 0.25, 0.5, 0.75)
+SWEEP = ("shouts",)
+SWEEP_FPS = 30.0
 
 
 def pseudo_transcript(dur: float, seed: int = 7) -> list[Word]:
@@ -1091,11 +1115,13 @@ def run_case(
     template: str, fixture: Fixture | str, fps: float, work: Path, *, colors: str = "fixed",
     synth: tuple[str, ...] = SYNTH, own_colours: bool = True, deterministic: bool = False,
     composite_check: bool = False, keep: bool = False, bg_video=None, words: list[Word] | None = None,
-    dur: float | None = None, box_kind: str | None = None, params: dict | None = None,
+    dur: float | None = None, box_kind: str | None = None, params: dict | None = None, pixels: bool = True,
 ) -> tuple[CaseResult, dict[int, dict]]:  # fmt: skip
     """Render one case with every frame kept and check it. colors "fixed" checks contrast over the
     synthetic backgrounds; "auto" needs bg_video = (label, Background, fn(frame) -> pixels) and checks
-    contrast over that. Returns the result and the per-frame scene records (for fps pairs)."""
+    contrast over that. pixels=False draws nothing: every frame is laid out and only the checks that read
+    the scene run (plan, highlight, layout, jump, flash, lifetime), in a fraction of the time. Returns the
+    result and the per-frame scene records (for fps pairs)."""
     fx = FIXTURES[fixture] if isinstance(fixture, str) else fixture
     wl = words if words is not None else fx.word_list()
     dur = dur if dur is not None else fx.dur
@@ -1114,7 +1140,9 @@ def run_case(
     out = work / "frames"
     shutil.rmtree(out, ignore_errors=True)
     t0 = time.monotonic()
-    ov = rm.render_props(props, out, y=box.y0 - PAD, debug=work / "scene.jsonl", all_frames=True)
+    ov = rm.render_props(
+        props, out, y=box.y0 - PAD, debug=work / "scene.jsonl", all_frames=True, scene_only=not pixels
+    )
     res.render_s = time.monotonic() - t0
     n = ov.frames
     res.frames = n
@@ -1123,9 +1151,11 @@ def run_case(
     check_layout(res, init, P, props)
     check_plan_frames(res, plan, P, frames, n, fps)
     check_highlight(res, plan, frames, fps)
-    hashes = check_geometry(res, plan, P, props, frames, out, n, fps)
+    hashes = check_geometry(res, plan, P, props, frames, out, n, fps) if pixels else {}
     check_continuity(res, frames, n, fps)
-    if bg_video:
+    if not pixels:
+        res.stats["scene_only"] = 1
+    elif bg_video:
         check_contrast(
             res, frames, out, n, [(bg_video[0], lambda f, y0, y1, x0, x1: bg_video[2](f)[y0:y1, x0:x1])]
         )
@@ -1139,7 +1169,7 @@ def run_case(
             res, frames, out, n,
             [(k, (lambda f, y0, y1, x0, x1, k=k: background(k, f, y1 - y0, x1 - x0, y0, x0))) for k in kinds],
         )  # fmt: skip
-    if deterministic:
+    if deterministic and pixels:
         again = work / "frames2"
         shutil.rmtree(again, ignore_errors=True)
         rm.render_props(props, again, y=box.y0 - PAD, all_frames=True)
@@ -1148,7 +1178,7 @@ def run_case(
             if hashlib.sha1(load_frame(again, f).tobytes()).hexdigest() != hashes.get(f):
                 res.fail("deterministic", f"frame {f} differs between two renders of the same props")
         shutil.rmtree(again, ignore_errors=True)
-    if composite_check:
+    if composite_check and pixels:
         check_composite(res, ov, work, n, fps)
     res.stats.pop("_pages", None)
     res.stats["plan_pages"] = len(plan.pages)
@@ -1256,11 +1286,72 @@ def run_template(
     return out
 
 
+def run_sweep(
+    template: str,
+    work: Path,
+    *,
+    fixtures=SWEEP,
+    phases=PHASES,
+    fps_list=(SWEEP_FPS,),
+    pixels: bool = True,
+    keep: bool = False,
+) -> list[CaseResult]:
+    """The phase sweep for one template: every fixture again with its words moved by each of `phases` (a
+    fraction of a frame at SWEEP_FPS), so every start, end and turn of the motion is sampled at several
+    instants of the frame. A motion that is one function of time passes at all of them or has a change
+    that fits into a single frame. With both 30 and 60 in fps_list the two are compared at every phase."""
+    out: list[CaseResult] = []
+    for fx in fixtures:
+        for ph in phases:
+            case = FIXTURES[fx].shifted(ph, SWEEP_FPS)
+            recs = {}
+            for fps in fps_list:
+                res, frames = run_case(
+                    template,
+                    case,
+                    fps,
+                    Path(work) / f"{template}-{case.name}-{fps:g}",
+                    pixels=pixels,
+                    keep=keep,
+                )
+                res.stats["phase"] = ph
+                recs[fps] = (res, frames)
+                out.append(res)
+            if 30.0 in recs and 60.0 in recs:
+                check_fps_pair(recs[30.0][0], recs[30.0][1], recs[60.0][1], recs[30.0][0].frames)
+    return out
+
+
+def parse_phases(text: str) -> tuple[float, ...]:
+    """ "4" -> four phases evenly over the frame (0, 0.25, 0.5, 0.75); "0,0.3,0.9" -> those."""
+    parts = [x for x in text.split(",") if x.strip()]
+    if len(parts) == 1 and float(parts[0]) >= 1:
+        n = int(float(parts[0]))
+        return tuple(round(i / n, 6) for i in range(n))
+    out = tuple(float(x) for x in parts)
+    if not out or any(not 0 <= x < 1 for x in out):
+        raise ValueError(f"phases are fractions of a frame, 0 <= phase < 1: {text!r}")
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Frame-by-frame checks of the Remotion caption templates.")
     ap.add_argument("--templates", default="all", help="comma-separated names, or all")
-    ap.add_argument("--fixtures", default="full", help="quick | full | comma-separated fixture names")
-    ap.add_argument("--fps", default="30,60")
+    ap.add_argument(
+        "--fixtures", default=None, help="quick | full | comma-separated fixture names (default: full)"
+    )
+    ap.add_argument("--fps", default=None, help="frame rates (default 30,60; the phase sweep: 30)")
+    ap.add_argument(
+        "--phases",
+        help="the phase sweep instead of the plain run: the words moved by these fractions of a 30 fps "
+        "frame (0,0.25,0.5,0.75), or a count (8 = eight phases evenly over the frame); fixtures default "
+        f"to {','.join(SWEEP)}",
+    )
+    ap.add_argument(
+        "--scene-only",
+        action="store_true",
+        help="draw nothing: only the checks that read the scene (plan, highlight, jump, flash, lifetime)",
+    )
     ap.add_argument("--work", required=True, help="scratch folder for frames")
     ap.add_argument("--report", help="write a JSON report here")
     ap.add_argument("--keep", action="store_true", help="keep the rendered frames")
@@ -1273,14 +1364,28 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Remotion is not set up: {why}", file=sys.stderr)
         return 2
     names = rm.templates() if a.templates == "all" else a.templates.split(",")
-    fixtures = {"quick": QUICK, "full": FULL}.get(a.fixtures) or tuple(a.fixtures.split(","))
-    fps_list = tuple(float(x) for x in a.fps.split(","))
+    phases = parse_phases(a.phases) if a.phases else None
+    named = a.fixtures or ("sweep" if phases else "full")
+    fixtures = {"quick": QUICK, "full": FULL, "sweep": SWEEP}.get(named) or tuple(named.split(","))
+    fps_list = tuple(float(x) for x in (a.fps or ("30" if phases else "30,60")).split(","))
     results: list[CaseResult] = []
     for name in names:
         t0 = time.monotonic()
-        rs = run_template(
-            name, Path(a.work), fixtures=fixtures, fps_list=fps_list, extras=not a.no_extras, keep=a.keep
-        )
+        if phases:
+            rs = run_sweep(
+                name, Path(a.work), fixtures=fixtures, phases=phases, fps_list=fps_list,
+                pixels=not a.scene_only, keep=a.keep,
+            )  # fmt: skip
+        elif a.scene_only:
+            rs = [
+                run_case(name, fx, fps, Path(a.work) / f"{name}-{fx}-{fps:g}", pixels=False)[0]
+                for fx in fixtures
+                for fps in fps_list
+            ]
+        else:
+            rs = run_template(
+                name, Path(a.work), fixtures=fixtures, fps_list=fps_list, extras=not a.no_extras, keep=a.keep
+            )
         results += rs
         bad = [r for r in rs if not r.ok]
         print(
@@ -1294,6 +1399,8 @@ def main(argv: list[str] | None = None) -> int:
         "checks": sum(r.total_checks for r in results),
         "failures": sum(r.total_fails for r in results),
     }
+    if phases:
+        total["phases"] = list(phases)
     print(json.dumps(total))
     if a.report:
         Path(a.report).write_text(

@@ -43,10 +43,14 @@ def _ramp(x: float) -> float:
     return min(1.0, max(0.0, x))
 
 
-def _plan_and_frames(fps: float = 30.0):
-    """A plan and the scene records a correct renderer would report for it (boxes made up, timing exact)."""
+def _plan_and_frames(fps: float = 30.0, shift: float = 0.0, grow=None):
+    """A plan and the scene records a correct renderer would report for it (boxes made up, timing exact).
+    shift: the words that much later; grow(seconds since the word began) -> how much bigger the spoken word
+    is (default: a tenth of a second up to 12 %)."""
     P = rm.load_template("punch")
-    words = [Word(*w) for w in fc._seq(0.2, 0.3, "one two three")] + [Word(2.0, 2.4, "four")]
+    said = [*fc._seq(0.2, 0.3, "one two three"), (2.0, 2.4, "four")]
+    words = [Word(a + shift, b + shift, t) for a, b, t in said]
+    grow = grow or (lambda since: 0.12 * _ramp(since / 0.1))
     pl = rm_plan.plan(words, 3.0, P, box_w=900, box_h=190)
     n = round(3.0 * fps)
     frames = {}
@@ -63,8 +67,8 @@ def _plan_and_frames(fps: float = 30.0):
                         "em": 0,
                         "a": 1 if w.start <= T < w.active_end else 0, "m": [1, 0, 0, 1, 0, 0],
                         "fg": ["#FFFFFF"],
-                        # the spoken word grows, easing in and out over a tenth of a second
-                        "sc": 1 + 0.12 * _ramp((T - w.start) / 0.1) * _ramp((w.active_end + 0.1 - T) / 0.1),
+                        # the spoken word grows, and eases out over a tenth of a second
+                        "sc": 1 + grow(T - w.start) * _ramp((w.active_end + 0.1 - T) / 0.1),
                         "rot": 0.0, "z": 0, "box": [200.0 + 220 * i, 100.0, 180.0, 70.0], "clip": None,
                         "halo": 9.0, "reach": 12.0,
                     }
@@ -168,6 +172,49 @@ def test_jumps_and_flashes_are_caught_and_smooth_motion_is_not():
     assert snap.fail_count["jump"] >= 1  # a colour that changes in a single frame
     buzz = moved(lambda u, k: u.__setitem__("rot", 6.0 if k % 2 else -6.0))
     assert buzz.fail_count["flash"] >= 3  # 15 Hz at 30 fps is flicker, not a shake
+
+
+def test_a_fixture_moved_by_part_of_a_frame_is_the_same_talk():
+    fx = fc.FIXTURES["mix"]
+    assert fx.shifted(0) is fx
+    moved, d = fx.shifted(0.25), 0.25 / 30
+    assert moved.name == "mix+0.25" and moved.box == fx.box
+    assert moved.dur == pytest.approx(fx.dur + 1 / 30, abs=1e-4)  # nothing is cut off at the end
+    for (s0, e0, t0), (s1, e1, t1) in zip(fx.words, moved.words, strict=True):
+        assert t0 == t1 and s1 - s0 == pytest.approx(d, abs=1e-4) and e1 - e0 == pytest.approx(d, abs=1e-4)
+    assert (
+        moved.beats[0][0] - fx.beats[0][0] == pytest.approx(d, abs=1e-4)
+        and moved.beats[0][1:] == fx.beats[0][1:]
+    )
+    assert moved.actions[0][1] - fx.actions[0][1] == pytest.approx(d, abs=1e-4)
+    assert moved.actions[0][2] == fx.actions[0][2]
+    assert fc.parse_phases("4") == (0.0, 0.25, 0.5, 0.75) and fc.parse_phases("0,0.3") == (0.0, 0.3)
+    with pytest.raises(ValueError):
+        fc.parse_phases("0,1.5")
+    assert set(fc.SWEEP) <= set(fc.FULL) and fc.PHASES[0] == 0 and len(fc.PHASES) >= 4
+
+
+@pytest.mark.skipif(not HAVE_TEMPLATES, reason="no remotion/templates")
+def test_a_punch_that_fits_into_one_frame_is_caught_at_some_phases_only():
+    """Why the fixtures are swept through the frame: a pop that is at full size after a third of a tenth of
+    a second is spread over two frames when the word starts in the middle of a frame, and is all in one
+    frame when it starts just before a frame's instant. One phase says nothing about the others."""
+
+    def back(k):
+        return lambda x: 1 + (k + 1) * (x - 1) ** 3 + k * (x - 1) ** 2
+
+    def jumps(seconds: float, phase: float) -> int:
+        grow = lambda since: 0.2 * back(2.4)(_ramp(since / seconds))  # noqa: E731
+        _, _, frames, n, fps = _plan_and_frames(shift=phase / 30, grow=grow)
+        res = _result()
+        fc.check_continuity(res, frames, n, fps)
+        assert not res.fail_count.get("flash"), res.summary()
+        return res.fail_count.get("jump", 0)
+
+    phases = [i / 16 for i in range(16)]
+    snappy = [jumps(0.1, ph) for ph in phases]
+    assert any(snappy) and not all(snappy), snappy  # a true failure, and one that a single phase can miss
+    assert not any(jumps(0.16, ph) for ph in phases)  # the same pop given its time: fine wherever it starts
 
 
 def test_adversarial_backgrounds_are_deterministic_and_cover_the_cases():
@@ -283,6 +330,20 @@ def test_the_checks_catch_a_broken_template(change, check, tmp_path):
     P = rm._merge(rm.load_template("punch"), change)
     res, _ = fc.run_case("punch", "short", 30.0, tmp_path, params=P, own_colours=False)
     assert res.fail_count.get(check), f"{check} did not fire:\n{res.summary()}"
+
+
+@pytest.mark.parametrize(
+    "name", rm.templates() or [pytest.param("", marks=pytest.mark.skip(reason="no templates"))]
+)
+@render_test
+def test_every_phase_of_the_template(name, tmp_path):
+    """The phase sweep, the part that draws nothing: the fast talk of the sweep's fixtures at 30 fps with
+    its words moved by quarters of a frame, the plan and every position, scale, angle and colour of every
+    frame checked. (With pixels, more phases, more fixtures: framecheck --phases.)"""
+    results = fc.run_sweep(name, tmp_path, pixels=False)
+    bad = [r.summary() for r in results if not r.ok]
+    assert not bad, "\n".join(bad)
+    assert len(results) == len(fc.SWEEP) * len(fc.PHASES) and all(r.checks["jump"] > 500 for r in results)
 
 
 @render_test
