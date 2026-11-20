@@ -3,6 +3,7 @@ import pytest
 from clipwatcher import layout
 
 from .test_ts_readers import second_shown
+from .test_webcam_rect import H, W, near, parse, resolve_on, scene
 
 SCENES = [
     {"name": "gameplay", "facecam_rect": "520:231:0:500", "gameplay_rect": "1380:690:540:250"},
@@ -31,11 +32,27 @@ def test_streamer_level_rect_counts_as_a_scene():
 
 
 def test_resolve_new_scene_is_flagged(monkeypatch, tmp_path):
+    """A webcam nobody confirmed: rendered from its own rectangle, flagged auto-new for the operator."""
+    cam = (700, 40, 240, 136)
+    frames, (face,) = scene(tmp_path, [cam])
+    lay = resolve_on(monkeypatch, frames, lambda p: [face])
+    assert lay.source == "auto-new" and lay.has_webcam and near(parse(lay.cam), cam)
+    lay = resolve_on(monkeypatch, frames, lambda p: [])
+    assert lay.source == "no-face" and not lay.has_webcam
+    # Regression: a missed face on a streamer with a confirmed cam scene kept the full frame (tfue).
+    cfg = {"has_webcam": True, "facecam_rect": "240:136:700:40", "gameplay_rect": "712:356:0:92"}
+    lay = resolve_on(monkeypatch, frames, lambda p: [], cfg)
+    assert lay.source == "default-noface" and lay.has_webcam and lay.cam == "240:136:700:40"
+
+
+def test_no_way_to_read_rectangles_falls_back_to_the_face(monkeypatch, tmp_path):
+    """Too few frames (or no numpy): as before, a small steady face is a webcam cropped around the face."""
     from PIL import Image
 
     frame = tmp_path / "f.png"
     Image.new("RGB", (1920, 1080)).save(frame)
     monkeypatch.setattr(layout.config, "streamer", lambda n: {})
+    monkeypatch.setattr(layout.calibrate, "scene_frames", lambda m, d, w=None, n=24: [])
     monkeypatch.setattr(
         layout.calibrate, "sample_frames", lambda m, d, n, window=None: [(float(i), frame) for i in range(n)]
     )
@@ -43,7 +60,6 @@ def test_resolve_new_scene_is_flagged(monkeypatch, tmp_path):
     assert lay.source == "auto-new" and lay.has_webcam and lay.cam
     lay = layout.resolve(tmp_path / "x.mp4", "x", detector=lambda p: [])
     assert lay.source == "no-face" and not lay.has_webcam
-    # Regression: a missed face on a streamer with a confirmed cam scene kept the full frame (tfue).
     monkeypatch.setattr(
         layout.config, "streamer",
         lambda n: {"has_webcam": True, "facecam_rect": "494:220:0:180", "gameplay_rect": "1426:712:494:184"},
@@ -52,42 +68,41 @@ def test_resolve_new_scene_is_flagged(monkeypatch, tmp_path):
     assert lay.source == "default-noface" and lay.has_webcam and lay.cam == "494:220:0:180"
 
 
-def test_confirmed_no_webcam_streamer_skips_face_detection(monkeypatch, tmp_path):
-    """Regression: a GTA character's face was taken for a webcam on a no-cam Kick stream."""
-    monkeypatch.setattr(layout.config, "streamer", lambda n: {"has_webcam": False})
+def test_fixed_layout_skips_detection(monkeypatch, tmp_path):
+    """Regression: a GTA character's face was taken for a webcam on a no-cam Kick stream. `layout: fixed`
+    is the operator's word against the picture; has_webcam: false alone no longer is (kaicenat had a cam
+    on 20 Nov), it only keeps a bare face from becoming one
+    (test_has_webcam_false_does_not_stop_looking)."""
+    monkeypatch.setattr(layout.config, "streamer", lambda n: {"has_webcam": False, "layout": "fixed"})
 
     def boom(*a, **k):
         raise AssertionError("must not run detection")
 
     lay = layout.resolve(tmp_path / "x.mp4", "x", detector=boom)
     assert not lay.has_webcam and lay.source == "fixed"
+    cfg = {"layout": "fixed", "facecam_rect": "494:220:0:180", "gameplay_rect": "1426:712:494:184"}
+    monkeypatch.setattr(layout.config, "streamer", lambda n: cfg)
+    lay = layout.resolve(tmp_path / "x.mp4", "x", detector=boom)
+    assert lay.has_webcam and lay.cam == "494:220:0:180" and lay.source == "fixed"
 
 
 def test_two_webcams_pick_the_one_reacting_at_the_peak(monkeypatch, tmp_path):
     """Duo stream: the cam in the layout is the one of whoever makes the moment, not the bigger cluster."""
-    from PIL import Image, ImageDraw
+    left, right = (0, 300, 220, 124), (740, 300, 220, 124)
+    frames, faces = scene(tmp_path, [left, right])
+    seen = {}
 
-    still = tmp_path / "still.png"
-    Image.new("RGB", (1920, 1080), (40, 40, 40)).save(still)
-    peak = []
-    for i in range(6):  # right face (1700,100) flickers around the peak, left face (100,600) stays still
-        f = tmp_path / f"p{i}.png"
-        im = Image.new("RGB", (1920, 1080), (40, 40, 40))
-        ImageDraw.Draw(im).rectangle([1700, 100, 1790, 200], fill=(255, 255, 255) if i % 2 else (0, 0, 0))
-        im.save(f)
-        peak.append((float(i), f))
-    monkeypatch.setattr(layout.config, "streamer", lambda n: {})
-    monkeypatch.setattr(
-        layout.calibrate, "sample_frames", lambda m, d, n, window=None: [(float(i), still) for i in range(n)]
-    )
-    monkeypatch.setattr(layout.calibrate, "frames_at", lambda m, d, ts, height=None: peak)
-    faces = [(100.0, 600.0, 90.0, 100.0), (1700.0, 100.0, 90.0, 100.0)]
-    lay = layout.resolve(tmp_path / "x.mp4", "x", detector=lambda p: faces, peak_s=10.0)
-    assert lay.source == "multi-cam"
-    w, h, x, y = (int(v) for v in lay.cam.split(":"))
-    assert x <= 1745 <= x + w and y <= 150 <= y + h  # the moving face's cam
-    # without a peak the old behaviour: largest/first cluster
-    assert layout.resolve(tmp_path / "x.mp4", "x", detector=lambda p: faces).source == "auto-new"
+    def moving(media, fs, fw, fh, peak, hint, td):  # stands in for the motion measure at the peak
+        seen["faces"] = len(fs)
+        return max(fs, key=lambda f: f[0])  # the right-hand one
+
+    monkeypatch.setattr(layout, "reacting_face", moving)
+    lay = resolve_on(monkeypatch, frames, lambda p: faces, peak_s=5.0)
+    assert lay.source == "multi-cam" and seen["faces"] == 2 and near(parse(lay.cam), right)
+    gx, _gy, gw, _gh = parse(lay.game)
+    assert gx >= left[2] and gx + gw <= right[0]  # the gameplay between the two cams (owner, 17 Nov)
+    # without a peak or a hint: the most seen
+    assert resolve_on(monkeypatch, frames, lambda p: faces).source == "multi-cam"
 
 
 def test_still_object_next_to_the_face_is_not_the_cam(monkeypatch, tmp_path):
@@ -179,3 +194,117 @@ def test_resolve_looks_at_the_moment_not_at_the_whole_recording(synth_src, monke
     seen.clear()  # no moment given (calibration): the whole media, as before
     layout.resolve(synth_src, "x", detector=detector)
     assert len(seen) == 4 and min(seen) < 5 and max(seen) > 15
+
+
+# --------------------------------------------------------------------------- the 20 Nov live check
+def test_a_camera_that_is_the_picture_is_full_camera_not_cams(tmp_path, monkeypatch):
+    """nagzz / kaneljoseph / yurnboi: a full-screen camera (one person or several) became 'multi-cam'
+    with a tight crop of one face on top and the same room below."""
+    frames, _ = scene(tmp_path, [(0, 0, W, H)], game=False)
+    people = [(200, 150, 60, 66), (460, 140, 62, 70), (700, 160, 58, 64)]
+    lay = resolve_on(monkeypatch, frames, lambda p: people, peak_s=5.0)
+    assert not lay.has_webcam and lay.source == "fullcam" and lay.as_render_kwargs()["reframe"]
+
+
+def test_a_portrait_in_a_hud_box_is_not_a_webcam(tmp_path, monkeypatch):
+    """faide (Apex): faces 'seen' now and then inside a HUD rectangle whose inside never rests."""
+    box = (30, 30, 150, 120)
+    frames, _ = scene(tmp_path, stills=[box])
+    lay = resolve_on(monkeypatch, frames, lambda p: [(30 + 50, 30 + 30, 50, 60)], peak_s=5.0)
+    assert not lay.has_webcam
+
+
+def test_resolve_uses_the_rectangle_in_the_picture_not_the_confirmed_one(tmp_path, monkeypatch):
+    """zackrawrr, clix, tfue, ishowspeed on 20 Nov: every confirmed facecam_rect was somewhere else than
+    the cam that day. A face found: the cam's own rectangle. No face found (tfue sits in profile): the
+    stale rect showed the bottom of the cam and a strip of game; now the rectangle that looks like a cam."""
+    cam = (0, 0, 220, 124)
+    stale = {"has_webcam": True, "facecam_rect": "248:110:0:90", "gameplay_rect": "712:356:248:92"}
+    frames, (face,) = scene(tmp_path, [cam])
+    lay = resolve_on(monkeypatch, frames, lambda p: [face], stale, peak_s=5.0)
+    assert lay.has_webcam and lay.source == "auto-new" and near(parse(lay.cam), cam)
+    lay = resolve_on(monkeypatch, frames, lambda p: [], stale, peak_s=5.0)
+    assert lay.has_webcam and lay.source == "default-noface" and near(parse(lay.cam), cam)
+    # a confirmed rect the picture still shows keeps its scene name and its gameplay_rect
+    right = {"has_webcam": True, "facecam_rect": "220:124:0:0", "gameplay_rect": "712:356:248:92"}
+    lay = resolve_on(monkeypatch, frames, lambda p: [face], right, peak_s=5.0)
+    assert lay.source == "scene:default" and lay.game == right["gameplay_rect"]
+    lay = resolve_on(monkeypatch, frames, lambda p: [], right, peak_s=5.0)
+    assert lay.source == "default-noface" and lay.cam == right["facecam_rect"]
+
+
+def test_has_webcam_false_does_not_stop_looking(tmp_path, monkeypatch):
+    """kaicenat: 'has_webcam: false' in streamers.yaml, a webcam on screen: every clip lost him. A face
+    alone is still no cam for such a streamer (the GTA character the rule was written for)."""
+    cam = (0, 216, 196, 110)
+    frames, (face,) = scene(tmp_path, [cam])
+    lay = resolve_on(monkeypatch, frames, lambda p: [face], {"has_webcam": False}, peak_s=5.0)
+    assert lay.has_webcam and near(parse(lay.cam), cam)
+    game_only, _ = scene(tmp_path, [], seed=9)
+    character = (420, 160, 150, 160)
+    lay = resolve_on(monkeypatch, game_only, lambda p: [character], {"has_webcam": False}, peak_s=5.0)
+    assert not lay.has_webcam and lay.source == "fixed"
+
+
+def test_a_face_of_the_game_is_not_taken_while_the_cams_own_face_is_found_by_looking_closer(
+    tmp_path, monkeypatch
+):
+    """kaicenat / clix / tfue, GTA VI cutscenes: the character's close-up was the only face the full-frame
+    pass saw (the cam's face is small and dark) and the Short became a 'full-screen camera' on the
+    character. The rectangle that looks like a webcam is enlarged and searched: the face is there."""
+    cam = (0, 216, 196, 110)
+    frames, (face,) = scene(tmp_path, [cam])
+    character = (420, 120, 170, 180)
+
+    def detector(p):
+        if p.name.startswith("zoom_"):  # the enlarged cam: its face is found (in the crop's own pixels)
+            return [(250.0, 90.0, 140.0, 150.0)]
+        return [character] if int(p.stem[-2:]) % 2 else []
+
+    lay = resolve_on(monkeypatch, frames, detector, peak_s=5.0)
+    assert lay.has_webcam and near(parse(lay.cam), cam)
+    # and with no webcam at all a face that comes and goes is nobody's webcam
+    game_only, _ = scene(tmp_path, [], seed=11)
+    lay = resolve_on(monkeypatch, game_only, lambda p: [character] if int(p.stem[-2:]) % 3 == 0 else [])
+    assert not lay.has_webcam
+
+
+def test_the_streamers_cam_is_the_large_one_not_the_cam_inside_what_they_watch(tmp_path, monkeypatch):
+    """coopertv / nattynattlol: a small webcam inside the watched stream moved more and was chosen."""
+    own, other = (0, 0, 260, 180), (560, 300, 130, 74)
+    frames, faces = scene(tmp_path, [own, other])
+    lay = resolve_on(monkeypatch, frames, lambda p: faces, peak_s=5.0)
+    assert lay.source == "multi-cam" and near(parse(lay.cam), own)
+    gx, gy, gw, gh = parse(lay.game)
+    assert gx >= own[0] + own[2] and gh >= 0.95 * H  # the gameplay crop: full height, beside the cam
+
+
+def test_a_cut_out_streamer_over_the_game_gets_a_crop_around_them(tmp_path, monkeypatch):
+    """trymacs / w33haa: green-screen cut-out, no rectangle. A big one was a 'full-screen camera'."""
+    frames, _ = scene(tmp_path, [])
+    person = (790, 300, 120, 130)  # in the corner, in every frame, the game moving around
+    moving = iter(range(10_000))
+
+    def detector(p):
+        k = next(moving) % 3
+        return [(person[0] + k, person[1] - k, person[2], person[3])]
+
+    from PIL import Image, ImageDraw
+
+    # the face itself has to change too: draw it
+    for i, p in enumerate(frames):
+        im = Image.open(p)
+        d = ImageDraw.Draw(im)
+        d.ellipse([person[0] + i % 5, person[1], person[0] + person[2] + i % 5, person[1] + person[3]],
+                  fill=(200 - 9 * i, 170, 150))  # fmt: skip
+        im.save(p)
+    lay = resolve_on(monkeypatch, frames, detector, peak_s=5.0)
+    assert lay.has_webcam and lay.source == "auto-new"
+    x, y, w, h = parse(lay.cam)
+    assert (
+        x <= person[0]
+        and x + w >= person[0] + person[2]
+        and y <= person[1]
+        and y + h >= person[1] + person[3]
+    )
+    assert abs(w / h - 1080 / 960) < 0.02 and x + w <= W and y + h <= H

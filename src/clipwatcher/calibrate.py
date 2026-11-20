@@ -373,6 +373,636 @@ def face_motion(frames: list[Path], face: Box, fw: int, pad: float = 0.5) -> flo
     return statistics.fmean(diffs) if diffs else 0.0
 
 
+# --------------------------------------------------------------------------- the webcam's own rectangle
+# A face says where the streamer is, not where the webcam picture ends. A box guessed from the face size
+# (facecam_from_face) cut wide cams down to the head, enlarging them 30 % more than needed, and reached
+# past small cams into the game. The overlay itself is found from what makes it an overlay: its border
+# stays on the same pixel rows and columns in every frame, while the picture on one or both sides changes.
+EDGE_TAU = 8.0  # luma step that counts as an edge in one frame
+SIDE_MIN = 0.45  # a side of the cam: an edge there in this share of (frames x its length)
+SIDE_SURE = 0.8  # ... a side that needs no other evidence
+SIDE_PART = 0.2  # ... and in every quarter of its length at least this (a line that stops halfway is none)
+CHORD_SURE = 0.93  # a line right across a larger rectangle splits it only when it is this constant ...
+CHORD_THIN = 0.22  # ... or cuts off no more than this share of it (a bar, a frame), else it is the room's
+CHORD_MIN = 0.7  # ... and even a thin cut needs a line this good
+MOVES_LIKE, MOVES_MIN = 0.4, 5.0  # a part moving this much of what moves around the cam is not the cam
+LIVE_SD = 4.0  # a face that changes less than this over the scene is a picture of a face (HUD portrait)
+GAME_SD = 8.0  # half the picture changes at least this much over the scene: a game, a video, a walk
+ROOM_SD = 4.0  # half the picture changes less than this: a camera in a room, a desktop
+ROOM_ALIKE = (0.6, 2.0)  # ... and a rectangle in it that lives this much of its surroundings is the room's
+ROOM_SIDE = 0.75  # ... when one of its sides is an edge in less than this share
+CAM_MAX_AREA = 0.55  # an "overlay" larger than this share of the frame is the picture itself (full camera)
+SCENE_FRAMES = 24
+CAM_MIN_W, CAM_MIN_H = 0.045, 0.05  # the smallest webcam looked for, as shares of the frame
+MAX_LINES = 90
+
+
+@dataclass
+class SceneMaps:
+    """What stays put over the frames of a scene. pv[y, b]: share of frames with a vertical edge on the
+    boundary left of pixel column b (b = 0 and b = W are the frame's own sides); ph[b, x] the same for the
+    boundary above pixel row b; sd[y, x]: how much the pixel changes over time (std of luma)."""
+
+    pv: object
+    ph: object
+    sd: object
+    n: int
+    active: Rect | None = None  # the picture without black bars that stay (a cutscene's letterbox)
+
+    @property
+    def size(self) -> tuple[int, int]:
+        return self.sd.shape[1], self.sd.shape[0]  # type: ignore[attr-defined]
+
+
+def scene_maps(frames: list[Path], tau: float = EDGE_TAU) -> SceneMaps | None:
+    """Edge persistence and temporal spread over frames of one scene (>= 4 frames, numpy needed)."""
+    try:
+        import numpy as np
+        from PIL import Image
+    except ImportError:
+        return None
+    pv = ph = s1 = s2 = None
+    n = 0
+    for p in frames:
+        with Image.open(p) as im:
+            a = np.asarray(im.convert("L"), dtype=np.float32)
+        h, w = a.shape
+        if s1 is None:
+            pv, ph = np.zeros((h, w + 1), np.float32), np.zeros((h + 1, w), np.float32)
+            s1, s2 = np.zeros((h, w), np.float64), np.zeros((h, w), np.float64)
+        elif a.shape != s1.shape:
+            continue
+        # an edge on a boundary = a step in both 2 px differences that straddle it (one frame's blur or
+        # ringing next to an edge does not count as a second edge)
+        gx = np.abs(a[:, 2:] - a[:, :-2])
+        pv[:, 2 : w - 1] += np.minimum(gx[:, :-1], gx[:, 1:]) > tau
+        gy = np.abs(a[2:, :] - a[:-2, :])
+        ph[2 : h - 1, :] += np.minimum(gy[:-1, :], gy[1:, :]) > tau
+        s1 += a
+        s2 += a * a
+        n += 1
+    if n < 4:
+        return None
+    sd = np.sqrt(np.maximum(s2 / n - (s1 / n) ** 2, 0.0)).astype(np.float32)
+    return SceneMaps(pv / n, ph / n, sd, n, _active_area(s1 / n, sd))
+
+
+def _active_area(mean, sd) -> Rect:
+    """The frame without rows / columns at its sides that are black in every frame (median along the
+    row, so a chat line or a logo drawn over a bar does not hide it). Bars of 8 px to a quarter of the
+    frame; anything else is picture."""
+    import numpy as np
+
+    h, w = mean.shape
+
+    def bars(dark) -> tuple[int, int]:
+        lead = int(np.argmin(dark)) if not dark.all() else 0
+        trail = int(np.argmin(dark[::-1])) if not dark.all() else 0
+        size = len(dark)
+        return (lead if 8 <= lead <= size // 4 else 0), (trail if 8 <= trail <= size // 4 else 0)
+
+    top, bot = bars((np.median(mean, axis=1) < 8) & (np.median(sd, axis=1) < 2))
+    left, right = bars((np.median(mean, axis=0) < 8) & (np.median(sd, axis=0) < 2))
+    return left, top, w - left - right, h - top - bot
+
+
+@dataclass
+class OverlayRect:
+    rect: Rect
+    cov: tuple[float, float, float, float]  # left, right, top, bottom: share of the side that is an edge
+    sure: int  # sides that are a frame side, a near-constant edge, or have the game beyond them
+    still: float  # change over time inside / in a ring around it (a webcam's room is stiller than a game)
+
+    @property
+    def score(self) -> float:
+        return min(self.cov)
+
+
+def _peaks(v, floor: float, radius: int = 3):
+    """Indices of local maxima of v that reach floor (one per radius)."""
+    import numpy as np
+
+    m = v >= floor
+    for k in range(1, radius + 1):
+        m &= (v >= np.roll(v, k)) & (v > np.roll(v, -k))
+    return np.flatnonzero(m)
+
+
+def overlay_rects(maps: SceneMaps) -> list[OverlayRect]:
+    """Every rectangle of the scene whose four sides are edges that stay put (sides of the frame count).
+
+    Webcam overlays are among them, so are HUD panels, bars, alerts and rectangles made of lines of the
+    streamer's room; cam_rect and cam_proposals choose. Computed once per scene (kept on maps)."""
+    import numpy as np
+
+    cached = getattr(maps, "_rects", None)
+    if cached is not None:
+        return cached
+    pv, ph, sd = maps.pv, maps.ph, maps.sd
+    fw, fh = maps.size
+    # dilate by one boundary: a soft border sits on one of two neighbouring boundaries from row to row
+    pv1 = np.maximum(pv, np.maximum(np.roll(pv, 1, axis=1), np.roll(pv, -1, axis=1)))
+    ph1 = np.maximum(ph, np.maximum(np.roll(ph, 1, axis=0), np.roll(ph, -1, axis=0)))
+    cv = np.vstack([np.zeros((1, fw + 1), np.float32), np.cumsum(pv1, axis=0, dtype=np.float32)])
+    chz = np.hstack([np.zeros((fh + 1, 1), np.float32), np.cumsum(ph1, axis=1, dtype=np.float32)])
+    ii = np.pad(np.cumsum(np.cumsum(sd, axis=0, dtype=np.float64), axis=1), ((1, 0), (1, 0)))
+    min_w, min_h = max(16, int(CAM_MIN_W * fw)), max(16, int(CAM_MIN_H * fh))
+
+    def area_mean(x0: float, y0: float, x1: float, y1: float) -> float | None:
+        x0, x1 = int(min(max(x0, 0), fw)), int(min(max(x1, 0), fw))
+        y0, y1 = int(min(max(y0, 0), fh)), int(min(max(y1, 0), fh))
+        if x1 - x0 < 2 or y1 - y0 < 2:
+            return None
+        return float(ii[y1, x1] - ii[y0, x1] - ii[y1, x0] + ii[y0, x0]) / ((x1 - x0) * (y1 - y0))
+
+    # columns that hold an edge over at least a small cam's height
+    run = (cv[min_h:] - cv[:-min_h]).max(axis=0) / min_h
+    cols = [int(b) for b in _peaks(run, SIDE_MIN) if 2 <= b <= fw - 2]
+    cols = sorted(sorted(cols, key=lambda b: -run[b])[:MAX_LINES])
+    cols = [0, *cols, fw]
+    out: list[OverlayRect] = []
+    pad = 5  # strips start this far from the line: the border's own blend is neither side
+    for i, left in enumerate(cols):
+        for right in cols[i + 1 :]:
+            cw = right - left
+            if cw < min_w:
+                continue
+            hc = (chz[:, right] - chz[:, left]) / cw  # every horizontal boundary over [left, right)
+            xq = [left + (cw * k) // 4 for k in range(5)]
+            part = np.min(
+                [(chz[:, xq[k + 1]] - chz[:, xq[k]]) / max(1, xq[k + 1] - xq[k]) for k in range(4)], axis=0
+            )
+            inner = _peaks(hc[1:fh], SIDE_MIN) + 1
+            rows = np.concatenate([[0], inner[part[inner] >= SIDE_PART], [fh]])
+            if len(rows) > MAX_LINES:
+                inner = rows[1:-1]
+                rows = np.concatenate([[0], np.sort(inner[np.argsort(-hc[inner])[: MAX_LINES - 2]]), [fh]])
+            tt, bb = np.meshgrid(rows, rows, indexing="ij")
+            ch = bb - tt
+            ok = (ch >= min_h) & (cw >= 0.45 * ch) & (cw <= 2.8 * ch)
+            if not ok.any():
+                continue
+            chs = np.maximum(ch, 1)
+            lc = np.ones_like(chs, np.float32) if left == 0 else (cv[bb, left] - cv[tt, left]) / chs
+            rc = np.ones_like(chs, np.float32) if right == fw else (cv[bb, right] - cv[tt, right]) / chs
+            ok &= (lc >= SIDE_MIN) & (rc >= SIDE_MIN)
+            for line in (left, right):  # no empty quarter on the vertical sides either
+                if line in (0, fw):
+                    continue
+                for k in range(4):
+                    y0, y1 = tt + (ch * k) // 4, tt + (ch * (k + 1)) // 4
+                    ok &= (cv[y1, line] - cv[y0, line]) >= SIDE_PART * np.maximum(y1 - y0, 1)
+            for a, b in zip(*np.nonzero(ok), strict=True):
+                top, bot = int(tt[a, b]), int(bb[a, b])
+                h = bot - top
+                cov = (
+                    float(lc[a, b]), float(rc[a, b]),
+                    1.0 if top == 0 else float(hc[top]), 1.0 if bot == fh else float(hc[bot]),
+                )  # fmt: skip
+                depth = max(8, int(0.08 * min(cw, h)))
+                strips = (  # (frame side?, coverage, inside strip, outside strip) per side
+                    (left == 0, cov[0], (left + pad, top, left + pad + depth, bot),
+                     (left - pad - depth, top, left - pad, bot)),
+                    (right == fw, cov[1], (right - pad - depth, top, right - pad, bot),
+                     (right + pad, top, right + pad + depth, bot)),
+                    (top == 0, cov[2], (left, top + pad, right, top + pad + depth),
+                     (left, top - pad - depth, right, top - pad)),
+                    (bot == fh, cov[3], (left, bot - pad - depth, right, bot - pad),
+                     (left, bot + pad, right, bot + pad + depth)),
+                )  # fmt: skip
+                sure = 0
+                for at_frame, c, inside, outside in strips:
+                    if at_frame or c >= SIDE_SURE:
+                        sure += 1
+                        continue
+                    i_, o_ = area_mean(*inside), area_mean(*outside)
+                    if i_ is not None and o_ is not None and max(i_, o_) >= 1.8 * min(i_, o_) + 3.0:
+                        sure += 1  # two pictures: one of them moves far more than the other
+                ring = max(12, int(0.12 * min(cw, h)))
+                whole = area_mean(left, top, right, bot) or 0.0
+                big = area_mean(left - ring, top - ring, right + ring, bot + ring) or 0.0
+                a_in = cw * h
+                a_big = (min(fw, right + ring) - max(0, left - ring)) * (
+                    min(fh, bot + ring) - max(0, top - ring)
+                )
+                around = (big * a_big - whole * a_in) / max(1, a_big - a_in)
+                out.append(OverlayRect((left, top, cw, h), cov, sure, whole / max(around, 0.5)))
+    maps._rects = out  # type: ignore[attr-defined]
+    return out
+
+
+def cam_rect(maps: SceneMaps, face: Box) -> tuple[Rect, float] | None:
+    """The overlay rectangle around a face: (x, y, w, h) of the webcam picture and how sure, or None.
+    Sure is above 0.5 when all four sides are sure, up to 0.5 when one of them is only a line.
+
+    Each side is an edge in most frames along the whole side and is either that in nearly all of them (a
+    graphic border, another cam, a bar), or the pictures on its two sides change very differently over
+    time (webcam and game). Of the rectangles like that around the face the smallest is the picture
+    (inside a decorative frame, without the bars attached to it), unless what makes it smaller is a line
+    of the room: a line that is no graphic edge and cuts a good part off a larger rectangle (the edge of
+    a wall behind the streamer). The frame's own sides count, so a camera that is the whole picture comes
+    back as (nearly) the whole frame: see is_overlay.
+    """
+    x, y, w, h = face
+    around: list[OverlayRect] = []
+    for r in overlay_rects(maps):
+        left, top, cw, ch = r.rect
+        right, bot = left + cw, top + ch
+        if left > x + 0.1 * w or right < x + 0.9 * w or top > y + 0.1 * h or bot < y + 0.9 * h:
+            continue  # the face is not inside (a chin or a forehead may be cut by the cam itself)
+        if cw < 1.2 * w or ch < 1.2 * h:
+            continue
+        if left < x - 9 * w or right > x + 10 * w or top < y - 6 * h or bot > y + 9 * h:
+            continue  # far too large for this face
+        around.append(r)
+    if not around:
+        return None
+    best = max(r.sure for r in around)
+    if best < 3:
+        return None
+    sure = sorted((r for r in around if r.sure == best), key=lambda r: r.rect[2] * r.rect[3])
+    pick = sure[0]
+    grown = True
+    while grown:
+        grown = False
+        for big in sure:
+            if big is not pick and _room_line_inside(maps, pick, big):
+                pick, grown = big, True
+                break
+    rect = _trim_moving(maps, pick.rect, face)
+    return rect, (0.5 + 0.5 * pick.score if pick.sure == 4 else 0.5 * pick.score)
+
+
+def _around(maps: SceneMaps, rect: Rect) -> float:
+    """How much the picture just outside rect changes over time (median of a ring around it)."""
+    import numpy as np
+
+    x, y, w, h = rect
+    d = max(16, int(0.15 * min(w, h)))
+    sd = maps.sd
+    ring = [
+        sd[max(0, y - d) : y, max(0, x - d) : x + w + d],  # type: ignore[index]
+        sd[y + h : y + h + d, max(0, x - d) : x + w + d],  # type: ignore[index]
+        sd[y : y + h, max(0, x - d) : x],  # type: ignore[index]
+        sd[y : y + h, x + w : x + w + d],  # type: ignore[index]
+    ]
+    ring = [r.ravel() for r in ring if r.size]
+    return float(np.median(np.concatenate(ring))) if ring else 0.0
+
+
+def _room_line_inside(maps: SceneMaps, small: OverlayRect, big: OverlayRect, tol: int = 3) -> bool:
+    """big holds small, and every side of small that lies inside big is a line of the room rather than
+    the cam's border: it is no graphic edge (not constant enough), what lies past it does not move like
+    the picture around the cam (a chat or a sponsor panel running under it does), and it either cuts a
+    good part off big (the edge of a wall) or is a poor line (a thin strip behind a good line is a bar or
+    a frame and stays out)."""
+    import numpy as np
+
+    sx, sy, sw, sh = small.rect
+    bx, by, bw, bh = big.rect
+    if sx < bx - tol or sy < by - tol or sx + sw > bx + bw + tol or sy + sh > by + bh + tol:
+        return False
+    cut = (  # per side: px it lies inside big, that as a share of big, small's coverage, the part cut off
+        (sx - bx, (sx - bx) / bw, small.cov[0], (bx, by, sx, by + bh)),
+        (bx + bw - sx - sw, (bx + bw - sx - sw) / bw, small.cov[1], (sx + sw, by, bx + bw, by + bh)),
+        (sy - by, (sy - by) / bh, small.cov[2], (bx, by, bx + bw, sy)),
+        (by + bh - sy - sh, (by + bh - sy - sh) / bh, small.cov[3], (bx, sy + sh, bx + bw, by + bh)),
+    )
+    inner = [c for c in cut if c[0] > tol]
+    if not inner:
+        return False
+    beyond = _around(maps, big.rect)
+    for _px, share, cov, (x0, y0, x1, y1) in inner:
+        if cov >= CHORD_SURE:
+            return False
+        part = maps.sd[max(0, y0) : y1, max(0, x0) : x1]  # type: ignore[index]
+        if part.size and beyond >= MOVES_MIN and float(np.median(part)) >= MOVES_LIKE * beyond:
+            return False  # what lies past this line moves like the picture around the cam
+        if share <= CHORD_THIN and cov >= CHORD_MIN:
+            return False  # a bar, a frame
+    return True
+
+
+def _trim_moving(maps: SceneMaps, rect: Rect, face: Box, most: float = 0.3) -> Rect:
+    """rect without the strips along its sides that move like the picture around it and far more than
+    the cam does: an info bar or alert drawn under the cam with no visible edge against a dark shirt.
+    Never past the face, never more than most of a side, never a side that is the frame's own."""
+    import numpy as np
+
+    fw, fh = maps.size
+    x, y, w, h = rect
+    beyond = _around(maps, rect)
+    sd = maps.sd[y : y + h, x : x + w]  # type: ignore[index]
+    calm = float(np.median(sd))
+    if beyond < MOVES_MIN or calm * 6 > beyond:
+        return rect  # nothing moves around the cam, or the cam moves about as much itself
+    rows, cols = np.median(sd, axis=1), np.median(sd, axis=0)
+    floor = max(MOVES_LIKE * beyond, 6 * calm)
+
+    def run(v) -> int:
+        n = 0
+        while n < len(v) and v[n] >= floor:
+            n += 1
+        return n
+
+    fx, fy, fw_, fh_ = face
+    top = min(run(rows), int(most * h), max(0, int(fy - y))) if y > 0 else 0
+    bot = min(run(rows[::-1]), int(most * h), max(0, int(y + h - fy - fh_))) if y + h < fh else 0
+    left = min(run(cols), int(most * w), max(0, int(fx - x))) if x > 0 else 0
+    right = min(run(cols[::-1]), int(most * w), max(0, int(x + w - fx - fw_))) if x + w < fw else 0
+    top, bot, left, right = (v if v >= 6 else 0 for v in (top, bot, left, right))
+    return x + left, y + top, w - left - right, h - top - bot
+
+
+def face_alive(maps: SceneMaps, face: Box) -> bool:
+    """The face moves over the scene (a webcam, a video), unlike a portrait in a HUD or a drawing."""
+    x, y, w, h = (int(v) for v in face)
+    part = maps.sd[max(0, y) : y + h, max(0, x) : x + w]  # type: ignore[index]
+    return bool(part.size) and float(part.mean()) >= LIVE_SD
+
+
+def room_rectangle(maps: SceneMaps, rect: Rect) -> bool:
+    """rect is a rectangle of the room a full-screen camera shows (a doorway, a window, the top of a
+    lower third with a studio wall), not an overlay: the whole picture is as still as a room, the inside
+    of the rectangle lives about as much as what is around it (a webcam over a desktop is camera noise
+    against dead-still graphics, over a game it is the calm part), and one of its sides is a poor line
+    (a doorway, the edge of a studio wall; an overlay's four sides are drawn, hasanabi's cam over a paused
+    video: 0.8 and more, the cams of a talk show's grid: 0.93 and more)."""
+    import numpy as np
+
+    if float(np.median(maps.sd)) >= ROOM_SD:  # type: ignore[call-overload]
+        return False
+    x, y, w, h = rect
+    inside = float(np.median(maps.sd[y : y + h, x : x + w]))  # type: ignore[index]
+    ratio = inside / max(_around(maps, rect), 0.5)
+    if not ROOM_ALIKE[0] < ratio < ROOM_ALIKE[1]:
+        return False
+    known = next((r for r in overlay_rects(maps) if r.rect == rect), None)
+    fw, fh = maps.size
+    at_frame = (x == 0, x + w == fw, y == 0, y + h == fh)
+    return known is None or any(c < ROOM_SIDE for c, e in zip(known.cov, at_frame, strict=True) if not e)
+
+
+def scene_still(maps: SceneMaps) -> bool:
+    """Most of the picture stays as it is over the scene: a camera in a room, a desktop, a menu."""
+    import numpy as np
+
+    return float(np.median(maps.sd)) < GAME_SD  # type: ignore[call-overload]
+
+
+def cutout_box(face: Box, fw: int, fh: int, aspect: float = 1080 / 960) -> Rect:
+    """Crop for a webcam with no rectangle of its own (green-screen cut-out, or the judge's point): head
+    and shoulders around the face in the panel's shape, kept inside the frame."""
+    x, y, w, h = face
+    ch = min(fh, 2.6 * h, fw / aspect)
+    cw = ch * aspect
+    left = min(max(0.0, x + w / 2 - cw / 2), fw - cw)
+    top = min(max(0.0, y - 0.75 * h), fh - ch)
+    return _even(left), _even(top), _even(cw), _even(ch)
+
+
+# A layout switch: this share of what stood still changes at once, and of what stands still after is new
+CUT_CHANGE = 0.7
+CUT_KEPT = 0.5  # ... and less than this share of the edges that stay put (borders, HUD, the room) survives it
+CUT_RUN = 6  # frames on each side those edges are read from
+
+
+def _steady_edges(run: list):
+    """Edges present in (nearly) all of a run of small grey frames (bool map)."""
+    import numpy as np
+
+    acc = np.zeros(run[0].shape, np.float32)
+    for a in run:
+        gx = np.abs(np.diff(a, axis=1, prepend=a[:, :1])) > 10
+        gy = np.abs(np.diff(a, axis=0, prepend=a[:1, :])) > 10
+        acc += gx | gy
+    return acc >= max(2, len(run) - 1)
+
+
+def same_scene(
+    frames: list[tuple[float, Path]], at_s: float | None, min_frames: int = 4
+) -> list[tuple[float, Path]]:
+    """The frames that show the layout on screen at at_s (the middle of the frames when None).
+
+    The streamer switches scene (camera full screen, a grid of cams, another corner): most of what stood
+    still changes at once, and so does most of what stands still afterwards. A cut inside the game does
+    that too (a still shot, a loading screen), so the edges that stay put before and after are compared:
+    a webcam's border, its room, the HUD survive a cut of the game, not a change of layout. Frames are
+    split at layout changes and the run around at_s is returned; all frames when nothing changes or that
+    run would be too short to read a layout from."""
+    try:
+        import numpy as np
+        from PIL import Image
+    except ImportError:
+        return frames
+    if len(frames) < 2 * min_frames:
+        return frames
+    small = []
+    for _, p in frames:
+        with Image.open(p) as im:
+            small.append(np.asarray(im.convert("L").resize((480, 270)), dtype=np.int16))
+    same = [np.abs(b - a) < 8 for a, b in zip(small, small[1:], strict=False)]
+    cuts: list[int] = []
+    for i in range(1, len(same) - 1):
+        before, after = same[i - 1], same[i + 1]  # what stood still just before / just after this step
+        if before.mean() < 0.02 or after.mean() < 0.02:
+            continue
+        if min(1.0 - float(same[i][before].mean()), 1.0 - float(same[i][after].mean())) <= CUT_CHANGE:
+            continue
+        lo = cuts[-1] if cuts else 0
+        a, b = small[max(lo, i + 1 - CUT_RUN) : i + 1], small[i + 1 : i + 1 + CUT_RUN]
+        if len(a) < 3 or len(b) < 3:
+            continue
+        ea, eb = _steady_edges(a), _steady_edges(b)
+        both = float((ea & eb).sum())
+        if ea.sum() < 50 or eb.sum() < 50:
+            continue  # nothing stays put on one side: no layout to compare
+        if max(both / ea.sum(), both / eb.sum()) < CUT_KEPT:
+            cuts.append(i + 1)
+    if not cuts:
+        return frames
+    t = at_s if at_s is not None else frames[len(frames) // 2][0]
+    k = min(range(len(frames)), key=lambda i: abs(frames[i][0] - t))
+    lo = max([c for c in cuts if c <= k], default=0)
+    hi = min([c for c in cuts if c > k], default=len(frames))
+    return frames[lo:hi] if hi - lo >= min_frames else frames
+
+
+def cam_proposals(maps: SceneMaps, limit: int = 5) -> list[OverlayRect]:
+    """Rectangles that look like a webcam overlay without having seen a face: four sure sides, a cam's
+    size and shape, and stiller inside than the picture around them. Best first, overlapping ones merged.
+    For looking closer (zoom_faces) where the full-frame face pass found nothing."""
+    fw, fh = maps.size
+    cands = [
+        r
+        for r in overlay_rects(maps)
+        if r.sure == 4
+        and 0.012 * fw * fh <= r.rect[2] * r.rect[3] <= 0.45 * fw * fh
+        and 0.7 <= r.rect[2] / r.rect[3] <= 2.4
+        and r.still <= 0.7
+    ]
+    cands.sort(key=lambda r: (-r.score, r.still))
+    out: list[OverlayRect] = []
+    for r in cands:
+        if all(_rect_iou(r.rect, o.rect) < 0.5 for o in out):
+            out.append(r)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _rect_iou(a: Rect, b: Rect) -> float:
+    ix = max(0, min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0]))
+    iy = max(0, min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1]))
+    union = a[2] * a[3] + b[2] * b[3] - ix * iy
+    return ix * iy / union if union > 0 else 0.0
+
+
+def zoom_faces(frames: list[Path], detector: FaceDetector, rect: Rect, out_h: int = 384) -> list[Box]:
+    """Faces inside one rectangle of the picture, searched on an enlargement of it: a webcam's face is a
+    few percent of the frame (missed by the full-frame pass when dark, small or turned away) but a good
+    part of its own cam. One list entry per frame that shows a face (its largest), in source pixels."""
+    from PIL import Image
+
+    x, y, w, h = rect
+    k = max(1.0, out_h / max(h, 1))
+    boxes: list[Box] = []
+    for i, f in enumerate(frames):
+        with Image.open(f) as im:
+            crop = im.convert("RGB").crop((x, y, x + w, y + h))
+            crop = crop.resize((max(2, round(w * k)), max(2, round(h * k))), Image.LANCZOS)
+            q = f.with_name(f"zoom_{i:02d}.png")
+            crop.save(q, compress_level=1)
+        found = [b for b in detector(q) if b[3] >= 0.1 * crop.height]
+        if found:
+            bx, by, bw, bh = max(found, key=lambda b: b[2] * b[3])
+            boxes.append((x + bx / k, y + by / k, bw / k, bh / k))
+    return boxes
+
+
+def is_overlay(rect: Rect, fw: int, fh: int) -> bool:
+    """A webcam rectangle that is a part of the picture, not (nearly) the picture itself."""
+    return rect[2] * rect[3] <= CAM_MAX_AREA * fw * fh
+
+
+def rect_present(maps: SceneMaps, rect: Rect, slack: int = 3) -> bool:
+    """Is there an overlay with these sides in the scene? (a confirmed facecam_rect is only as good as
+    the streamer's layout on the day it was confirmed)"""
+    import numpy as np
+
+    fw, fh = maps.size
+    x, y, w, h = rect
+    if w < 8 or h < 8 or x < 0 or y < 0 or x + w > fw or y + h > fh:
+        return False
+
+    def vline(b: int) -> float:
+        if b <= slack or b >= fw - slack:
+            return 1.0
+        near = maps.pv[y : y + h, b - slack : b + slack + 1]  # type: ignore[index]
+        return float(np.max(np.mean(near, axis=0)))
+
+    def hline(b: int) -> float:
+        if b <= slack or b >= fh - slack:
+            return 1.0
+        near = maps.ph[b - slack : b + slack + 1, x : x + w]  # type: ignore[index]
+        return float(np.max(np.mean(near, axis=1)))
+
+    return min(vline(x), vline(x + w), hline(y), hline(y + h)) >= SIDE_MIN
+
+
+def scene_frames(
+    media: Path, out_dir: Path, window: tuple[float, float] | None = None, n: int = SCENE_FRAMES
+) -> list[tuple[float, Path]]:
+    """Up to n full-size frames of the scene within window (s), from the stream's keyframes only: a live
+    recording has one every 2 s and decoding just those takes a second where every frame takes ten. The
+    times are approximate (position in the window); falls back to sample_frames when the file has too few
+    keyframes there."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    files: list[Path] = []
+    times: list[float] = []
+    try:
+        dur = media_duration(media)
+        lo, hi = (max(0.0, window[0]), min(dur, window[1])) if window else (0.0, dur)
+        if hi - lo < 1.0:
+            lo, hi = 0.0, dur
+        t0 = seek.file_start(media) or 0.0
+        vf = f"trim=start={t0 + lo:.3f}:end={t0 + hi:.3f},showinfo"
+        cmd = [config.ffmpeg_bin(), "-y", "-hide_banner", "-nostats", "-skip_frame", "nokey", "-copyts",
+               "-ss", f"{max(0.0, lo - 1.0):.3f}", "-i", str(media), "-an", "-fps_mode", "passthrough",
+               "-vf", vf, str(out_dir / "key_%04d.bmp")]  # fmt: skip
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        files = sorted(out_dir.glob("key_*.bmp"))
+        times = [float(m) - t0 for m in re.findall(r"showinfo.*?pts_time:\s*([0-9.]+)", r.stderr)]
+    except (OSError, subprocess.SubprocessError, ValueError):
+        files = []
+    if len(files) < 6:
+        return sample_frames(media, out_dir, min(n, 8), window=window)
+    if len(times) != len(files):  # frame times unknown: spread over the window
+        times = [lo + (i + 0.5) * (hi - lo) / len(files) for i in range(len(files))]
+    pairs = list(zip(times, files, strict=True))
+    if len(pairs) > n:
+        step = len(pairs) / n
+        pairs = [pairs[int(i * step)] for i in range(n)]
+    return [(round(t, 2), p) for t, p in pairs]
+
+
+def gameplay_crop(
+    cams: list[Rect], fw: int, fh: int, aspect: float = 1080 / 960, active: Rect | None = None
+) -> Rect:
+    """The gameplay panel's source crop: as much of the game as the panel's shape allows, without the
+    webcams. Full height, as near the centre as the cams allow. When every full-height window holds a
+    cam, the largest window beside, above or below the cams if it still shows 60 % as much picture;
+    otherwise the full-height window with the least cam in it (the cam then really overlaps the game).
+    active = the picture inside the game's own black bars (SceneMaps.active): the crop stays inside."""
+    if active and (active[2], active[3]) != (fw, fh) and active[2] >= 16 and active[3] >= 16:
+        ax, ay, aw, ah = active
+        inside = [(cx - ax, cy - ay, cw, ch) for cx, cy, cw, ch in cams]
+        x, y, w, h = gameplay_crop(inside, aw, ah, aspect)
+        return _even(x + ax), _even(y + ay), w, h
+    w = _even(min(fw, fh * aspect))
+    h = _even(min(fh, w / aspect))
+
+    def cam_area(r: Rect) -> float:
+        x, y, rw, rh = r
+        return sum(
+            max(0, min(x + rw, cx + cw) - max(x, cx)) * max(0, min(y + rh, cy + ch) - max(y, cy))
+            for cx, cy, cw, ch in cams
+        )
+
+    y0 = _even((fh - h) / 2)
+    mid = (fw - w) / 2
+    xs = {mid, 0.0, float(fw - w)}
+    for cx, _cy, cw, _ch in cams:
+        xs.update({float(cx + cw), float(cx - w)})
+    full = [(_even(min(max(x, 0), fw - w)), y0, w, h) for x in xs]
+    best = min(full, key=lambda r: (cam_area(r), abs(r[0] - mid)))
+    if cam_area(best) <= 0.005 * w * h:
+        return best
+    free: list[Rect] = []
+    xs_ = sorted({0, fw, *(v for cx, _cy, cw, _ch in cams for v in (cx, cx + cw))})
+    ys_ = sorted({0, fh, *(v for _cx, cy, _cw, ch in cams for v in (cy, cy + ch))})
+    for i, rx in enumerate(xs_):  # every window bounded by the frame's and the cams' sides
+        for rx1 in xs_[i + 1 :]:
+            for j, ry in enumerate(ys_):
+                for ry1 in ys_[j + 1 :]:
+                    ex, ey = rx + rx % 2, ry + ry % 2  # even pixels inside the window
+                    rw, rh = _even(rx1 - ex), _even(ry1 - ey)
+                    if rw < 16 or rh < 16:
+                        continue
+                    ww = _even(min(rw, rh * aspect))
+                    hh = _even(ww / aspect)
+                    # as near the frame centre as the window allows
+                    x = _even(min(max((fw - ww) / 2, ex), ex + rw - ww))
+                    y = _even(min(max((fh - hh) / 2, ey), ey + rh - hh))
+                    if cam_area((x, y, ww, hh)) == 0:
+                        free.append((x, y, ww, hh))
+    if free:
+        r = max(free, key=lambda r: r[2] * r[3])
+        if r[2] * r[3] >= 0.6 * w * h:
+            return r
+    return best
+
+
 def draw_still(frame: Path, rects: Rects, out: Path) -> Path:
     from PIL import Image, ImageDraw
 

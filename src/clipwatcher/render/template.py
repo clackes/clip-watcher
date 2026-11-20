@@ -354,8 +354,9 @@ def build_short_graph(
         last = grad
     sh = ":shortest=1" if not use_bg else ""
     if has_webcam:
-        cx, cy, cw, ch = cam
-        gx, gy, gw, gh = game
+        centre = (face[0] + face[2] / 2, face[1] + face[3] / 2) if face else None
+        cx, cy, cw, ch = fit_crop(cam, 1080 / 480, centre)  # the panel's shape: never stretched
+        gx, gy, gw, gh = fit_crop(game, 1080 / 540)
         g.append(f"[cs]crop={cw}:{ch}:{cx}:{cy},scale=1080:480:flags=lanczos,setsar=1[cam]")
         g.append(f"[gs]crop={gw}:{gh}:{gx}:{gy},scale=1080:540:flags=lanczos,setsar=1[game]")
         g.append(f"{last}[cam]overlay=0:{PANEL_Y}{sh}[v0]")
@@ -483,6 +484,20 @@ def fit_crop(rect: Rect, aspect: float, centre: tuple[float, float] | None = Non
     return int(cx) // 2 * 2, int(cy) // 2 * 2, cw, ch
 
 
+def split_crops(cam: Rect, game: Rect, face: Rect | None, src_wh: tuple[int, int]) -> tuple[Rect, Rect]:
+    """Source crops of the split layout's two 1080x960 panels: the largest crop of the panel's shape inside
+    the webcam rectangle, placed on the face (or on where it went: layout passes the span), and inside the
+    gameplay rectangle. Both stay inside the source picture."""
+    fw, fh = src_wh
+    centre = (face[0] + face[2] / 2, face[1] + face[3] / 2) if face else None
+    return fit_crop(_inside(cam, fw, fh), 1080 / 960, centre), fit_crop(_inside(game, fw, fh), 1080 / 960)
+
+
+def _inside(r: Rect, fw: int, fh: int) -> Rect:
+    x, y = min(max(r[0], 0), fw - 2), min(max(r[1], 0), fh - 2)
+    return x, y, max(2, min(r[2], fw - x)), max(2, min(r[3], fh - y))
+
+
 def zoom_expr(cold_open_s: float, zoom: float, beat_ts: list[float]) -> str | None:
     """zoompan z(it): cold-open punch-in ramp, then a short punch on every beat. None = no zoom."""
     terms = []
@@ -530,10 +545,10 @@ def build_split_graph(
         g.append(_segments("[0:v]", trim, keep, "[sv]", audio=False, fps=fps))
     z = zoom_expr(co_d, zoom, [b[0] for b in beats or []])
     if has_webcam:
-        centre = (face[0] + face[2] / 2, face[1] + face[3] / 2) if face else None
+        cam_crop, game_crop = split_crops(cam, game, face, src_wh)
         g.append("[sv]split=2[cs][gs]")
-        g.append(_zoomed("[cs]", fit_crop(cam, 1080 / 960, centre), (1080, 960), z, fps, "[cam]"))
-        g.append(_zoomed("[gs]", fit_crop(game, 1080 / 960), (1080, 960), None, fps, "[game]"))
+        g.append(_zoomed("[cs]", cam_crop, (1080, 960), z, fps, "[cam]"))
+        g.append(_zoomed("[gs]", game_crop, (1080, 960), None, fps, "[game]"))
         g.append("[cam][game]vstack=inputs=2,format=yuv420p,setsar=1[v1]")
     elif reframe_x:  # full-screen 9:16 window following the person (crop x is evaluated per frame)
         fw, fh = src_wh
