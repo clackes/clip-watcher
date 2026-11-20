@@ -77,6 +77,20 @@ def resolve_on(monkeypatch, frames, detector, cfg=None, **kw):
     return layout.resolve(frames[0].parent / "x.ts", "x", detector=detector, **kw)
 
 
+def cutout_seen(person):
+    """A detector that sees one person wherever it looks: in the full frame, and in the enlargement of the
+    cut-out's box that calibrate.zoom_faces hands it (a crop, so in the crop's own pixels)."""
+    box = calibrate.cutout_box(person, W, H)
+    k = max(1.0, 384 / box[3])
+
+    def detector(p):
+        if p.name.startswith("zoom_"):
+            return [((person[0] - box[0]) * k, (person[1] - box[1]) * k, person[2] * k, person[3] * k)]
+        return [person]
+
+    return detector
+
+
 def parse(r: str) -> tuple:
     w, h, x, y = (int(v) for v in r.split(":"))
     return x, y, w, h
@@ -174,6 +188,38 @@ def test_a_frame_on_two_sides_is_peeled_only_when_both_lines_are_strong(tmp_path
         im.save(p)
     rect, _ = calibrate.cam_rect(calibrate.scene_maps(frames), face)
     assert near(rect, (100, 66, 294, 164))
+
+
+def attached_maps(strip_sd: float, panel_sides: float):
+    """A webcam picture (100, 60, 200, 120), calm, with a 9 px strip over its top and an 80 px panel under
+    it (40 % of the whole), both inside the rectangle (100, 51, 200, 209) that sure sides enclose."""
+    sd = np.full((320, 400), 30.0, np.float32)
+    pv, ph = np.zeros((320, 401), np.float32), np.zeros((321, 400), np.float32)
+    sd[51:60, 100:300] = strip_sd
+    sd[60:260, 100:300] = 3.0
+    pv[51:180, 100] = pv[51:180, 300] = 1.0
+    pv[180:260, 100] = pv[180:260, 300] = panel_sides
+    ph[51, 100:300] = 0.65
+    ph[60, 100:300] = 0.7
+    ph[180, 100:300] = 0.6
+    ph[260, 100:300] = 1.0
+    return calibrate.SceneMaps(pv, ph, sd, 12, (0, 0, 400, 320))
+
+
+def test_a_label_strip_over_the_cam_is_peeled_and_a_deep_panel_is_left_to_the_doubts():
+    """aidanbeans: 8 px of sub-goal text over the cam's top, behind a line as good as the side itself:
+    a thin strip that changes far more than the webcam is not the webcam's. genburten: a sponsor panel
+    under the cam, 36 % of the rectangle, with borders of its own. Cutting there whatever the depth
+    also cut infume's and 247loltyler1's cams at the edge of a wall, so it is not cut: the evidence
+    carries the line and layout.doubts() holds the panel back."""
+    whole, face = (100, 51, 200, 209), (170, 80, 50, 56)
+    assert near(calibrate._tighten(attached_maps(12.0, 1.0), whole, face), (100, 60, 200, 200), tol=1)
+    assert calibrate._tighten(attached_maps(3.0, 1.0), whole, face) == whole  # a calm strip: the room's
+    maps = attached_maps(12.0, 0.3)
+    rect = calibrate._tighten(maps, whole, face)
+    assert near(rect, (100, 60, 200, 200), tol=1)
+    cov, depth, jump = calibrate.cam_evidence(maps, rect, face)["chords"]["b"]
+    assert cov >= calibrate.CHORD_CUT and depth > calibrate.CHORD_DEEP and jump >= calibrate.SIDE_JUMP
 
 
 # --------------------------------------------------------------------------- gameplay crop, scenes
