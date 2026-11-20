@@ -25,7 +25,7 @@ def _load(name: str, example: str | None = None) -> dict[str, Any]:
         p = CONFIG_DIR / example
     if not p.exists():
         return {}
-    return yaml.safe_load(p.read_text()) or {}
+    return yaml.safe_load(p.read_text(encoding="utf-8")) or {}
 
 
 def _merged(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
@@ -57,7 +57,7 @@ def save_local(overrides: dict[str, Any]) -> Path:
             "# (python -m clipwatcher.ui); delete a line, or the file, to go back to global.yaml.\n"
         )
         tmp = p.with_name(p.name + ".tmp")
-        tmp.write_text(head + yaml.safe_dump(overrides, sort_keys=True, allow_unicode=True))
+        tmp.write_text(head + yaml.safe_dump(overrides, sort_keys=True, allow_unicode=True), encoding="utf-8")
         os.replace(tmp, p)
     elif p.exists():
         p.unlink()
@@ -106,7 +106,7 @@ def learned() -> dict[str, Any]:
     except OSError:
         return {}
     if _LEARNED[0] != mtime:
-        _LEARNED = (mtime, yaml.safe_load(p.read_text()) or {})
+        _LEARNED = (mtime, yaml.safe_load(p.read_text(encoding="utf-8")) or {})
     return _LEARNED[1]
 
 

@@ -372,14 +372,17 @@ def kill_group(pgid: int, sig: int) -> None:
 
 def still_recorder(pid: int) -> bool:
     """Is this pid, written down by an earlier run, still its recorder pipeline? After a reboot the number
-    may belong to any process, and the sweep kills what it finds with SIGKILL. Unknown (no ps, Windows)
-    counts as yes: an orphaned recorder fills the disk."""
-    if os.name == "nt":
-        return True
+    may belong to any process, and the sweep kills what it finds with SIGKILL (Windows: taskkill /T /F of
+    the whole tree). Unknown (no ps / PowerShell) counts as yes: an orphaned recorder fills the disk."""
+    if os.name == "nt":  # the pid is the cmd.exe of the pipeline: its command line names streamlink
+        cmd_ = [
+            "powershell", "-NoProfile", "-NonInteractive", "-Command",
+            f"(Get-CimInstance Win32_Process -Filter 'ProcessId={int(pid)}').CommandLine",
+        ]  # fmt: skip
+    else:
+        cmd_ = ["ps", "-o", "command=", "-p", str(pid)]
     try:
-        out = subprocess.run(
-            ["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True, timeout=5
-        )
+        out = subprocess.run(cmd_, capture_output=True, text=True, timeout=20)  # noqa: S603
     except (OSError, subprocess.SubprocessError):
         return True
     cmd = out.stdout.strip()

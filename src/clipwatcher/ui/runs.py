@@ -36,6 +36,23 @@ HEED_SIGINT = (
     "import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); "
     "os.close(int(sys.argv[1])); os.execvp(sys.argv[2], sys.argv[2:])"
 )
+WINDOWS = os.name == "nt"
+
+
+def kill_tree(proc: subprocess.Popen, *, gentle_s: float = 40.0) -> None:
+    """Windows: end the process and everything it started (streamlink, ffmpeg, Chrome) with taskkill /T /F.
+    No Ctrl-Break first: GenerateConsoleCtrlEvent reaches every process on the console when the group is not
+    the one expected, the app and its shell included. gentle_s is kept for the signature."""
+    if proc.poll() is None:
+        subprocess.run(  # noqa: S603, S607 - a fixed command with a pid
+            ["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True, check=False
+        )
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            pass
+
+
 # what points the bot at this machine's own folders: a test run must not find them
 TESTS_WITHOUT = (
     "CLIPWATCHER_EVENTS",
@@ -210,6 +227,19 @@ class RunManager:
             for name in TESTS_WITHOUT:
                 env.pop(name, None)
             env["DRY_RUN"] = "1"
+        if WINDOWS:  # no exec and no inherited descriptors: its own process group, stopped by kill_tree
+            return subprocess.Popen(  # noqa: S603 - a fixed command list built by command(), never a shell string
+                cmd,
+                cwd=config.ROOT,
+                env={**env, "PYTHONIOENCODING": "utf-8"},
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                encoding="utf-8",
+                errors="replace",
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,  # type: ignore[attr-defined]
+            )
         ready, told = os.pipe()
         try:
             proc = subprocess.Popen(  # noqa: S603 - a fixed command list built by command(), never a shell string
@@ -331,6 +361,9 @@ class RunManager:
         proc = run.proc
 
         def press() -> None:
+            if WINDOWS:
+                kill_tree(proc)
+                return
             for sig, wait in ((signal.SIGINT, 40.0), (signal.SIGTERM, 10.0), (signal.SIGKILL, 0.0)):
                 try:
                     os.killpg(proc.pid, sig)

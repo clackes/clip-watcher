@@ -47,7 +47,7 @@ def test_one_variable_is_set_and_removed_and_every_other_line_stays(home):
         "# Copy to .env\nDRY_RUN=1\n\n# From BotFather\nTELEGRAM_BOT_TOKEN=\n"
         f"export ANTHROPIC_API_KEY={CLAUDE_KEY}\nOTHER=keep me\n"
     )
-    assert stat.S_IMODE(env.stat().st_mode) == 0o600
+    assert os.name == "nt" or stat.S_IMODE(env.stat().st_mode) == 0o600
     assert keys.read_env()["ANTHROPIC_API_KEY"] == CLAUDE_KEY
     assert keys.read_env()["OTHER"] == "keep me"
     keys.set_var("NEW_ONE", "a b")  # a value a shell would split is quoted, and read back whole
@@ -61,7 +61,7 @@ def test_one_variable_is_set_and_removed_and_every_other_line_stays(home):
 def test_the_file_is_made_private_when_it_is_new(home):
     keys.set_var("TELEGRAM_BOT_TOKEN", BOT_TOKEN)
     assert (home / ".env").read_text() == f"TELEGRAM_BOT_TOKEN={BOT_TOKEN}\n"
-    assert stat.S_IMODE((home / ".env").stat().st_mode) == 0o600
+    assert os.name == "nt" or stat.S_IMODE((home / ".env").stat().st_mode) == 0o600
 
 
 def test_the_file_is_loaded_at_start_and_the_environment_wins(home, monkeypatch):

@@ -67,7 +67,12 @@ class Logins:
                 stdin=subprocess.DEVNULL,
                 stdout=out,
                 stderr=subprocess.STDOUT,
-                start_new_session=True,  # its own process group: Cancel reaches it and what it started
+                # its own process group: Cancel reaches it and what it started
+                **(
+                    {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}  # type: ignore[attr-defined]
+                    if os.name == "nt"
+                    else {"start_new_session": True}
+                ),
             )
 
     def running(self) -> bool:
@@ -151,6 +156,11 @@ class Logins:
             if proc is None or proc.poll() is not None:
                 return self.status()
             self.cancelled = True
+        if os.name == "nt":
+            from clipwatcher.ui.runs import kill_tree
+
+            kill_tree(proc, gentle_s=25.0)
+            return self.status()
         # first the process alone, so it closes Chrome itself; then its whole group, hard
         for send, sig, wait in ((os.kill, signal.SIGTERM, 25.0), (os.killpg, signal.SIGKILL, 5.0)):
             try:
