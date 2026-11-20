@@ -301,9 +301,9 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   there, templates for VODs, or `max_fps: 30`. Setup once per machine: `cd remotion && npm ci && npm run
   setup` (pinned packages, a headless browser, the bundle); nothing is fetched at render time. Licence:
   Remotion is free for individuals and for companies of up to three people; a fourth person makes it a
-  paid company licence (remotion/README.md has the links). Known limits: specks of video a few pixels
-  across where two outlines almost meet (counted by the frame checks, not failed), emoji move in whole
-  pixels, script faces do not join. Checked again after the build, 20 Nov: the seven fixtures on all 25
+  paid company licence (remotion/README.md has the links). Known limits: emoji move in whole pixels,
+  script faces do not join (specks of video where two outlines almost meet were a third until the
+  renderer closed them, below). Checked again after the build, 20 Nov: the seven fixtures on all 25
   templates at 30 and 60 fps, 50,850 frames and 4.59 M checks, no failure. Every frame of five staged
   Shorts under made-up fast talk (auto colours, 60 fps) then found one fault: arcade added a hop to a
   landing bounce (letters 2 px above the box for six frames; a letter now takes the higher of the two).
@@ -311,10 +311,36 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   reaches (Pillow's flood fill does nothing to an image made from an array, without a word; chips showed
   740 px on frames with none), a 2 px remnant of a letter under glide's box was read as its background,
   a unit scaled to nothing as a stutter. The talk of that clip is fixture `shouts` (full set): 22
-  templates pass it at both rates. Open: at 30 fps bounce (the landing flash), chips (a chip face) and
-  comic (the punch) each put a whole change into one frame when a word starts just after a frame; and
-  the real specks, counted right now: chrome (small counters, up to 50 px a frame), creep (between
-  letters), glide (where the box's rim meets a neighbour, up to 180 px).
+  templates pass it at both rates; at 30 fps bounce (the landing flash), chips (a chip face) and comic
+  (the punch) put a whole change into one frame when a word started just after a frame, and chrome,
+  creep and glide left real specks (up to 180 px a frame). Closed the same day (branch captions-polish).
+  The phase sweep (`framecheck --phases`: the talk moved by fractions of a frame; `--scene-only` lays
+  the frames out and draws nothing) shows what a fixture's own word times hide: eight templates failed
+  somewhere in the first sweep, five (neon, ransom, reel, slam, vogue) only at phases the plain run
+  never rendered. Fixed: bounce (the flash comes up evenly), chips (a chip turns only to a face that
+  will then be seen), comic (the punch takes 0.16 s), neon (a tube heats up evenly), ransom (scraps
+  straighten and rattle in with the highlight), and in the plan no word is active for less than 0.1 s
+  (`MIN_ACTIVE_S`, three frames at 30 fps: words with one timestamp are spaced that far apart, a word
+  that starts in the last 0.1 s of a clip is not shown). Specks: the renderer's last step closes every
+  see-through gap under 5 px that ink walls in (remotion/scripts/gaps.mjs; 13 templates had them) and
+  `specks` now fails a frame. glide: to a word on another line the box goes straight across (stretched,
+  it came down as a slab through the letters of both lines). Checked until the owner ended the runs
+  (20 Nov, 16:00): the four phases of `shouts` with pixels at 30 fps on all 25, 16,775 frames and
+  1.25 M checks, nothing left (two marker reports were the checker's: a word a wipe has passed draws
+  nothing and cannot stutter); five real clips at 60 fps on the six changed templates, 59,760 frames,
+  no failure; the full set with pixels at both rates on 16 templates (arcade to ransom), 40,544 frames,
+  none; eight phases without pixels on the full set for 8 (arcade to glide), 163,520 frames, none. Not
+  run on the merged code: the full set with pixels for reel, retro, slam, stamp, sticker, surf, sweep,
+  typer and vogue (reel, slam and vogue under the 0.1 s rule only without pixels at 30 fps), the
+  scene-only sweep from glitch on, real clips for the 19 templates not changed, the `remotion` tests as
+  a whole (85 of 86 three commits before the end, the one failure the checker's speck count, fixed with
+  a test; after the merge only a smoke run of four). Open: the first real-clip run (the code before all
+  of this; 114 of 125 cases, 227,160 frames, typer and vogue never reached) also reported `frame_change`
+  on marker (two frames), sweep (one) and punch (one frame whose pixels changed by 59 levels while the
+  scene did not); marker's looks like the wipe case above, none of the three was run on real clips
+  again. A gap right at 5 px can be closed in one frame and open in the next (15 px in 1,776 frames of
+  `mix` at 60 fps, creep and jelly; no check looks for it). Render time with gap closing was measured
+  only on a busy machine (no slower within the spread).
 - D9 .ts seek bug: never `-ss` exact on MPEG-TS. Coarse input seek to max(0, START-6), then
   trim/atrim=start=TRIM in the graph, then setpts=PTS-STARTPTS. Regression test required. Commands that decode
   only the picture or only the sound (judge frames, transcript, loudness, reframe) go through
