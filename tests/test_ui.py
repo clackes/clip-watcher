@@ -2,6 +2,7 @@
 
 import http.client
 import json
+import signal
 import sys
 import threading
 import time
@@ -197,6 +198,20 @@ def test_one_run_at_a_time_and_a_run_can_be_stopped(tmp_path):
     with pytest.raises(RuntimeError):
         m.start("tests", {})
     assert m.stop(run.id) and _wait(run).state == "stopped" and not m.stop(run.id)
+
+
+def test_stop_works_when_the_app_was_started_in_the_background(tmp_path):
+    """A shell starts background jobs with SIGINT ignored, and children inherit that."""
+    was = signal.signal(signal.SIGINT, signal.SIG_IGN)
+    try:
+        m = RunManager(
+            tmp_path, build=lambda kind, params: [sys.executable, "-c", "import time; time.sleep(60)"]
+        )
+        run = m.start("live", {"streamer": "zack"})
+        t0 = time.time()
+        assert m.stop(run.id) and _wait(run).state == "stopped" and time.time() - t0 < 15  # pressed at once
+    finally:
+        signal.signal(signal.SIGINT, was)
 
 
 def test_a_test_run_does_not_see_this_machines_folders(tmp_path, monkeypatch):

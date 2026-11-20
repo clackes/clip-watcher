@@ -28,6 +28,14 @@ _TEST = re.compile(r"^(tests/\S+?)::(\S+) (PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPA
 _SUMMARY = re.compile(r"^=+ (.*?) in ([\d.]+)s")
 _COUNT = re.compile(r"(\d+) (passed|failed|skipped|errors?|deselected|xfailed|xpassed)")
 MAX_LOG_EVENTS = 4000
+# A shell that starts the app in the background hands it SIGINT ignored, and a child process keeps that:
+# Stop (which asks with SIGINT first, so a lane can finish its clip) would then wait 40 s for nothing.
+# Every command is started through this line: it puts SIGINT back, says so by closing the descriptor it
+# was given (the app waits for that, so a Stop pressed at once is not lost), then becomes the command.
+HEED_SIGINT = (
+    "import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); "
+    "os.close(int(sys.argv[1])); os.execvp(sys.argv[2], sys.argv[2:])"
+)
 # what points the bot at this machine's own folders: a test run must not find them
 TESTS_WITHOUT = (
     "CLIPWATCHER_EVENTS",
@@ -192,17 +200,27 @@ class RunManager:
             for name in TESTS_WITHOUT:
                 env.pop(name, None)
             env["DRY_RUN"] = "1"
-        return subprocess.Popen(  # noqa: S603 - a fixed command list built by command(), never a shell string
-            cmd,
-            cwd=config.ROOT,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            start_new_session=True,
-            errors="replace",
-        )
+        ready, told = os.pipe()
+        try:
+            proc = subprocess.Popen(  # noqa: S603 - a fixed command list built by command(), never a shell string
+                [sys.executable, "-c", HEED_SIGINT, str(told), *cmd],
+                cwd=config.ROOT,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                start_new_session=True,
+                errors="replace",
+                pass_fds=(told,),
+            )
+        finally:
+            os.close(told)
+        try:
+            os.read(ready, 1)  # returns once the child has closed its end: SIGINT is heeded from here on
+        finally:
+            os.close(ready)
+        return proc
 
     # -- following a run ---------------------------------------------------------------------------------
     def _follow(self, run: Run) -> None:
