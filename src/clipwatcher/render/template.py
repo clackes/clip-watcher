@@ -612,11 +612,14 @@ def render_short(
     cold_open: tuple[float, float] | None = None, face: Rect | str | None = None,
     beats: list[tuple] | None = None, layout: str | None = None,
     actions: list[tuple[float, float, str]] | None = None, reframe: bool = False,
+    report: dict | None = None,
 ) -> Path:  # fmt: skip
     """cold_open=(start, duration) relative to start_s: that moment plays first, zoomed in, then the clip.
     The output is duration + dur_s long; captions follow the clip part. beats = judge beats (t relative to
     start_s, kind, label): zoom punch, colour effect and sound-effect label. layout split (default) | stack;
-    split never draws the hook on the video (owner, 17 Nov)."""
+    split never draws the hook on the video (owner, 17 Nov). report, when given, is filled with what the
+    Short got: `captions` (the style on the video: the ASS fallback when an rm: template could not be
+    rendered) and then `captions_error` (why)."""
     src, out = Path(src), Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
     auto_style, auto_accent = pick_style(clip_id)
@@ -668,7 +671,7 @@ def render_short(
             game=game, has_webcam=has_webcam, words=words, beats=beats, streamer=streamer,
             captions=captions or caption_style(clip_id), cold_open=cold_open, face=parse_rect(face),
             profile=profile, sfx=pick_sfx(cues(beats, words)), keep=keep, actions=actions,
-            cue_beats=cues(beats, words),
+            cue_beats=cues(beats, words), report=report,
             reframe_x=_reframe_path(src, start_s, dur_s, info, keep, cold_open) if do_reframe else None,
         )  # fmt: skip
 
@@ -718,10 +721,12 @@ def render_short(
             graph = build_short_graph(**gk, ass=ass, overlay=(idx, overlay) if overlay else None)
             _run([*cmd, *extra, "-filter_complex", graph, "-map", "[v]", "-map", "[a]", *tail])
 
-        _encode_with_captions(
+        used = _encode_with_captions(
             encode, cap_style, work, words, total, fps, rm.caption_box(1495, "stack"), None, None,
             lambda p: [*cmd, "-filter_complex", build_short_graph(**gk, ass=work / "none.ass", probe=p)],
         )  # fmt: skip
+        if report is not None:
+            report.update(used)
     _verify(out, total)
     return out
 
@@ -746,13 +751,14 @@ def _probe_background(cmd: list[str], total: float) -> rm.Background | None:
 def _encode_with_captions(
     encode, style: str, work: Path, words: list[Word], total: float, fps: float, box: rm.Box,
     beats: list | None, actions: list | None, probe_cmd,
-) -> None:  # fmt: skip
+) -> dict:  # fmt: skip
     """Run encode(style, overlay) with the captions the style asks for. For rm:<template> the overlay is
     rendered first; if Node, the bundle or the render is missing or fails, or ffmpeg cannot use the result,
-    the clip is encoded with the ASS fallback style instead: captions never cost a clip."""
+    the clip is encoded with the ASS fallback style instead: captions never cost a clip. Returns what went
+    on the video: {"captions": style} and, after a fallback, "captions_error"."""
     if not rm.is_rm(style):
         encode(style, None)
-        return
+        return {"captions": style}
     fb = rm.fallback_style()
     try:
         bg = None
@@ -766,7 +772,7 @@ def _encode_with_captions(
         level = log.warning if isinstance(e, rm.RemotionError) else log.exception
         level("Remotion captions %s not rendered (%s): using the ASS style %s", style, e, fb)
         encode(fb, None)
-        return
+        return {"captions": fb, "captions_error": str(e)[-400:]}
     try:
         encode(style, overlay)
     except RuntimeError as e:
@@ -774,6 +780,8 @@ def _encode_with_captions(
             raise
         log.warning("render with the Remotion overlay failed (%s): using the ASS style %s", str(e)[-300:], fb)
         encode(fb, None)
+        return {"captions": fb, "captions_error": str(e)[-400:]}
+    return {"captions": style}
 
 
 def _reframe_path(
@@ -807,7 +815,7 @@ def _render_split(
     captions: str, cold_open: tuple[float, float] | None, face: Rect | None, profile: str,
     sfx: list[tuple[float, Path]] | None = None, keep: list[tuple[float, float]] | None = None,
     actions: list[tuple[float, float, str]] | None = None, cue_beats: list[tuple] | None = None,
-    reframe_x: str | None = None,
+    reframe_x: str | None = None, report: dict | None = None,
 ) -> Path:  # fmt: skip
     """beats drive zoom and colour effects; cue_beats (labels and sounds moved off speech) the captions.
     reframe_x: crop x(t) of a full-screen 9:16 window that follows the person (no-webcam clips)."""
@@ -850,10 +858,12 @@ def _render_split(
             _run([*cmd, *extra, "-filter_complex", graph, "-map", "[v]", "-map", "[a]", *tail])
 
         kind = "seam" if has_webcam else "reframe" if reframe_x else "frame"
-        _encode_with_captions(
+        used = _encode_with_captions(
             encode, captions, Path(td), words, total, fps, rm.caption_box(cap_y, kind), label_beats, actions,
             lambda p: [*cmd, "-filter_complex", build_split_graph(**gk, ass=Path(td) / "no.ass", probe=p)],
         )  # fmt: skip
+        if report is not None:
+            report.update(used)
     _verify(out, total)
     return out
 

@@ -472,10 +472,12 @@ class FastLane:
             peak_s=peak_media,
             cam_hint=getattr(jr, "cam_xy", None),
         )
+        shown: dict[str, Any] = {}  # the caption style the Short got (an animated one can fall back)
         short = await self._timed(
             "render_short", timings, self.steps.render_short, src, t0_s, dur, work / "short_9x16.mp4",
             clip_id=cid, streamer=self.streamer, words=words, hook=jr.hook_text,
             **lay.as_render_kwargs(), profile=prof, cold_open=co, beats=beats, actions=actions,
+            report=shown,
         )  # fmt: skip
         clean = await self._timed(
             "render_clean",
@@ -498,7 +500,8 @@ class FastLane:
             "hype_score": screen.get("hype_score"), "layout": lay.source,
             # D18: why the layout was not sure (then the whole frame is shown), for the operator
             "layout_doubts": list(getattr(lay, "doubts", ()) or ()),
-            "captions": caption_style(cid),
+            "captions": shown.get("captions") or caption_style(cid),
+            "captions_error": shown.get("captions_error"),
             # the spike's standing in its own stream: share of seconds that scored lower, rank so far
             "chat_pct": cand.signals.get("session_pct"), "chat_rank": cand.signals.get("session_rank"),
             "unique_chatters": cand.unique_chatters, "x_normal": round(cand.x_normal, 2),

@@ -128,6 +128,11 @@ render:
   jump_cuts: true           # cut pauses without speech (beats and judge action labels are kept)
   jump_gap_s: 0.8           # a pause this long is dead air
   captions: word            # word (one word on the seam) | pop | classic | bounce | ab; stored in meta.captions
+                            # rm:<template> = an animated template (remotion/README.md lists the 25)
+  rm:                       # the animated templates (D19)
+    colors: auto            # auto = colours picked for the video under each phrase | fixed = the template's own
+    fallback: word          # the built-in style a clip gets when a template cannot be rendered
+    max_fps: 60             # captions move at the clip's frame rate, up to this
   cold_open_s: 0            # replay the reaction first (0 = off; owner, 18 Nov: none of 20 top clip Shorts does it, they open on the setup line)
   cold_open_lead_s: 2.5     # cold open starts this long before the peak (build-up, not mid-shout)
   cold_open_zoom: 1.15      # punch-in on the facecam during the cold open

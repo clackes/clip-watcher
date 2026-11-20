@@ -23,6 +23,7 @@ Config (config/global.yaml, all optional, defaults in code):
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import hashlib
 import json
@@ -72,8 +73,27 @@ class RemotionError(RuntimeError):
 # ------------------------------------------------------------------ settings and templates
 
 
+_FOR_NOW: dict = {}  # render.rm for the renders inside `overriding`, laid over the config
+
+
 def settings() -> dict:
-    return dict(config.global_config().get("render", {}).get("rm", {}) or {})
+    base = dict(config.global_config().get("render", {}).get("rm", {}) or {})
+    return _merge(base, _FOR_NOW) if _FOR_NOW else base
+
+
+@contextlib.contextmanager
+def overriding(values: dict | None):
+    """render.rm for the renders inside the block, laid over the config: what one video is rendered with
+    when it is not what the config says (the companion app renders a clip again with its own colour mode
+    and template parameters: {"colors": "fixed", "templates": {"punch": {"size": 80}}}). One render at a
+    time: not for threads that render side by side."""
+    global _FOR_NOW
+    before = _FOR_NOW
+    _FOR_NOW = _merge(before, values or {})
+    try:
+        yield
+    finally:
+        _FOR_NOW = before
 
 
 def is_rm(style: str | None) -> bool:

@@ -253,6 +253,7 @@ def process_candidate(
     meta["layout_doubts"] = list(getattr(lay, "doubts", ()) or ())  # D18: why it was not sure
     meta["captions"] = _mod("clipwatcher.render.captions").caption_style(clip_id)
     beats, actions = cold_open.clip_beats(jr or {}, pl), cold_open.clip_actions(jr or {}, pl)
+    shown: dict = {}
     with timed("render_short"):
         short = tpl.render_short(
             src,
@@ -267,7 +268,9 @@ def process_candidate(
             cold_open=pl.cold_open,
             beats=beats,
             actions=actions,
+            report=shown,
         )
+    meta.update(shown)  # the style on the video: an animated template that failed falls back
     with timed("render_clean"):
         clean = tpl.render_clean(src, local_start, dur, clip_dir / "clean_16x9.mp4")
     meta.update(
