@@ -4,9 +4,10 @@ Opens the user's real Chrome via patchright with a persistent profile and walks
 through YouTube Studio's upload UI. Approve on Telegram triggers this when
 ``publish.youtube_mode: browser`` in config/global.yaml.
 
-Sign in once with ``python scripts/yt_browser_login.py``; the resulting profile
-(default ``~/.clipwatcher/yt-chrome-profile``) is reused on every upload.
-Override with ``YT_BROWSER_PROFILE``. Screenshots on failure go to
+Sign in once in the companion app (Connect, YouTube: one Chrome profile per account under
+``~/.clipwatcher/youtube/``, the upload uses the account that posts) or with
+``python scripts/yt_browser_login.py`` (the single profile ``~/.clipwatcher/yt-chrome-profile``,
+used while no account is kept). ``YT_BROWSER_PROFILE`` overrides both. Screenshots on failure go to
 ``YT_BROWSER_SHOTS`` when set.
 
 DRY_RUN=1 skips the browser and returns a ``dryrun-...`` id, matching
@@ -38,8 +39,15 @@ _URL_RE = re.compile(r"(?:shorts/|youtu\.be/|watch\?v=)([A-Za-z0-9_-]{6,})")
 
 
 def profile_dir() -> Path:
+    """The Chrome profile uploads go through: YT_BROWSER_PROFILE when it is set, else the profile of the
+    account that posts (publish/youtube_accounts.py, chosen in the companion app), else the single profile of
+    before."""
     p = os.environ.get("YT_BROWSER_PROFILE")
-    return Path(p).expanduser() if p else DEFAULT_PROFILE
+    if p:
+        return Path(p).expanduser()
+    from . import youtube_accounts
+
+    return youtube_accounts.posting_profile() or DEFAULT_PROFILE
 
 
 def _shots_dir() -> Path | None:

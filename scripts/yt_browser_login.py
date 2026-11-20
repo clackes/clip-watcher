@@ -6,7 +6,9 @@ press Enter here to close. The profile is reused by publish/youtube_browser.py.
 
     python scripts/yt_browser_login.py
 
-Override the profile dir with YT_BROWSER_PROFILE.
+Override the profile dir with YT_BROWSER_PROFILE. Without it this opens the profile uploads use: the
+account that posts when the companion app keeps accounts (its Connect place does this sign-in step by step,
+for several accounts), else ~/.clipwatcher/yt-chrome-profile.
 """
 
 from __future__ import annotations
