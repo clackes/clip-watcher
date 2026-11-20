@@ -183,6 +183,16 @@ def _took(seconds: Any) -> str:
     return f" ({int(s // 60)} min {int(s % 60)} s)"
 
 
+def _hours(value: Any) -> str:
+    try:
+        h = float(value)
+    except (TypeError, ValueError):
+        return "the broadcast so far"
+    if h < 1:
+        return f"the last {max(1, round(h * 60))} minutes"
+    return f"{h:.1f}".rstrip("0").rstrip(".") + (" hour" if round(h, 1) == 1 else " hours")
+
+
 def _n(value: Any) -> str:
     try:
         return f"{int(value):,}"
@@ -216,7 +226,7 @@ def say(event: dict[str, Any]) -> dict[str, Any] | None:
         what = f" of {event['category']}" if event.get("category") else ""
         more = " The rest is being read in the background." if event.get("more") else ""
         return _line(
-            f"Caught up on the chat: {_n(event.get('messages'))} messages from {event.get('hours')} hours"
+            f"Caught up on the chat: {_n(event.get('messages'))} messages from {_hours(event.get('hours'))}"
             f"{what}.{more}",
             "good",
             "baseline",

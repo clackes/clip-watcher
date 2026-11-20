@@ -37,7 +37,10 @@ def test_a_live_run_reads_as_a_story():
         )
     ]
     assert said[1] == "Joined clix's stream on Twitch. Recording has started."
-    assert "38,756 messages" in said[2] and "12.0 hours" in said[2]
+    assert "38,756 messages from 12 hours of GTA VI" in said[2]
+    short = {"kind": "baseline", "streamer": "clix", "messages": 310, "hours": 0.42}
+    assert "310 messages from the last 25 minutes." in friendly.say(short)["text"]
+    assert "from 6.7 hours" in friendly.say({**short, "hours": 6.71})["text"]
     assert "48 people reacting at once" in said[4] and "59 seconds" in said[4]
     assert said[5] == "Made the vertical Short (2 min 5 s)."
     assert "built-in rules wrote the title" in said[6] and "Chat saw it first" in said[6]
