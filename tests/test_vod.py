@@ -1,3 +1,4 @@
+import json
 import sys
 import types
 from pathlib import Path
@@ -122,10 +123,19 @@ def test_judge_rejected_clip_is_not_staged(tmp_path, monkeypatch, capsys):
         "clipwatcher.queue.staging",
         stage_package=lambda c, s, cl, m, **k: staged.append(m) or tmp_path,
     )
+    monkeypatch.setenv("CLIPWATCHER_EVENTS", str(tmp_path / "events.jsonl"))
     rc = vod.main(["--vod", "777777", "--streamer", "foo", "--chat", str(chat), "--top", "3",
                    "--work", str(tmp_path / "w"), "--out", str(tmp_path / "st")])  # fmt: skip
     assert rc == 0 and len(staged) == 1 and len(rendered) == 1  # rejected clips are not even rendered
     assert staged[0]["judge_score"] == 7 and capsys.readouterr().out.count("rejected by the judge") == 2
+    # the run told who watches it what happened: chat read, moments found, each clip's fate, the steps
+    rows = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text().splitlines()]
+    kinds = [r["kind"] for r in rows]
+    assert kinds.count("moment") == 3 and kinds.count("rejected") == 2 and kinds.count("staged") == 1
+    assert rows[kinds.index("candidates")]["count"] == 3 and rows[kinds.index("chat")]["messages"] > 0
+    assert {"render_short", "render_clean", "stage"} <= set(staged[0]["timings"]) and staged[0][
+        "lane"
+    ] == "vod"
 
 
 def test_chat_lines_keep_the_reaction_at_the_end_of_the_window():

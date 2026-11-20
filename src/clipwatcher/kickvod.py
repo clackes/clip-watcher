@@ -16,13 +16,14 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+import time
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from clipwatcher import config, vod
+from clipwatcher import config, events, vod
 from clipwatcher.chat import kick
 from clipwatcher.chat.convert import read_jsonl, write_jsonl
 from clipwatcher.chat.kick import _http_json, iso_to_ms
@@ -162,6 +163,8 @@ def main(argv: list[str] | None = None) -> int:
     elif (work / "chat.jsonl").exists():
         messages = read_jsonl(work / "chat.jsonl")  # read on an earlier run
     else:
+        events.emit("step", step="chat", state="start", streamer=streamer)
+        t0 = time.perf_counter()
         try:
             cid = a.channel_id or meta["channel_id"]
             if not (meta.get("start_ms") and cid):
@@ -170,7 +173,10 @@ def main(argv: list[str] | None = None) -> int:
             hours = (meta["duration_s"] or 0) / 3600
             print(f"reading the chat of {hours:.1f} h (Kick allows about 35 messages a second) ...")
             messages = download_chat(cid, meta["start_ms"], end_ms)
+            took = round(time.perf_counter() - t0, 2)
+            events.emit("step", step="chat", state="done", streamer=streamer, seconds=took)
         except Exception as e:  # noqa: BLE001
+            events.emit("step", step="chat", state="failed", streamer=streamer, error=str(e)[:300])
             print(
                 f"Kick chat replay unavailable ({e}). Pass the chat log saved during the stream "
                 f"(work/chat/{streamer}/<stream id>.jsonl) with --chat.",
@@ -178,6 +184,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
     write_jsonl(messages, work / "chat.jsonl")
+    events.emit("chat", streamer=streamer, messages=len(messages))
 
     # D3: moments viewers clipped themselves are confirmed, as in the Twitch VOD lane
     clip_times: list[float] = []
@@ -191,6 +198,9 @@ def main(argv: list[str] | None = None) -> int:
     )  # fmt: skip
     cands = vod.confirmed_top(cands, clip_times, a.top)
     vod.print_table(cands)
+    events.emit(
+        "candidates", streamer=streamer, count=len(cands), category=a.category or meta.get("category")
+    )
     if not cands:
         print("no candidates")
         return 0
@@ -226,6 +236,7 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as e:  # noqa: BLE001
             failed += 1
             print(f"failed #{n}: {type(e).__name__}: {e}", file=sys.stderr)
+            events.emit("failed", streamer=streamer, n=n, reason=f"{type(e).__name__}: {e}"[:300])
             continue
         print(f"staged #{n}: {pkg}" if pkg else f"rejected by the judge #{n}")
     return 1 if failed else 0
