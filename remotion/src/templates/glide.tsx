@@ -64,11 +64,15 @@ export default defineTemplate<P>({
     const lead = E.outCubic(Math.min(1, p * (1 + fx.stretch)));
     const trail = E.inOutCubic(p);
     const right = to.l >= from.l;
+    // Along a line the box stretches: its front edge runs ahead and the back one follows. To a word on
+    // another line it goes straight across, every side at the same pace: stretched, it reached back over
+    // the whole of the line it was leaving and came down as a slab through the letters of both lines.
+    const sameLine = k === 0 || c.words[k].box.line === c.words[k - 1].box.line;
     const box = {
-      l: lerp(from.l, to.l, right ? trail : lead),
-      r: lerp(from.r, to.r, right ? lead : trail),
-      t: lerp(from.t, to.t, E.inOutCubic(p)),
-      b: lerp(from.b, to.b, E.inOutCubic(p)),
+      l: lerp(from.l, to.l, !sameLine ? trail : right ? trail : lead),
+      r: lerp(from.r, to.r, !sameLine ? trail : right ? lead : trail),
+      t: lerp(from.t, to.t, trail),
+      b: lerp(from.b, to.b, trail),
     };
     const rim = fx.rim * u;
     const colour = c.words[k].emph ? colors.emph : colors.active;
