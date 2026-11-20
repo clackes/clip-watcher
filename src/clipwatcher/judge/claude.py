@@ -5,11 +5,13 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
 from .. import config
 from ..models import Candidate, JudgeResult, Word
+from . import ledger
 from .snap import heuristic_trim, reaction_s, snap_trim
 
 log = logging.getLogger(__name__)
@@ -93,6 +95,7 @@ def _call(client: Any, model: str, system: str, content: list[dict], schema: dic
         messages=[{"role": "user", "content": content}],
         output_config={"format": {"type": "json_schema", "schema": schema}},
     )
+    ledger.record(task="legacy", model=model, usage=_usage(resp))
     stop = getattr(resp, "stop_reason", None)
     if stop in ("refusal", "max_tokens"):
         raise JudgeError(f"stop_reason={stop}")
@@ -249,6 +252,10 @@ def judge_clip(
         if out["pk"] is not None and not out["t0"] <= out["pk"] <= out["t1"]:
             out["pk"] = None
         log.info("judge %s %s sc=%s ok=%s usage=%s", task, login, out["sc"], out["ok"], usage)
+        ledger.record(
+            task=task, model=mdl, usage=usage, streamer=login, start_s=cand.start_s, ok=out["ok"],
+            score=out["sc"], flags=out["fl"], why=out["why"], title=out["tt"],
+        )  # fmt: skip
         reasons = [k for k, v in out["fl"].items() if v]
         return JudgeResult(
             funny_score=float(out["sc"]),
@@ -273,6 +280,9 @@ def judge_clip(
         )
     except Exception as e:  # noqa: BLE001
         log.warning("judge failed (%s); using heuristic", e)
+        if client is not None or os.environ.get("ANTHROPIC_API_KEY"):  # a call was attempted: keep its error
+            tried = model or _jcfg().get("screen_model" if task == "screen" else "judge_model", "")
+            ledger.record(task=task, model=tried, streamer=cand.stream, start_s=cand.start_s, error=str(e))
         return heuristic_judge(cand, words, game=game or None)
 
 
