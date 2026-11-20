@@ -3,7 +3,7 @@ import pytest
 from clipwatcher import layout
 
 from .test_ts_readers import second_shown
-from .test_webcam_rect import H, W, near, parse, resolve_on, scene
+from .test_webcam_rect import H, W, cutout_seen, near, parse, resolve_on, scene
 
 SCENES = [
     {"name": "gameplay", "facecam_rect": "520:231:0:500", "gameplay_rect": "1380:690:540:250"},
@@ -273,6 +273,8 @@ def test_a_cut_out_streamer_over_the_game_gets_a_crop_around_them(tmp_path, monk
     moving = iter(range(10_000))
 
     def detector(p):
+        if p.name.startswith("zoom_"):  # the enlarged look at the cut-out's box over the stretch
+            return cutout_seen(person)(p)
         k = next(moving) % 3
         return [(person[0] + k, person[1] - k, person[2], person[3])]
 

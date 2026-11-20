@@ -8,7 +8,7 @@ import pytest
 
 from clipwatcher import layout
 
-from .test_webcam_rect import H, W, near, parse, resolve_on, scene
+from .test_webcam_rect import H, W, cutout_seen, near, parse, resolve_on, scene
 
 np = pytest.importorskip("numpy")
 PIL = pytest.importorskip("PIL")
@@ -57,6 +57,14 @@ def test_a_faint_side_is_a_doubt_when_the_rectangle_has_little_else():
     assert layout.doubts(evidence(sides=faint, live=1.4, banner=["t"])) == []
 
 
+def test_three_sure_sides_and_a_face_only_when_enlarged_is_a_doubt():
+    """787prada: an empty inventory slot, three sure sides, and the 'face' only in the enlarged look.
+    Either alone is common among real cams (clix, rubius: three sides; kaicenat: only enlarged)."""
+    assert layout.doubts(evidence(sure=0.36, full=0.0))
+    assert layout.doubts(evidence(sure=0.36, full=0.5)) == []
+    assert layout.doubts(evidence(full=0.0)) == []
+
+
 def test_a_face_seen_on_and_off_is_a_doubt():
     assert layout.doubts(evidence(seen=0.67))
 
@@ -67,6 +75,17 @@ def test_a_strip_far_livelier_than_the_rest_behind_a_line_is_a_doubt():
     assert layout.doubts(evidence(strips={"b": 5.5}))
     assert layout.doubts(evidence(strips={"b": 5.5}, chords={"b": (0.3, 0.2, 0.05)})) == []  # no line
     assert layout.doubts(evidence(strips={"b": 5.5}, chords={"b": (0.66, 0.6, 0.05)})) == []  # past the face
+
+
+def test_a_deep_line_at_which_the_sides_change_is_a_doubt():
+    """genburten: a sponsor panel under the cam, as wide as the cam and half as tall; the rectangle's sides
+    change where it begins. infume's dark wall and pobelter's room show the same line, so no cut: the
+    judge or a confirmed rect says which it is."""
+    assert layout.doubts(evidence(chords={"b": (0.87, 0.36, 0.72)}, strips={"b": 0.2}))
+    assert (
+        layout.doubts(evidence(chords={"b": (0.87, 0.36, 0.1)}, strips={"b": 0.2})) == []
+    )  # sides run through
+    assert layout.doubts(evidence(chords={"b": (0.87, 0.2, None)}, strips={"b": 0.2})) == []
 
 
 def test_rectangles_of_different_sizes_need_someone_to_say_which_is_the_streamers():
@@ -163,10 +182,67 @@ def test_a_cut_out_in_the_middle_of_the_bottom_edge_and_two_people_who_are_not_c
         d.ellipse([person[0] + i % 5, person[1], person[0] + person[2] + i % 5, person[1] + person[3]],
                   fill=(200 - 9 * i, 170, 150))  # fmt: skip
         im.save(p)
-    lay = resolve_on(monkeypatch, frames, lambda p: [person], peak_s=5.0)
+    lay = resolve_on(monkeypatch, frames, cutout_seen(person), peak_s=5.0)
     assert lay.has_webcam and lay.source == "auto-new"
     x, y, w, h = parse(lay.cam)
     assert x <= person[0] and x + w >= person[0] + person[2] and y <= person[1] and y + h >= 440
+    # purgegamers: the game's character is a second steady face; 'two people in front of one camera'
+    # followed it full screen. Which of the two is the streamer the picture does not say.
     other = (150, 320, 96, 104)
-    lay = resolve_on(monkeypatch, frames, lambda p: [person, other], peak_s=5.0)
-    assert not lay.has_webcam
+    assert whole_frame(resolve_on(monkeypatch, frames, lambda p: [person, other], peak_s=5.0))
+
+
+def test_a_cut_out_webcam_is_there_through_the_whole_stretch(tmp_path, monkeypatch):
+    """leodsumo: a spectator at the ring of a sumo broadcast sat low at the side of a moving picture for
+    one shot and became the 'cut-out webcam'. A streamer's cut-out stays where it is."""
+    person = (790, 300, 120, 130)
+    shot, _ = scene(tmp_path, [], n=10, seed=1)
+    after, _ = scene(tmp_path, [], n=10, seed=2)
+    for i, p in enumerate(shot):
+        im = Image.open(p)
+        ImageDraw.Draw(im).ellipse(
+            [person[0] + i % 5, person[1], person[0] + person[2] + i % 5, person[1] + person[3]],
+            fill=(200 - 9 * i, 170, 150),
+        )
+        im.save(p)
+    sees = cutout_seen(person)
+
+    def detector(p):  # the six enlarged looks are spread over the stretch: three in the shot, three after
+        if p.name.startswith("zoom_"):
+            return sees(p) if int(p.stem[-2:]) < 3 else []
+        return [person] if "s1_" in p.name else []
+
+    lay = resolve_on(monkeypatch, shot + after, detector, peak_s=5.0)
+    assert whole_frame(lay) and "3 of 6" in lay.doubts[0]
+
+
+def test_the_operators_full_camera_scene_decides_one_face_in_a_moving_picture(tmp_path, monkeypatch):
+    """D12: an IRL clip is a full-screen window that follows the face. One face in a moving picture is a
+    handheld camera or a webcam the layout failed to read (27 moments of the older sets were held back
+    for that); a confirmed `has_webcam: false` scene in the streamer's layouts says which. The picture
+    still wins when it shows an overlay, and the streamer-level flag is not such a scene."""
+    frames, _ = scene(tmp_path, [])
+    walker = (430, 90, 110, 120)
+    assert whole_frame(resolve_on(monkeypatch, frames, lambda p: [walker], peak_s=5.0))
+    confirmed = {"layouts": [{"name": "irl", "has_webcam": False}]}
+    lay = resolve_on(monkeypatch, frames, lambda p: [walker], confirmed, peak_s=5.0)
+    assert lay.source == "fullcam" and lay.sure > 0.5 and lay.as_render_kwargs()["reframe"]
+    lay = resolve_on(monkeypatch, frames, lambda p: [walker], {"has_webcam": False}, peak_s=5.0)
+    assert lay.source == "fixed" and not lay.as_render_kwargs()["reframe"]
+    cam = (0, 120, 250, 140)
+    with_cam, (face,) = scene(tmp_path, [cam], seed=5)
+    lay = resolve_on(monkeypatch, with_cam, lambda p: [face], confirmed, peak_s=5.0)
+    assert lay.has_webcam and near(parse(lay.cam), cam)
+
+
+def test_a_full_camera_is_not_sure_beside_a_rectangle_that_could_be_a_webcam(tmp_path, monkeypatch):
+    """alfie: a webcam over a still game; the rectangle was there but 'part of a room', and a still
+    picture with a face was a full-screen camera. Not even a confirmed full-camera scene makes it one."""
+    cam = (600, 40, 300, 170)
+    head = (cam[0] + 200, cam[1] + 110, 50, 62)  # low in the cam: its sides are clear on the dark screen
+    frames, _ = scene(tmp_path, [cam], game=False, heads={0: head})
+    still_face = (cam[0] + 20, cam[1] + 40, 60, 66)  # where nothing in the cam moves: no webcam for find_cams
+    lay = resolve_on(monkeypatch, frames, lambda p: [still_face], peak_s=5.0)
+    assert whole_frame(lay) and "could be a webcam" in lay.doubts[0]
+    confirmed = {"layouts": [{"name": "irl", "has_webcam": False}]}
+    assert whole_frame(resolve_on(monkeypatch, frames, lambda p: [still_face], confirmed, peak_s=5.0))
