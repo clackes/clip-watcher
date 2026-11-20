@@ -50,6 +50,11 @@ Status (17 Nov 2026, night). Handoff and next steps: docs/HANDOFF.md.
 - Queue (19 Nov): an expired claim goes back to the Claim buttons; a clip gets one card and the approval
   bot posts the ones that went missing; a failed upload shows on the card with Retry; staging a clip id
   again only replaces a clip that is still READY.
+- Companion app (20 Nov, D17): `python -m clipwatcher.ui --open`. Runs the live lane, the VOD lane and the
+  tests from one page with live progress; staged clips with their score make-up and per-video caption
+  settings (render again); speed, judge cost, judge decisions and detector charts; settings saved for this
+  machine in config/local.yaml. To come with it: the new Remotion caption templates in its library once
+  that branch is merged, and real judge numbers once an API key is set (the cost page estimates until then).
 - Next: ANTHROPIC_API_KEY -> `scripts/judge_cost_benchmark.py BENCH --exact` and real judge calls on staged
   clips (until then the hook is the heuristic), publishing (YouTube/IG creds; DRY_RUN=1), viewer-clip
   confirmation with Twitch credentials, minik's language.

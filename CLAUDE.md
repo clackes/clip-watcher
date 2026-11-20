@@ -167,6 +167,29 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   the upload starts whatever Telegram does, a failure shows on the card with a Retry button, a video id is
   recorded as soon as YouTube gives one, and a restarted bot uploads what was approved in the last
   `publish.resume_max_h` and never got there.
+- D17 Companion app (owner, 20 Nov: one small UI to run the whole suite and see live progress, history,
+  configuration, caption templates per video, API cost, speed, judge history and stats; the design was
+  approved as an artifact first: ClipVision's own typography, colours, gradient and logo, one thing per
+  screen, a step-by-step run). `python -m clipwatcher.ui` (127.0.0.1:8765, `--open`): a standard-library
+  HTTP server, no new dependency; the page, its fonts (Geologica, OFL) and Chart.js are in `ui/static/`, so
+  it works offline. Four places: Run (Choose > Source > Captions > Run > Result; live lane, VOD lane, test
+  suite), Clips (every staged clip, its video, how it scored, settings for this video), Insights (speed,
+  cost, judge, detector: one number and one chart at a time), Settings. It starts the same commands a person
+  would type, one at a time, as subprocesses (`ui/runs.py`) and shows what they report: lanes write progress
+  events to the JSONL named by CLIPWATCHER_EVENTS (`events.py`: recording, baseline, watching, moment, step
+  start/done/failed, judged, staged, rejected, failed), sent on to the page as server-sent events. It reads
+  what the bot already keeps: the staging folder and queue, each clip's meta (`timings`, `signals`), the
+  judge ledger (`judge/ledger.py`, work/usage/judge.jsonl: tokens and USD by kind of token at the day's
+  `judge.prices`). Settings go to config/local.yaml (not committed, laid over global.yaml,
+  CLIPWATCHER_LOCAL=0 ignores it), never into global.yaml. "Clip the last 45 seconds" is
+  scripts/force_clip.py on the run's ring. Render again: lanes keep `recipe.json` beside each staged clip
+  (words, webcam and gameplay rectangles, beats; `render/recipe.py`) and `ui/jobs.py` renders the Short again
+  from clean_16x9.mp4 with another caption style or layout, only while the clip is READY (D7); the length
+  cannot change after staging (the wider footage is not kept). Guards: the Host must be this machine, a POST
+  needs the page's token and a same-host Origin, commands are fixed lists built from checked values, only
+  the two videos of a clip folder are served. The app never approves, uploads or posts: that stays with the
+  operators in Telegram. Checked 20 Nov on a live Twitch stream through the page: recorded, a forced clip
+  staged and played in the page, rendered again with another caption style.
 - D9 .ts seek bug: never `-ss` exact on MPEG-TS. Coarse input seek to max(0, START-6), then
   trim/atrim=start=TRIM in the graph, then setpts=PTS-STARTPTS. Regression test required. Commands that decode
   only the picture or only the sound (judge frames, transcript, loudness, reframe) go through
@@ -214,3 +237,12 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 - `layout.py` `resolve(media, streamer) -> Layout`: per-clip scene detection. Streamers use different layouts and
   switch scenes mid-stream, so each clip matches its face position against confirmed `layouts:` in
   streamers.yaml; unknown scenes render with an auto rect and meta.layout="auto-new" for operator review.
+- `events.py` `emit(kind, **data)`, `step(name, **data)` (no-op unless CLIPWATCHER_EVENTS names a file).
+  `judge/ledger.py` `record(*, task, model, usage=None, streamer="", start_s=None, error="", **answer)`, `read()`.
+  `render/recipe.py` `keep(folder, *, words, hook, layout, beats=None, actions=None, cold_open=None)`,
+  `read(folder) -> dict | None` (keyword arguments for `render_short`, times from the clip's start).
+- `ui/` companion app (D17), `python -m clipwatcher.ui`: `server.make_server(host, port, app=None) -> (server, App)`;
+  `runs.command(kind, params) -> list[str]` (tests | live | vod | render), `runs.RunManager(root=None)`
+  `.start(kind, params) -> Run`, `.stop(id)`, `.force(id, seconds)`, `.history()`; `data.clips() / clip(id) /
+  media_path(id, name) / overview() / insights()`; `settings.schema()`, `settings.save(values, merge=False)`;
+  `jobs.rerender(clip_id, captions=None, layout=None, root=None) -> Path`.

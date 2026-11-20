@@ -16,6 +16,20 @@ scripts/run_live_mac.sh illojuan,teegrizzley      # stops the Mac sleeping while
 Clips land in `staging/<clip_id>/` (`short_9x16.mp4`, `clean_16x9.mp4`, `meta.json`). Streamers don't need
 to be in `streamers.yaml`: each clip's layout (webcam / gameplay / full-cam) is detected from its own frames.
 
+## The companion app
+
+```bash
+.venv/bin/python -m clipwatcher.ui --open        # http://127.0.0.1:8765, this machine only
+```
+
+One page to run the bot and see what it does: pick the live lane, a finished broadcast or the test suite,
+watch each step as it happens (join, read the chat, spike, cut, judge, render, stage), then watch the clip.
+Clips lists everything staged, with how each scored and settings for that one video (caption style, layout,
+render again). Insights answers one question at a time: what each step costs in seconds, what the judge
+costs in dollars, what the judge decided, what the detector found. Settings changes a chosen few values for
+this machine (`config/local.yaml`, laid over `config/global.yaml`). It needs nothing installed beyond the
+project, starts the same commands you would type, and never approves or uploads: that stays in Telegram.
+
 ## Approve and publish
 
 With `TELEGRAM_BOT_TOKEN` in `.env` and `config/operators.yaml` (team chat id, operators' Telegram ids)
