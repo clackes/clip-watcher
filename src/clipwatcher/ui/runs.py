@@ -56,7 +56,8 @@ def command(kind: str, params: dict[str, Any]) -> list[str]:
     py = sys.executable
     if kind == "tests":
         cmd = [py, "-m", "pytest", "-v", "--color=no", "-p", "no:cacheprovider"]
-        return [*cmd, "-m", "not ffmpeg"] if params.get("quick") else cmd
+        # a -m here replaces the project's own (not remotion: the caption frame tests, 45 minutes)
+        return [*cmd, "-m", "not ffmpeg and not remotion"] if params.get("quick") else cmd
     if kind == "render":  # a staged clip's Short again, with another caption style or layout
         from clipwatcher.ui import captions as library
         from clipwatcher.ui.data import CLIP_ID

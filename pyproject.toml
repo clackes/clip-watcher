@@ -29,6 +29,8 @@ clipwatcher = ["ui/static/*", "ui/static/*/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# the caption frame tests take about 45 minutes where remotion/ is set up: asked for by name (-m remotion)
+addopts = ["-m", "not remotion"]
 markers = [
   "ffmpeg: needs an ffmpeg build with libass (slow)",
   "remotion: renders caption frames with the Remotion project in remotion/ (needs Node and its setup; slow)",

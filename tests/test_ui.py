@@ -252,7 +252,7 @@ def test_commands_are_built_from_checked_values(monkeypatch):
         "--streamers",
         "anyone_else",
     ]  # like the CLI
-    assert command("tests", {"quick": True})[-2:] == ["-m", "not ffmpeg"]
+    assert command("tests", {"quick": True})[-2:] == ["-m", "not ffmpeg and not remotion"]
     assert "--vod" in command(
         "vod", {"streamer": "zack", "vod": "https://www.twitch.tv/videos/123", "top": 2}
     )

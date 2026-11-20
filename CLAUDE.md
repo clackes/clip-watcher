@@ -19,9 +19,10 @@ renders a branded 9:16 Short + clean 16:9 clip, stages them in a Telegram approv
 ## Dev
 ```
 python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
-.venv/bin/pytest -q            # -m "not ffmpeg" to skip render tests; 2 tests skip without numpy / streamlink
-                               # -m "not remotion" leaves out the caption frame tests (they run only where
-                               # remotion/ is set up, and take minutes)
+.venv/bin/pytest -q            # -m "not ffmpeg and not remotion" to skip render tests; 2 tests skip
+                               # without numpy / streamlink
+.venv/bin/pytest -q -m remotion   # the caption frame tests (D19): only where remotion/ is set up, about
+                               # 45 min; left out of the plain run (pyproject addopts)
 .venv/bin/ruff check . && .venv/bin/ruff format --check .
 ```
 
