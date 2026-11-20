@@ -167,7 +167,7 @@ function onEvent(e) {
   if (k === 'watching') { row('watch', 'Watch for a spike', 'run', `<b>${plural(e.messages, 'message')}</b> read${e.per_minute ? ', ' + e.per_minute + ' a minute' : ''}`); $('#runState').textContent = 'Watching the chat'; return; }
   if (k === 'step' && e.step === 'chat') { row('chat', 'Read the chat of the broadcast', e.state === 'start' ? 'run' : e.state === 'done' ? 'done' : 'failed', e.state === 'failed' ? esc(e.error) : null, e.seconds); $('#runState').textContent = 'Reading the chat'; pill(R.params.platform === 'kick' ? 'kick' : 'twitch', 'on'); return; }
   if (k === 'chat') { row('chat', 'Read the chat of the broadcast', 'done', `<b>${(+e.messages).toLocaleString('en-US')}</b> messages`); return; }
-  if (k === 'candidates') { row('found', 'Find the moments', 'done', `<b>${e.count}</b> ${e.count === 1 ? 'moment' : 'moments'} stand out${e.category ? ' · ' + esc(e.category) : ''}`); return; }
+  if (k === 'candidates') { row('found', 'Find the moments', 'done', `<b>${e.count}</b> ${e.count === 1 ? 'moment stands' : 'moments stand'} out${e.category ? ' · ' + esc(e.category) : ''}`); return; }
   if (k === 'moment') { R.clip++; const w = $(`#steps [data-key="watch"]`); if (w) w.dataset.s = 'done'; row('m' + R.clip, `Moment ${R.clip}`, 'done', `Chat score <b>${e.chat_score}</b>${e.chatters ? ', ' + e.chatters + ' chatters' : ''}, ${e.seconds} s of footage`); $('#phone').dataset.st = 'cut'; const v = $('#phoneVid'); v.hidden = true; $('#runState').textContent = 'Making a clip'; return; }
   if (k === 'step') { const key = e.step + ':' + R.clip, note = e.state === 'failed' ? esc(e.error) : e.step === 'transcribe' && e.state === 'done' && S.ov && !S.ov.speech ? 'No speech model on this machine, so no captions' : null; row(key, stepName(e.step), e.state === 'start' ? 'run' : e.state === 'done' ? 'done' : 'failed', note, e.seconds); if (e.state === 'start' && STEP_PHONE[e.step]) $('#phone').dataset.st = STEP_PHONE[e.step]; if (e.state === 'start') $('#runState').textContent = stepName(e.step); return; }
   if (k === 'judged') { const ai = e.source === 'claude'; row('judge:' + R.clip, 'Judge', ai ? 'done' : 'skip', ai ? `Claude scored it <b>${e.score}</b> of 10` : 'No API key: the fallback wrote the title'); pill('cl', ai ? 'on' : 'skip'); return; }
@@ -179,6 +179,7 @@ function onEvent(e) {
   if (k === 'end') return finish(e);
 }
 function finish(e) {
+  if (!R.replay) busy(false);
   R.ended = true; clearInterval(R.tick); if (R.es) { R.es.close(); R.es = null; }
   $('#runCtl').hidden = true; $('#total').classList.remove('ind'); $('#totalBar').style.width = '100%'; $('#runState').textContent = e.state === 'done' ? 'Finished' : e.state === 'stopped' ? 'Stopped' : 'Ended with an error'; $('#runClock').textContent = fmtS(e.seconds);
   $$('#steps .step[data-s="run"]').forEach(li => { li.dataset.s = e.state === 'failed' ? 'failed' : 'done'; li.querySelector('.bub').innerHTML = ic(e.state === 'failed' ? 'cross' : 'check'); });
@@ -211,8 +212,9 @@ function finish(e) {
   if ($('#openIt')) $('#openIt').onclick = () => { const id = R.clips[R.clips.length - 1].clip_id; location.hash = 'clips'; setTimeout(() => openClip(id), 500); };
   if (!R.replay) { S.ins = null; S.clips = []; }
 }
+const busy = on => $$('.tabs a[data-v="run"]').forEach(a => a.classList.toggle('busy', on));
 function follow(run) {
-  R.replay = false; R.id = run.id; resetRunView(run.kind, run.params || {}); R.started = run.started || Date.now() / 1000;
+  busy(true); R.replay = false; R.id = run.id; resetRunView(run.kind, run.params || {}); R.started = run.started || Date.now() / 1000;
   clearInterval(R.tick); R.tick = setInterval(() => { if (R.ended || R.replay) return; const el = Date.now() / 1000 - R.started; $('#runClock').textContent = fmtS(Math.max(0, el)); if (R.kind === 'live' && +R.params.minutes) $('#totalBar').style.width = Math.min(100, 100 * el / (R.params.minutes * 60)) + '%'; }, 1000);
   if (R.es) R.es.close();
   R.es = new EventSource(`/api/runs/${encodeURIComponent(run.id)}/events?after=0`);
@@ -453,5 +455,5 @@ function onShow(name) {
 }
 initRun(); initClips(); initInsights(); initSettings();
 show(location.hash.slice(1) || store.get('view', 'run'));
-loadOverview().then(ov => { if (ov && ov.active) { if (['live', 'vod', 'tests'].includes(ov.active.kind)) W.mode = ov.active.kind; if (current !== 'run') location.hash = 'run'; W.step = 4; paintWiz(); $('#s1').hidden = true; $('#s4').hidden = false; follow(ov.active); } });
+loadOverview().then(ov => { if (ov && ov.active) { if (['live', 'vod', 'tests'].includes(ov.active.kind)) W.mode = ov.active.kind; W.step = 4; $$('.stepbox').forEach(b => { b.hidden = b.id !== 's4'; }); follow(ov.active); paintWiz(); if (!location.hash) location.hash = 'run'; } });
 })();
