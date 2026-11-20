@@ -13,8 +13,8 @@ Checks, per frame unless noted:
   highlight        (per page) the spoken word looks different from the same word when it is not spoken
   blank            a frame with nothing planned is fully transparent
   ink              every drawn word has pixels where the renderer says it is, and there is no ink elsewhere
-  specks           (reported in stats, not a failure) walled-in specks of video under 5 px across: the renderer
-                   closes letter counters that would leave one, nooks between two outlines can still do
+  specks           no speck of video inside the caption: a see-through gap that ink walls in and that is
+                   under 5 px across (the renderer closes them as the last step of a frame)
   safe_area        no ink outside the caption box (so never near the edges or in the platform dead zone)
   lines_clear      (per page) lines do not overlap; words_clear: neighbours on a line do not overlap
   jump / flash     position, scale, rotation and colour of every unit change without one-frame jumps or
@@ -581,28 +581,36 @@ def _reached(np, clear):
     return r[1:-1, 1:-1]
 
 
-def pinholes(np, alpha) -> int:
-    """Transparent pixels in specks that ink walls in: inside a counter an outline has all but closed, or
-    between two outlines that touch above and below. A see-through region counts when no path of
-    transparent pixels leads from it to the outside of the drawing and no part of it is 5 px across (the
-    renderer fills counters whose opening would be under 7 px, so anything smaller is a defect). The open
-    counters of big letters and the gaps between words do not count."""
+def speck_mask(np, alpha):
+    """The transparent pixels in specks that ink walls in, as a mask the size of the picture: inside a
+    counter an outline has all but closed, or between two outlines that touch above and below. A
+    see-through region counts when no path of transparent pixels leads from it to the outside of the
+    drawing and no part of it is 5 px across (the renderer fills counters whose opening would be under
+    7 px, so anything smaller is a defect). The open counters of big letters and the gaps between words do
+    not count."""
     clear = alpha < 128
+    out = np.zeros(alpha.shape, bool)
     if not (~clear).any():
-        return 0
+        return out
     ys, xs = np.nonzero(~clear)
     y0, y1, x0, x1 = max(0, ys.min() - 2), ys.max() + 3, max(0, xs.min() - 2), xs.max() + 3
     crop = clear[y0:y1, x0:x1]
     enclosed = crop & ~_reached(np, crop)
     if not enclosed.any():
-        return 0
+        return out
     big = _morph(np, enclosed, 5, grow=False)  # the parts at least 5 px across ...
     for _ in range(80):  # ... and all of the region each belongs to
         grown = _morph(np, big, 5, grow=True) & enclosed
         if (grown == big).all():
             break
         big = grown
-    return int((enclosed & ~big).sum())
+    out[y0:y1, x0:x1] = enclosed & ~big
+    return out
+
+
+def pinholes(np, alpha) -> int:
+    """How many pixels of the picture are specks (speck_mask)."""
+    return int(speck_mask(np, alpha).sum())
 
 
 def check_geometry(
@@ -677,13 +685,18 @@ def check_geometry(
                 allowed[
                     max(0, int(y) - 8) : min(H, int(y + h) + 9), max(0, int(x) - 8) : min(W, int(x + w) + 9)
                 ] = True
-        if rec["u"]:
-            # reported, not failed: counters are closed by the renderer, but a speck can still be left in a
-            # nook where two outlines almost meet (between a 0 and a %), and closing those needs more work
-            holes = pinholes(np, alpha)
-            res.stats["speck_frames_checked"] = res.stats.get("speck_frames_checked", 0) + 1
+        if rec["u"] or rec["s"]:
+            res.ran("specks")
+            gaps = speck_mask(np, alpha)
+            holes = int(gaps.sum())
             if holes:
+                ys, xs = np.nonzero(gaps)
+                res.fail(
+                    "specks",
+                    f"frame {f}: {holes} px of video walled in by the caption, the first at x {int(xs[0])} y {int(ys[0])}",
+                )
                 res.stats["speck_frames"] = res.stats.get("speck_frames", 0) + 1
+                res.stats["speck_px"] = res.stats.get("speck_px", 0) + holes
                 if holes > res.stats.get("speck_px_max", 0):
                     res.stats["speck_px_max"], res.stats["speck_px_at"] = holes, f  # the frame to look at
         if rec["u"] or rec["s"]:
@@ -1116,12 +1129,14 @@ def run_case(
     synth: tuple[str, ...] = SYNTH, own_colours: bool = True, deterministic: bool = False,
     composite_check: bool = False, keep: bool = False, bg_video=None, words: list[Word] | None = None,
     dur: float | None = None, box_kind: str | None = None, params: dict | None = None, pixels: bool = True,
+    raw: bool = False,
 ) -> tuple[CaseResult, dict[int, dict]]:  # fmt: skip
     """Render one case with every frame kept and check it. colors "fixed" checks contrast over the
     synthetic backgrounds; "auto" needs bg_video = (label, Background, fn(frame) -> pixels) and checks
     contrast over that. pixels=False draws nothing: every frame is laid out and only the checks that read
-    the scene run (plan, highlight, layout, jump, flash, lifetime), in a fraction of the time. Returns the
-    result and the per-frame scene records (for fps pairs)."""
+    the scene run (plan, highlight, layout, jump, flash, lifetime), in a fraction of the time. raw=True
+    takes the frames as the browser drew them, before the renderer closes the gaps in them (to show that
+    `specks` sees one). Returns the result and the per-frame scene records (for fps pairs)."""
     fx = FIXTURES[fixture] if isinstance(fixture, str) else fixture
     wl = words if words is not None else fx.word_list()
     dur = dur if dur is not None else fx.dur
@@ -1141,11 +1156,13 @@ def run_case(
     shutil.rmtree(out, ignore_errors=True)
     t0 = time.monotonic()
     ov = rm.render_props(
-        props, out, y=box.y0 - PAD, debug=work / "scene.jsonl", all_frames=True, scene_only=not pixels
-    )
+        props, out, y=box.y0 - PAD, debug=work / "scene.jsonl", all_frames=True, scene_only=not pixels, raw=raw
+    )  # fmt: skip
     res.render_s = time.monotonic() - t0
     n = ov.frames
     res.frames = n
+    if pixels and not raw:  # what the renderer's last step had to close: the specks there were before it
+        res.stats["gaps_closed_frames"], res.stats["gaps_closed_px"] = ov.gap_frames, ov.gap_px
     init, frames = load_debug(work / "scene.jsonl")
     res.stats["_pages"] = init.get("pages", [])
     check_layout(res, init, P, props)
@@ -1172,7 +1189,7 @@ def run_case(
     if deterministic and pixels:
         again = work / "frames2"
         shutil.rmtree(again, ignore_errors=True)
-        rm.render_props(props, again, y=box.y0 - PAD, all_frames=True)
+        rm.render_props(props, again, y=box.y0 - PAD, all_frames=True, raw=raw)
         for f in range(n):
             res.ran("deterministic")
             if hashlib.sha1(load_frame(again, f).tobytes()).hexdigest() != hashes.get(f):

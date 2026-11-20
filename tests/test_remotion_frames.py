@@ -9,7 +9,9 @@ CLIPWATCHER_FRAMECHECK=full runs the whole fixture set (minutes per template) in
 from __future__ import annotations
 
 import copy
+import json
 import os
+import subprocess
 
 import pytest
 
@@ -287,6 +289,51 @@ def test_specks_are_only_what_ink_walls_in():
     assert reached[0, 0] and reached[89, 219] and not reached[40, 60] and not reached[40, 100]
 
 
+@pytest.mark.skipif(not rm.node_bin(), reason="node not found")
+def test_the_renderer_closes_a_walled_in_gap_and_nothing_else(tmp_path):
+    """The last step of every frame (remotion/scripts/gaps.mjs, plain Node): what `specks` counts is painted
+    in the colour of its walls; openings, channels and every other pixel are left as they are."""
+    np = pytest.importorskip("numpy")
+    from PIL import Image
+
+    ink = (11, 11, 18, 255)
+    img = np.zeros((90, 220, 4), np.uint8)
+    img[20:70, 30:190] = ink  # a dark plate
+    img[20, 30:190, 3] = 180  # with a soft upper edge
+    img[30:50, 60:62, 3] = 0  # a slit 2 px wide inside it: walled in
+    img[35, 62, 3] = 200  # the soft edge of the plate beside the slit
+    img[30:50, 100:110, 3] = 0  # a counter 10 px across: an opening
+    img[20:50, 140:142, 3] = 0  # a channel 2 px wide that is open at the top
+    img[40:43, 170:174] = (255, 230, 0, 100)  # something faint (alpha under a half) with ink all round it
+    gaps = 20 * 2 + 3 * 4
+    src, dst = tmp_path / "drawn.png", tmp_path / "closed.png"
+    Image.fromarray(img).save(src)
+    script = rm.REMOTION_DIR / "scripts" / "gaps.mjs"
+
+    def close(a, b):
+        r = subprocess.run(
+            [rm.node_bin(), str(script), str(a), str(b)], capture_output=True, text=True, timeout=60
+        )
+        assert r.returncode == 0, r.stderr
+        return json.loads(r.stdout)["px"]
+
+    assert fc.pinholes(np, img[..., 3]) == gaps
+    assert close(src, dst) == gaps
+    out = np.asarray(Image.open(dst).convert("RGBA"))
+    assert fc.pinholes(np, out[..., 3]) == 0
+    changed = (out != img).any(axis=-1)
+    assert changed[30:50, 60:62].all() and changed[40:43, 170:174].all() and changed[35, 62]
+    assert int(changed.sum()) == gaps + 1  # the gaps and the one soft pixel beside one: nothing else
+    assert (
+        (out[30:50, 60:62] == ink).all() and (out[40:43, 170:174] == ink).all() and tuple(out[35, 62]) == ink
+    )
+    assert (out[30:50, 100:110, 3] == 0).all() and (out[20:50, 140:142, 3] == 0).all()
+    assert (out[20, 30:140, 3] == 180).all()  # a soft edge that is not beside a gap stays soft
+    # a frame without a gap is written as it came, byte for byte
+    again = tmp_path / "again.png"
+    assert close(dst, again) == 0 and again.read_bytes() == dst.read_bytes()
+
+
 def test_the_full_set_holds_the_case_found_on_a_real_clip():
     assert "shouts" in fc.FULL and "shouts" not in fc.QUICK
     said = [w.text for w in fc.FIXTURES["shouts"].word_list()]
@@ -330,6 +377,19 @@ def test_the_checks_catch_a_broken_template(change, check, tmp_path):
     P = rm._merge(rm.load_template("punch"), change)
     res, _ = fc.run_case("punch", "short", 30.0, tmp_path, params=P, own_colours=False)
     assert res.fail_count.get(check), f"{check} did not fire:\n{res.summary()}"
+
+
+@render_test
+def test_a_speck_is_a_failure_when_the_renderer_leaves_it(tmp_path):
+    """The frames as the browser draws them have specks (letters of a word as it pops in, two outlines that
+    almost meet); the renderer's last step closes every one of them, and `specks` says so either way."""
+    kw = {"synth": ("black",), "own_colours": False}
+    raw, _ = fc.run_case("punch", "short", 30.0, tmp_path / "raw", raw=True, **kw)
+    assert raw.fail_count.get("specks") and raw.stats["speck_px"] > 0, raw.summary()
+    res, _ = fc.run_case("punch", "short", 30.0, tmp_path / "closed", **kw)
+    assert res.ok and res.checks["specks"] > 50, res.summary()
+    assert res.stats["gaps_closed_px"] == raw.stats["speck_px"]
+    assert res.stats["gaps_closed_frames"] == raw.stats["speck_frames"]
 
 
 @pytest.mark.parametrize(
