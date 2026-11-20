@@ -28,9 +28,41 @@ def _load(name: str, example: str | None = None) -> dict[str, Any]:
     return yaml.safe_load(p.read_text()) or {}
 
 
+def _merged(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
+    """``base`` with ``over`` laid on top; a mapping inside a mapping is merged, anything else replaced."""
+    out = dict(base)
+    for k, v in over.items():
+        out[k] = _merged(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
+
+
+def local_overrides() -> dict[str, Any]:
+    """config/local.yaml: this machine's own settings, laid over global.yaml (the companion app writes it;
+    it is not committed). CLIPWATCHER_LOCAL=0 ignores it, which is what the tests do."""
+    return {} if os.environ.get("CLIPWATCHER_LOCAL", "1") == "0" else _load("local.yaml")
+
+
 @lru_cache
 def global_config() -> dict[str, Any]:
-    return _load("global.yaml")
+    return _merged(_load("global.yaml"), local_overrides())
+
+
+def save_local(overrides: dict[str, Any]) -> Path:
+    """Replace config/local.yaml with ``overrides`` (an empty mapping removes the file). Takes effect for
+    this process at once and for a running bot at its next start."""
+    p = CONFIG_DIR / "local.yaml"
+    if overrides:
+        head = (
+            "# Settings of this machine, laid over global.yaml. Written by the companion app\n"
+            "# (python -m clipwatcher.ui); delete a line, or the file, to go back to global.yaml.\n"
+        )
+        tmp = p.with_name(p.name + ".tmp")
+        tmp.write_text(head + yaml.safe_dump(overrides, sort_keys=True, allow_unicode=True))
+        os.replace(tmp, p)
+    elif p.exists():
+        p.unlink()
+    global_config.cache_clear()
+    return p
 
 
 def streamers() -> dict[str, Any]:

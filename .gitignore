@@ -16,5 +16,6 @@ chat*.json
 secrets/
 config/streamers.yaml
 config/operators.yaml
+config/local.yaml
 *.db
 models/

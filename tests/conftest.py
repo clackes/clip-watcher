@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 
 import pytest
 
 from clipwatcher.config import ffmpeg_bin
+
+os.environ["CLIPWATCHER_LOCAL"] = "0"  # a developer's config/local.yaml must not change what tests see
 
 SRC_SECONDS = 20
 
