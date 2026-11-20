@@ -63,3 +63,10 @@ def _no_twitch_calls(monkeypatch):
         raise OSError("tests do not touch the network")
 
     monkeypatch.setattr("clipwatcher.chat.twitch_replay._post", offline)
+
+
+@pytest.fixture(autouse=True)
+def _bookkeeping_stays_out_of_the_repo(tmp_path, monkeypatch):
+    """The judge's ledger goes to the test's own folder, and no test writes progress events unless it asks."""
+    monkeypatch.setenv("CLIPWATCHER_LEDGER", str(tmp_path / "ledger" / "judge.jsonl"))
+    monkeypatch.delenv("CLIPWATCHER_EVENTS", raising=False)

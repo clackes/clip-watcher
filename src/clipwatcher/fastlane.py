@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import config
+from . import config, events
 from .models import Candidate, ChatMessage, JudgeResult, Word
 
 log = logging.getLogger(__name__)
@@ -239,6 +239,7 @@ class FastLane:
         try:
             async for msg in self.chat:
                 self._last = (msg.ts_ms / 1000, self.clock())
+                self._beat()
                 self._remember(msg)
                 self._start(self.detector.feed(msg))
             for cand in getattr(self.detector, "drain", list)():  # chat over: decide the spike in progress
@@ -270,6 +271,23 @@ class FastLane:
             if 5.0 < quiet <= 60.0:
                 self._start(self.detector.tick(ts + quiet - 5.0))
 
+    _seen = 0  # chat messages read so far, and when the last "watching" event went out
+    _beat_at = 0.0
+    _beat_seen = 0
+
+    def _beat(self) -> None:
+        """Every five seconds, tell whoever watches the run that chat is being read and how fast."""
+        self._seen += 1
+        now = self.clock()
+        if now - self._beat_at < 5.0:
+            return
+        rate = (self._seen - self._beat_seen) / (now - self._beat_at) * 60 if self._beat_at else 0.0
+        events.emit(
+            "watching", streamer=self.streamer, messages=self._seen, per_minute=round(rate),
+            clips=sum(1 for o in self.outcomes if o.status == "staged"),
+        )  # fmt: skip
+        self._beat_at, self._beat_seen = now, self._seen
+
     def _start(self, cand: Candidate | None) -> None:
         if cand is None:
             return
@@ -299,11 +317,17 @@ class FastLane:
         self._pin(cand)
         async with self._sem, global_slots(int(self.cfg.get("max_parallel_total", 2))):
             try:
-                self.outcomes.append(await self.process(cand))
+                out = await self.process(cand)
+                if out.status != "staged":
+                    events.emit(out.status, streamer=self.streamer, clip_id=out.clip_id, reason=out.error)
+                self.outcomes.append(out)
             except Exception as e:  # noqa: BLE001
                 log.exception("fastlane candidate failed")
                 self._unpin(cand)  # a failed clip must not hold its segments for 48 h
                 self._cleanup(cand)
+                events.emit(
+                    "failed", streamer=self.streamer, clip_id=self._clip_id(cand), reason=str(e)[:300]
+                )
                 self.outcomes.append(Outcome(self._clip_id(cand), "failed", error=str(e)))
 
     # -- helpers ------------------------------------------------------------
@@ -344,10 +368,18 @@ class FastLane:
         return confirm(cand, [cand.peak_s] if clipped else (), loud_z(series, cand.peak_s - cand.start_s))
 
     async def _timed(self, name: str, timings: dict[str, float], fn: Callable[..., Any], *a: Any, **k: Any):
+        events.emit("step", step=name, state="start", streamer=self.streamer)
         t0 = time.perf_counter()
-        out = await asyncio.to_thread(fn, *a, **k)
+        try:
+            out = await asyncio.to_thread(fn, *a, **k)
+        except Exception as e:
+            took = round(time.perf_counter() - t0, 2)
+            err = f"{type(e).__name__}: {e}"[:300]
+            events.emit("step", step=name, state="failed", streamer=self.streamer, seconds=took, error=err)
+            raise
         timings[name] = round(time.perf_counter() - t0, 2)
         log.info("fastlane %s step=%s %.2fs", self.streamer, name, timings[name])
+        events.emit("step", step=name, state="done", streamer=self.streamer, seconds=timings[name])
         return out
 
     # -- one candidate ------------------------------------------------------
@@ -365,8 +397,13 @@ class FastLane:
         timings: dict[str, float] = {}
         t_all = time.perf_counter()
         self._pin(cand)  # idempotent; also covers direct calls
+        events.emit(
+            "moment", streamer=self.streamer, clip_id=cid, chat_score=round(cand.chat_score, 2),
+            chatters=cand.unique_chatters, seconds=round(cand.end_s - cand.start_s, 1),
+        )  # fmt: skip
         t0 = time.perf_counter()
-        await self._wait_for_buffer(cand.end_s + float(self.cfg["post_roll_s"]))
+        with events.step("wait", streamer=self.streamer):
+            await self._wait_for_buffer(cand.end_s + float(self.cfg["post_roll_s"]))
         timings["wait"] = round(time.perf_counter() - t0, 2)
 
         work = Path(self.cfg["work_dir"]) / cid
@@ -409,6 +446,10 @@ class FastLane:
                 self._unpin(cand)
                 self._cleanup(cand)
                 return Outcome(cid, "rejected", timings, error=str(jr.reject_reason or jr.why))
+        events.emit(
+            "judged", streamer=self.streamer, clip_id=cid, source=jr.source, score=jr.score,
+            title=(jr.title_options or [""])[0],
+        )  # fmt: skip
         from .render import cold_open
 
         pl = cold_open.plan(src, t0_s, dur, cand.peak_s - cand.start_s, jr, words)
@@ -461,6 +502,10 @@ class FastLane:
             "unique_chatters": cand.unique_chatters, "x_normal": round(cand.x_normal, 2),
             # D3 confirmation, already counted in final_score
             "loud_z": cand.signals.get("loud_z"), "viewer_clip": bool(cand.signals.get("viewer_clip")),
+            # what the chat score was made of (how far above normal each signal stood) and what each step
+            # cost, for the companion app's breakdowns
+            "signals": {k: cand.signals[k] for k in ("zU", "zM", "zE", "zS") if k in cand.signals},
+            "timings": dict(timings), "seconds": round(dur, 2),
         }  # fmt: skip
         meta.update(title=jr.title_options[0], description=jr.description)  # heuristic copy too
         if jr.source == "claude":
@@ -482,6 +527,11 @@ class FastLane:
         self._cleanup(cand)  # staging holds copies; the cut .ts and renders would fill the disk 24/7
         timings["total"] = round(time.perf_counter() - t_all, 2)
         log.info("fastlane %s staged %s timings=%s", self.streamer, cid, timings)
+        events.emit(
+            "staged", streamer=self.streamer, clip_id=cid, path=str(pkg), timings=timings,
+            title=meta["title"], hook=meta["hook"], final_score=round(float(meta["final_score"]), 2),
+            seconds=round(dur, 2),
+        )  # fmt: skip
         return Outcome(cid, "staged", timings, path=pkg)
 
     def _cleanup(self, cand: Candidate) -> None:

@@ -18,7 +18,7 @@ import signal
 import time
 from pathlib import Path
 
-from clipwatcher import config
+from clipwatcher import config, events
 
 log = logging.getLogger("clipwatcher.live")
 
@@ -70,6 +70,9 @@ async def run_streamer(
         log.info("%s: removed stale ring %s", login, d)
     await rec.start()
     log.info("%s: recording to %s", login, rec.dir)
+    events.emit(
+        "recording", streamer=login, ring=str(rec.dir), platform=config.streamer(login).get("platform")
+    )
     # The chat of a broadcast is kept whole on disk and read back (plus Twitch's replay of what was said
     # before the bot joined) to build the spike baseline; the video above stays a rolling window.
     session = StreamSession(login, root=data_root() / "chat", platform=platform)

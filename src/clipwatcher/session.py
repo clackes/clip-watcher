@@ -25,7 +25,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from clipwatcher import config
+from clipwatcher import config, events
 from clipwatcher.chat import twitch_replay
 from clipwatcher.chat.live_log import LiveLog
 from clipwatcher.chat.twitch_replay import Session
@@ -228,6 +228,11 @@ class StreamSession:
                     len(getattr(det, "spikes", [])),
                     "; reading the rest of the stream in the background" if pending else "",
                 )  # fmt: skip
+                events.emit(
+                    "baseline", streamer=self.login, messages=self.primed, more=bool(pending),
+                    hours=round((history[-1].ts_ms - history[0].ts_ms) / 3.6e6, 2) if history else 0.0,
+                    category=found.category,
+                )  # fmt: skip
                 if pending:
                     self._deepen_task = asyncio.create_task(self._deepen(found, pending))
             elif first:
@@ -374,4 +379,8 @@ class StreamSession:
         log.info(
             "%s: baseline now from %d messages (%.1f h of the stream)%s", self.login, primed,
             (merged[-1].ts_ms - merged[0].ts_ms) / 3.6e6, "" if final else ", still reading",
+        )  # fmt: skip
+        events.emit(
+            "baseline", streamer=self.login, messages=primed, more=not final,
+            hours=round((merged[-1].ts_ms - merged[0].ts_ms) / 3.6e6, 2),
         )  # fmt: skip
