@@ -182,9 +182,9 @@ def test_a_run_gathers_what_the_command_says_and_what_the_lane_reports(tmp_path)
         and saved["staged"] == ["zack-live-1"]
         and "joining" in (run.dir / "log.txt").read_text()
     )
-    assert (
-        m.history()[0]["id"] == run.id and RunManager(tmp_path).history()[0]["state"] == "done"
-    )  # kept across restarts
+    later = RunManager(tmp_path)  # another session: the run is still there, and can be watched again
+    assert m.history()[0]["id"] == run.id and later.history()[0]["state"] == "done"
+    assert later.events_of(run.id) == m.events_of(run.id) == run.events and later.events_of("../x") is None
 
 
 def test_one_run_at_a_time_and_a_run_can_be_stopped(tmp_path):
@@ -193,6 +193,22 @@ def test_one_run_at_a_time_and_a_run_can_be_stopped(tmp_path):
     with pytest.raises(RuntimeError):
         m.start("tests", {})
     assert m.stop(run.id) and _wait(run).state == "stopped" and not m.stop(run.id)
+
+
+def test_a_test_run_does_not_see_this_machines_folders(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLIPWATCHER_STAGING", "/the/real/staging")
+    monkeypatch.setenv("DRY_RUN", "0")
+    show = (
+        "import os; e = os.environ; "
+        "print(e.get('CLIPWATCHER_STAGING'), e.get('DRY_RUN'), 'CLIPWATCHER_EVENTS' in e)"
+    )
+    m = RunManager(tmp_path, build=lambda kind, params: [sys.executable, "-c", show])
+    said = [e["line"] for e in _wait(m.start("tests", {})).events if e["kind"] == "log"]
+    assert said == ["None 1 False"]
+    said = [e["line"] for e in _wait(m.start("live", {"streamer": "zack"})).events if e["kind"] == "log"]
+    assert said == ["/the/real/staging 0 True"]
+    again = _wait(m.start("live", {"streamer": "zack"}))  # the same second: still a run of its own
+    assert len({r["id"] for r in m.history()}) == 3 and again.dir.is_dir()
 
 
 def test_pytest_output_becomes_test_events(tmp_path):
@@ -296,6 +312,8 @@ def test_only_this_machine_and_only_the_page_may_start_things(served):
     events = [json.loads(line[6:]) for line in text.splitlines() if line.startswith("data: ")]
     assert [e["seq"] for e in events] == list(range(1, len(events) + 1))
     assert events[0]["kind"] == "start" and events[-1]["kind"] == "end" and events[-1]["state"] == "done"
-    assert "staged" in [e["kind"] for e in events] and json.loads(_call(port, "GET", "/api/runs")[2])[0][
-        "staged"
-    ] == ["zack-live-1"]
+    assert "staged" in [e["kind"] for e in events]
+    assert json.loads(_call(port, "GET", "/api/runs")[2])[0]["staged"] == ["zack-live-1"]
+    again = json.loads(_call(port, "GET", f"/api/runs/{run['id']}")[2])  # the run with all it did
+    assert again["events"] == events and again["state"] == "done"
+    assert _call(port, "GET", "/api/runs/nope")[0] == 404

@@ -148,6 +148,9 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as e:
         print(f"not rendered: {e}")
         return 1
+    except KeyboardInterrupt:  # Stop in the app: the half-made file is gone, the clip is as it was
+        print("stopped: the clip keeps the video it had")
+        return 130
     print(f"rendered {out}")
     return 0
 

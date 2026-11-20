@@ -23,10 +23,19 @@ from clipwatcher import config
 
 LOGIN = re.compile(r"[A-Za-z0-9_]{2,40}")
 VOD = re.compile(r"[A-Za-z0-9:/._?=&%-]{4,200}")
+RUN_ID = re.compile(r"[0-9]{8}-[0-9]{6}-[a-z]{1,12}(-[0-9]{1,4})?")
 _TEST = re.compile(r"^(tests/\S+?)::(\S+) (PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)\s+\[\s*(\d+)%\]")
 _SUMMARY = re.compile(r"^=+ (.*?) in ([\d.]+)s")
 _COUNT = re.compile(r"(\d+) (passed|failed|skipped|errors?|deselected|xfailed|xpassed)")
 MAX_LOG_EVENTS = 4000
+# what points the bot at this machine's own folders: a test run must not find them
+TESTS_WITHOUT = (
+    "CLIPWATCHER_EVENTS",
+    "CLIPWATCHER_STAGING",
+    "CLIPWATCHER_CONFIG",
+    "CLIPWATCHER_LEDGER",
+    "CLIPWATCHER_UI_WORK",
+)
 
 
 def runs_root() -> Path:
@@ -157,7 +166,11 @@ class RunManager:
             if busy is not None:
                 raise RuntimeError(f"A {busy.kind} run is still going. Stop it or wait for it first.")
             cmd = self.build(kind, params)
-            rid = time.strftime("%Y%m%d-%H%M%S") + f"-{kind}"
+            rid = base = time.strftime("%Y%m%d-%H%M%S") + f"-{kind}"
+            n = 1
+            while rid in self.runs or (self.root / rid).exists():  # two in the same second
+                n += 1
+                rid = f"{base}-{n}"
             folder = self.root / rid
             folder.mkdir(parents=True, exist_ok=True)
             run = Run(rid, kind, params, cmd, folder)
@@ -174,6 +187,12 @@ class RunManager:
 
     def _spawn(self, run: Run, cmd: list[str]) -> subprocess.Popen[str]:
         env = {**os.environ, "CLIPWATCHER_EVENTS": str(run.dir / "events.jsonl"), "PYTHONUNBUFFERED": "1"}
+        if (
+            run.kind == "tests"
+        ):  # the tests see the project as it is checked out, never this machine's folders
+            for name in TESTS_WITHOUT:
+                env.pop(name, None)
+            env["DRY_RUN"] = "1"
         return subprocess.Popen(  # noqa: S603 - a fixed command list built by command(), never a shell string
             cmd,
             cwd=config.ROOT,
@@ -268,6 +287,9 @@ class RunManager:
         )
         try:
             (run.dir / "run.json").write_text(json.dumps(run.summary(), indent=2), encoding="utf-8")
+            with (run.dir / "replay.jsonl").open("w", encoding="utf-8") as f:  # to watch the run again
+                for e in list(run.events):
+                    f.write(json.dumps(e, ensure_ascii=False, default=str) + "\n")
         except OSError:
             pass
 
@@ -322,6 +344,20 @@ class RunManager:
             proc.wait()
 
         threading.Thread(target=read, daemon=True).start()
+
+    def events_of(self, rid: str) -> list[dict[str, Any]] | None:
+        """Everything a run did, in order: from memory for a run of this session, else from its folder."""
+        run = self.runs.get(rid)
+        if run is not None:
+            with run.cond:
+                return list(run.events)
+        if not RUN_ID.fullmatch(rid):
+            return None
+        try:
+            lines = (self.root / rid / "replay.jsonl").read_text(encoding="utf-8").splitlines()
+            return [json.loads(line) for line in lines if line.strip()]
+        except (OSError, ValueError):
+            return None
 
     def history(self, limit: int = 50) -> list[dict[str, Any]]:
         """Runs of this session and earlier ones (their run.json), newest first."""

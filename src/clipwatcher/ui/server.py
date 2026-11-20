@@ -222,13 +222,14 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                 return self._json(m.history())
             if len(parts) >= 2 and parts[0] == "runs":
                 run = m.get(parts[1])
-                if run is None:
-                    past = next((r for r in m.history(500) if r["id"] == parts[1]), None)
-                    return self._json({**past, "past": True}) if past else self._error(404, "No such run.")
-                if len(parts) == 2:
-                    return self._json({**run.summary(), "log": [e for e in run.events]})
-                if parts[2] == "events":
+                if len(parts) == 3 and parts[2] == "events" and run is not None:
                     return self._stream(run, int((query.get("after") or ["0"])[0] or 0))
+                if len(parts) == 2:  # the run and everything it did, to watch it again
+                    past = None if run else next((r for r in m.history(500) if r["id"] == parts[1]), None)
+                    if run is None and past is None:
+                        return self._error(404, "No such run.")
+                    summary = run.summary() if run else past
+                    return self._json({**summary, "events": m.events_of(parts[1]) or []})
             self._error(404, "Not found.")
 
         def _stream(self, run: Any, seq: int) -> None:
