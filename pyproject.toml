@@ -24,6 +24,9 @@ dev = ["pytest==9.2.0", "ruff==0.17.5"]
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+clipwatcher = ["ui/static/*", "ui/static/*/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["ffmpeg: needs an ffmpeg build with libass (slow)"]

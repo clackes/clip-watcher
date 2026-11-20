@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="companion-token" content="__TOKEN__">
+<title>ClipVision Companion</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+
+<header class="hd wrap"><div class="inner">
+  <a class="logo" href="#run" aria-label="ClipVision Companion"><img src="/static/img/clipvision-logo.webp" alt="ClipVision" width="159" height="40"></a>
+  <span class="comp gt">Companion</span>
+  <nav class="tabs" id="nav" aria-label="Sections"></nav>
+  <span class="badge warn dry" id="dryBadge"><i class="dot warn"></i>Dry run</span>
+</div></header>
+
+<main class="wrap"><div class="inner">
+
+<section class="view" id="v-run">
+  <ol class="wiz" id="wiz" aria-label="Steps of a run"></ol>
+
+  <div class="stepbox" id="s1">
+    <div class="vhead"><div><h1 data-a>What do you want to <span class="gt">run</span>?</h1><p class="lead" data-a id="s1lead">Pick one. Every run is the same command you would type in a terminal.</p></div></div>
+    <div class="choices" id="modeCards" data-a></div>
+    <div class="actions" data-a><span></span><button class="btn btn-primary btn-lg" id="next1">Continue</button></div>
+  </div>
+
+  <div class="stepbox" id="s2" hidden>
+    <div class="vhead"><div><h1 data-a id="s2title"></h1><p class="lead" data-a id="s2lead"></p></div></div>
+    <div id="srcLive" data-a>
+      <div class="choices who" id="whoCards"></div>
+      <div class="field" style="max-width:420px;margin-top:20px"><label class="eyebrow" for="otherWho">Or another Twitch channel</label><input type="text" id="otherWho" autocomplete="off" spellcheck="false" placeholder="channel name"></div>
+      <div class="row" style="gap:14px;margin-top:20px"><span class="eyebrow">Watch for</span><div class="seg" id="minSeg"></div></div>
+    </div>
+    <div id="srcVod" class="srcrow" data-a hidden>
+      <div class="field"><span class="eyebrow">Platform</span><div class="seg" id="platSeg"></div></div>
+      <div class="field"><label class="eyebrow" for="vodWho">Streamer</label><input type="text" id="vodWho" list="whoList" autocomplete="off" spellcheck="false" placeholder="channel name"><datalist id="whoList"></datalist></div>
+      <div class="field"><label class="eyebrow" for="vodLink">Link of the VOD, or its id</label><input type="text" id="vodLink" autocomplete="off" spellcheck="false" placeholder="https://www.twitch.tv/videos/..."></div>
+      <div class="field"><span class="eyebrow">Clips to take</span><div class="seg" id="topSeg"></div></div>
+    </div>
+    <div class="actions" data-a><button class="btn btn-ghost btn-lg" id="back2">Back</button><button class="btn btn-primary btn-lg" id="next2">Continue</button></div>
+  </div>
+
+  <div class="stepbox" id="s3" hidden>
+    <div class="vhead"><div><h1 data-a>Pick a <span class="gt">caption style</span></h1><p class="lead" data-a id="capLead">The style the renderer burns into every new Short.</p></div></div>
+    <div class="tplgrid" id="tplGrid" data-a></div>
+    <div class="actions" data-a><button class="btn btn-ghost btn-lg" id="back3">Back</button><button class="btn btn-primary btn-lg" id="next3">Start the run</button></div>
+  </div>
+
+  <div class="stepbox" id="s4" hidden>
+    <div class="vhead"><div><h1 data-a id="runTitle"></h1><p class="lead" data-a id="runNote"></p></div>
+      <div class="row" data-a id="runCtl"><button class="btn btn-glass" id="forceBtn" hidden>Clip the last 45 seconds</button><button class="btn btn-ghost" id="stopBtn">Stop</button></div></div>
+    <div data-a><div class="total" id="total"><i id="totalBar"></i></div><div class="row" style="justify-content:space-between;margin-top:8px"><span class="cap-note" id="runState">Starting</span><span class="num" id="runClock" style="font-weight:600;color:var(--soft)">0 s</span></div></div>
+    <div class="runwrap">
+      <div class="card" id="stageCard" data-a>
+        <div id="stagePhone" class="stage3d">
+          <div class="rings"><i></i><i></i><i></i></div>
+          <span class="opill o-tw" data-o="twitch"></span>
+          <span class="opill o-kk" data-o="kick"></span>
+          <span class="opill o-cl" data-o="cl"></span>
+          <span class="opill o-tg" data-o="tg"></span>
+          <span class="opill o-yt" data-o="yt"></span>
+          <div class="phone float" id="phone" data-st="wait">
+            <div class="scr"><div class="pane cam"></div><div class="pane game"></div><div class="seam"></div><div class="sweep"></div><video id="phoneVid" hidden muted loop playsinline></video></div>
+            <div class="credit" id="credit"></div>
+          </div>
+        </div>
+        <div id="stageDots" hidden><h3 id="dotsNote" style="margin-bottom:12px"></h3><div class="dots" id="dots"></div></div>
+      </div>
+      <div class="panel" data-a>
+        <div id="stepsBox"><ol class="steps" id="steps"></ol></div>
+        <div id="resultBox" hidden></div>
+      </div>
+    </div>
+    <details class="logd" data-a><summary>Show the log</summary><div class="log" id="log"></div></details>
+  </div>
+</section>
+
+<section class="view" id="v-clips" hidden>
+  <div class="vhead"><div><h1 data-a>Clips the bot has <span class="gt">staged</span></h1><p class="lead" data-a id="clipSum"></p></div><div class="seg" id="histSeg" data-a></div></div>
+  <div class="cliplist" id="clipList"></div>
+</section>
+
+<section class="view" id="v-insights" hidden>
+  <div class="vhead"><div><h1 data-a>What the <span class="gt">numbers say</span></h1><p class="lead" data-a>One question at a time, answered from what the bot has kept: its staged clips, its judge calls and its runs.</p></div></div>
+  <div class="seg big" id="insSeg" data-a></div>
+  <div class="panel" id="insPanel" data-a>
+    <div class="ins-top"><b class="bignum num" id="insBig"></b><p class="lead" id="insText"></p></div>
+    <div class="slide" id="slide">
+      <div class="row" style="justify-content:space-between;align-items:flex-start;flex-wrap:nowrap"><div style="min-width:0"><h3 id="slTitle"></h3><p class="cap-note" id="slSub" style="margin-top:2px"></p></div><button class="btn btn-glass btn-sm" id="slTable">Table</button></div>
+      <div class="chartbox" id="slBox"><canvas id="slCv" role="img" aria-label="Chart"></canvas></div>
+      <div id="slHtml" hidden></div>
+    </div>
+    <div class="pager"><button class="btn btn-ghost" id="slPrev">Back</button><span class="cap-note num" id="slCount"></span><button class="btn btn-primary" id="slNext">Next</button></div>
+  </div>
+</section>
+
+<section class="view" id="v-setup" hidden>
+  <div class="vhead"><div><h1 data-a>What the bot is <span class="gt">set to</span></h1><p class="lead" data-a>What you change here is saved for this machine in <code>config/local.yaml</code>, on top of <code>config/global.yaml</code>, and applies from the next run.</p></div></div>
+  <div class="accs" id="cfgGrid" data-a></div>
+  <div class="savebar" id="saveBar" hidden><span class="row"><span class="badge warn" id="cfgCount"></span><span class="cap-note" id="cfgWhat"></span></span><span class="row"><button class="btn btn-ghost btn-sm" id="cfgReset">Undo my changes</button><button class="btn btn-primary btn-sm" id="cfgSave">Save</button></span></div>
+</section>
+
+<footer><div class="row" style="justify-content:space-between"><span><b style="color:var(--soft)">ClipVision Companion</b> · for Clip Watcher · ClipVision, Ltd.</span><span id="footNote"></span></div></footer>
+</div></main>
+
+<nav class="tabs tabs-m" id="navm" aria-label="Sections"></nav>
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-label="Clip details" aria-hidden="true"></aside>
+<div class="toast" id="toast" role="status"></div>
+
+<script src="/static/vendor/chart.umd.min.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
