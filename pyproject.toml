@@ -26,7 +26,10 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["ffmpeg: needs an ffmpeg build with libass (slow)"]
+markers = [
+  "ffmpeg: needs an ffmpeg build with libass (slow)",
+  "remotion: renders caption frames with the Remotion project in remotion/ (needs Node and its setup; slow)",
+]
 
 [tool.ruff]
 line-length = 110
