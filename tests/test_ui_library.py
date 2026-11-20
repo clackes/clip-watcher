@@ -59,6 +59,10 @@ def test_an_own_template_is_a_named_copy_kept_in_this_machines_config(cfgdir):
     row = library.create("rm:punch", "  Neon   night ", {"size": 120, "colors.active": "#00e5ff"})
     assert row["id"] == "rm:neon_night" and row["name"] == "Neon night" and row["own"] is True
     assert row["base"] == "rm:punch" and row["base_name"] == "Punch" and row["kind"] == "animated"
+    # its colours were set by hand (the page then keeps them on every video); the shipped one's were not
+    assert row["colored"] is True and _by_id("rm:punch")["colored"] is False and row["tuned"] is False
+    assert library.create("rm:punch", "Plain", {"size": 60})["colored"] is False
+    library.delete("rm:plain")
     kept = _local(cfgdir)["render"]["rm"]["presets"]["neon_night"]
     assert kept["name"] == "Neon night" and kept["base"] == "punch" and kept["created"] > 0
     assert kept["settings"] == {"size": 120, "colors": {"active": "#00E5FF"}}

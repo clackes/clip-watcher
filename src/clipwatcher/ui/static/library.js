@@ -202,10 +202,13 @@ function paintName() {
 function paintNameNote() { const n = $('#lmName').value.trim().length; $('#lmNameNote').textContent = n ? `${n} of 40 characters` : 'Up to 40 characters.'; }
 async function create() {
   const inp = $('#lmName'), name = inp.value.trim(), err = $('#lmNameErr');
+  if (L.creating) return;  // Enter and the button, or Enter twice: one template
   if (!name) { err.hidden = false; err.textContent = 'Give your template a name.'; return inp.focus(); }
+  L.creating = true;
   try { L.made = await api.post('/api/library/create', { from: L.base, name, settings: wholeOf() }); }
-  catch (e) { err.hidden = false; err.textContent = e.message; return inp.focus(); }
-  inp.value = ''; await reread(); L.made = capOf(L.made.id) || L.made; L.shelf && L.shelf.pick(L.made.id); go('make', 4);
+  catch (e) { L.creating = false; err.hidden = false; err.textContent = e.message; return inp.focus(); }
+  try { inp.value = ''; await reread(); L.made = capOf(L.made.id) || L.made; if (L.shelf) L.shelf.pick(L.made.id); go('make', 4); }
+  finally { L.creating = false; }
 }
 
 /* step 4: saved */

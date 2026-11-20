@@ -273,7 +273,8 @@ function capLib(root, o) {
     R$('name').textContent = c.name; R$('about').textContent = c.about;
     R$('colbox').hidden = o.colours === false || c.kind !== 'animated' || blocked(c);
     seg(R$('colors'), [['auto', 'Picked for each video'], ['fixed', 'The template\'s own']], st.colors, v => { st.colors = v; paintCol(); changed(); }); paintCol();
-    if (blocked(c)) { R$('about').innerHTML = `${esc(c.about)}<br><br><span class="cap-note">The animated templates are rendered with Node. Run this once on this machine, then reload the page:</span><br><code class="cmd">${esc(lb.setup || '')}</code><br><span class="cap-note">${esc(lb.missing || '')}</span>`; }
+    if (blocked(c) && o.page) R$('about').innerHTML = `${esc(c.about)}<br><br><span class="cap-note">It plays here once the animated templates are set up on this machine: the note at the top of the page says how.</span>`;
+    else if (blocked(c)) { R$('about').innerHTML = `${esc(c.about)}<br><br><span class="cap-note">The animated templates are rendered with Node. Run this once on this machine, then reload the page:</span><br><code class="cmd">${esc(lb.setup || '')}</code><br><span class="cap-note">${esc(lb.missing || '')}</span>`; }
     paintActs();
   }
   function paintCol() { R$('colnote').textContent = st.colors === 'auto' ? 'For every phrase the video under it is looked at: a highlight that is not already in the picture, always readable (at least 4.5 to 1). The preview shows the template\'s own colours.' : 'The colours you see here, on every video.'; }
