@@ -514,6 +514,12 @@ class FastLane:
         if self.staging_root:
             kw["root"] = self.staging_root
         pkg = await self._timed("stage", timings, self.steps.stage, cid, short, clean, meta, **kw)
+        from .render import recipe
+
+        recipe.keep(
+            Path(pkg), words=words, hook=jr.hook_text, layout=lay.as_render_kwargs(), beats=beats,
+            actions=actions, cold_open=co,
+        )  # fmt: skip
         if self.bot is not None and self.db is not None and self.steps.post_card is not None:
             t1 = time.perf_counter()
             try:

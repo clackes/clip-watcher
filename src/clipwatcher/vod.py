@@ -251,6 +251,7 @@ def process_candidate(
         )
     meta["layout"] = lay.source
     meta["captions"] = _mod("clipwatcher.render.captions").caption_style(clip_id)
+    beats, actions = cold_open.clip_beats(jr or {}, pl), cold_open.clip_actions(jr or {}, pl)
     with timed("render_short"):
         short = tpl.render_short(
             src,
@@ -263,8 +264,8 @@ def process_candidate(
             hook=meta["hook"],
             **lay.as_render_kwargs(),
             cold_open=pl.cold_open,
-            beats=cold_open.clip_beats(jr or {}, pl),
-            actions=cold_open.clip_actions(jr or {}, pl),
+            beats=beats,
+            actions=actions,
         )
     with timed("render_clean"):
         clean = tpl.render_clean(src, local_start, dur, clip_dir / "clean_16x9.mp4")
@@ -296,6 +297,15 @@ def process_candidate(
     db = _mod("clipwatcher.queue.db").ClipDB(Path(out_dir) / "clips.db")
     with timed("stage"):
         pkg = staging.stage_package(clip_id, short, clean, meta, root=out_dir, db=db)
+    _mod("clipwatcher.render.recipe").keep(
+        Path(pkg),
+        words=words,
+        hook=meta["hook"],
+        layout=lay.as_render_kwargs(),
+        beats=beats,
+        actions=actions,
+        cold_open=pl.cold_open,
+    )
     events.emit(
         "staged", streamer=streamer, clip_id=clip_id, path=str(pkg), timings=timings, title=meta["title"],
         hook=meta["hook"], final_score=round(float(cand.final_score), 2), seconds=round(dur, 2),
