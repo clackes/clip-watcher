@@ -280,7 +280,8 @@ export function closeGaps(png) {
 /**
  * closeGaps on `n` worker threads: run(png) resolves to { png, px, ms } (the frame to write, the same
  * bytes when it had no gap; the pixels closed; the time it took). A worker that fails takes nothing with
- * it: its frames, and every frame after, are done on the calling thread.
+ * it: its frames, and every frame after, are done on the calling thread. close() ends the threads: until
+ * then they keep the process alive, so that it cannot end with a frame still on its way.
  */
 export function gapPool(n) {
   const jobs = new Map(); // id -> { png, resolve, reject }
@@ -320,7 +321,6 @@ export function gapPool(n) {
       });
       wk.on("error", giveUp);
       wk.on("exit", () => workers.includes(wk) && giveUp());
-      wk.unref();
       workers.push(wk);
     } catch {
       break;
