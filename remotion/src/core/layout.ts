@@ -7,7 +7,8 @@ import type { FontSpec } from "./schema";
  * layout for its whole life, so nothing reflows while it is on screen.
  */
 
-export type WordIn = { text: string; scale: number }; // scale: size factor of this word (shouted words)
+// scale: size factor of this word (shouted words); font: its own font when it is not the page's
+export type WordIn = { text: string; scale: number; font?: FontSpec };
 
 export type WordBox = {
   index: number; // position in the page
@@ -17,6 +18,7 @@ export type WordBox = {
   y: number; // baseline, relative to the block centre
   w: number; // advance width
   size: number; // font size of this word
+  font: FontSpec; // the font this word is set in
   cx: number; // optical centre of the word (middle of its width, middle of the cap height)
   cy: number;
   glyphs: Glyph[]; // per character: x offset from the word's left edge and advance
@@ -68,7 +70,7 @@ function splits(n: number, k: number): number[][] {
 export function fitWords(words: WordIn[], o: FitOptions): Layout {
   const fm = fontMetrics(o.font);
   const REF = 100;
-  const ink100 = words.map((w) => textWidth(w.text, o.font, o.emoji, REF * w.scale, o.letterSpacing));
+  const ink100 = words.map((w) => textWidth(w.text, w.font ?? o.font, o.emoji, REF * w.scale, o.letterSpacing));
   const w100 = ink100.map((w) => w * (1 + 2 * o.grow)); // the slot a word gets: its width plus room to grow
   const gap100 = o.wordGap * REF;
   const maxScale = Math.max(1, ...words.map((w) => w.scale));
@@ -131,9 +133,10 @@ export function fitWords(words: WordIn[], o: FitOptions): Layout {
         y: baseline,
         w,
         size: ws,
+        font: words[i].font ?? o.font,
         cx: wx + w / 2,
         cy: baseline - (fm.capH * ws) / 2,
-        glyphs: glyphs(words[i].text, o.font, o.emoji, ws, o.letterSpacing),
+        glyphs: glyphs(words[i].text, words[i].font ?? o.font, o.emoji, ws, o.letterSpacing),
       });
       idx.push(i);
       x += slot + gap100 * k;

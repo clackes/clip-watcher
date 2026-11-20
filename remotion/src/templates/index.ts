@@ -1,11 +1,22 @@
 import type { Template } from "../core/template";
-import { punch } from "./punch";
 
-/** Every caption template, by name. The name is also the file name of its parameters: templates/<name>.json. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const all: Template<any>[] = [punch];
+/**
+ * Every caption template, by name. A template is a file in this folder whose default export is a
+ * Template; its parameters are templates/<name>.json. Nothing to register: adding the two files is enough.
+ */
+declare const require: {
+  context: (dir: string, deep: boolean, filter: RegExp) => { keys: () => string[]; (key: string): { default?: Template } };
+};
 
-export const templates: Record<string, Template> = Object.fromEntries(all.map((t) => [t.name, t as Template]));
+const modules = require.context("./", false, /^\.\/(?!index)[a-z0-9_]+\.tsx$/);
+
+export const templates: Record<string, Template> = {};
+for (const key of modules.keys()) {
+  const t = modules(key).default;
+  if (!t) throw new Error(`templates/${key}: no default export`);
+  if (`./${t.name}.tsx` !== key) throw new Error(`templates/${key}: exports a template named "${t.name}"`);
+  templates[t.name] = t;
+}
 
 export function getTemplate(name: string): Template {
   const t = templates[name];

@@ -16,6 +16,11 @@ export type Template<P extends BaseParams = BaseParams> = {
   label: (c: LabelCtx<P>) => Scene;
 };
 
+/** Declare a template: export default defineTemplate<P>({ name, schema, build, label }). */
+export function defineTemplate<P extends BaseParams>(t: Template<P>): Template {
+  return t as unknown as Template;
+}
+
 /** Size of one em of the fitted text in px: fx lengths are given in em so they shrink with the text. */
 export const em = (c: Ctx | LabelCtx): number => c.layout.size;
 

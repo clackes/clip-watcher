@@ -57,9 +57,8 @@ export const fontSchema = z.strictObject({
   family: z.string().min(1),
   // path under assets/fonts (the bundle's static files): "Anton-Regular.ttf", "captions/Poppins-Black.ttf"
   file: z.string().regex(/^(captions\/)?[A-Za-z0-9._-]+\.(ttf|otf)$/),
-  weight: z.number().int().min(100).max(900),
+  weight: z.number().int().min(100).max(900), // of this file (for the record: one file is one face)
   style: z.enum(["normal", "italic"]),
-  variations: z.record(z.string(), z.number()), // variable-font axes, e.g. {"wght": 700}
 });
 export type FontSpec = z.infer<typeof fontSchema>;
 
@@ -125,6 +124,7 @@ export const baseParamsShape = {
   title: z.string().min(1),
   description: z.string().min(1),
   font: fontSchema,
+  emphFont: fontSchema.nullable(), // shouted words are set in this font instead (null = the same font)
   size: z.number().min(10), // nominal font size, px in a 1080-wide frame
   minSize: z.number().min(6), // never shrink below this (longer text wraps or is split first)
   lineHeight: z.number().min(0.6).max(2), // em

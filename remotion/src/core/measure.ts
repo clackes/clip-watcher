@@ -1,10 +1,12 @@
-import { alias, cssStretch, cssWeight, familyStack } from "./fonts";
+import { alias, familyStack, outlineFont } from "./fonts";
 import type { FontSpec } from "./schema";
 
 /**
- * Text measurement with the same engine that draws the text: a hidden SVG <text> element. Canvas
- * measureText can differ from SVG layout (hinting, letter-spacing), and a width that is off by a pixel is a
- * word that touches its neighbour. Call only after the fonts are loaded (useFonts).
+ * Text measurement and glyph outlines. Advances and glyph positions come from the browser's own text
+ * layout (a hidden SVG <text>, unhinted: kerning included, linear in the font size). What is drawn is
+ * the font's outlines placed at those positions (see `outline`): vector paths are anti-aliased at their
+ * exact sub-pixel position, where browser text is snapped to whole pixels vertically and quarter pixels
+ * horizontally, which shows as judder in slow motion. Call only after the fonts are loaded (useFonts).
  */
 
 const NS = "http://www.w3.org/2000/svg";
@@ -23,13 +25,12 @@ function probe(): SVGTextElement {
   return node;
 }
 
-/** Attributes shared by the measuring element and every drawn <text>: they must match exactly. */
+/** Attributes of a drawn <text> (emoji only: everything else is drawn as outlines). */
 export function textAttrs(font: FontSpec, emoji: string, size: number, letterSpacing: number) {
   return {
     fontFamily: familyStack(font, emoji),
     fontSize: size,
-    fontWeight: cssWeight(font),
-    fontStretch: cssStretch(font),
+    fontWeight: 400,
     fontStyle: "normal" as const,
     letterSpacing: `${letterSpacing}px`,
     style: {
@@ -45,21 +46,21 @@ export function textAttrs(font: FontSpec, emoji: string, size: number, letterSpa
 function setup(el: SVGTextElement, font: FontSpec, emoji: string, size: number, letterSpacing: number, text: string) {
   el.setAttribute("font-family", familyStack(font, emoji));
   el.setAttribute("font-size", String(size));
-  el.setAttribute("font-weight", String(cssWeight(font)));
-  el.setAttribute("font-stretch", cssStretch(font));
+  el.setAttribute("font-weight", "400");
   el.setAttribute("font-style", "normal");
   el.setAttribute("letter-spacing", `${letterSpacing}px`);
+  // ligatures and contextual forms off: one character is one glyph, the glyph the font's cmap names
   el.style.cssText =
     "font-kerning:normal;font-synthesis:none;font-variant-ligatures:none;text-rendering:geometricPrecision;white-space:pre";
   el.textContent = text;
 }
 
 const widthCache = new Map<string, number>();
-const REF = 200; // measure once at 200 px and scale: geometricPrecision text scales linearly
+const REF = 200; // measure once at 200 px and scale: unhinted text scales linearly
 
 /** Advance width of `text` at `size` px with `letterSpacing` em. */
 export function textWidth(text: string, font: FontSpec, emoji: string, size: number, letterSpacing = 0): number {
-  const key = `${alias(font)}|${cssWeight(font)}|${letterSpacing}|${text}`;
+  const key = `${alias(font)}|${letterSpacing}|${text}`;
   let w = widthCache.get(key);
   if (w === undefined) {
     const el = probe();
@@ -75,7 +76,7 @@ const glyphCache = new Map<string, Glyph[]>();
 
 /** Each character (code point) of `text` with its x offset and advance at `size` px: kerning included. */
 export function glyphs(text: string, font: FontSpec, emoji: string, size: number, letterSpacing = 0): Glyph[] {
-  const key = `${alias(font)}|${cssWeight(font)}|${letterSpacing}|${text}`;
+  const key = `${alias(font)}|${letterSpacing}|${text}`;
   let g = glyphCache.get(key);
   if (!g) {
     const el = probe();
@@ -95,17 +96,72 @@ export function glyphs(text: string, font: FontSpec, emoji: string, size: number
   return g.map((q) => ({ ch: q.ch, x: q.x * k, w: q.w * k }));
 }
 
+const pathCache = new Map<string, string>();
+
+type Cmd = { type: string; x?: number; y?: number; x1?: number; y1?: number; x2?: number; y2?: number };
+
+/**
+ * Outline commands as SVG path data, every contour closed. Written here rather than with the parser's
+ * own toPathData: that one leaves contours open (a stroke then skips the closing edge) and prints "NaN"
+ * for some coordinates, which cuts the path off at that point. A coordinate that is not a number fails
+ * the render instead of drawing half a word.
+ */
+function pathData(cmds: Cmd[], what: string): string {
+  const n = (v: number | undefined): string => {
+    if (v === undefined || !Number.isFinite(v)) throw new Error(`glyph outline has a bad coordinate: ${what}`);
+    const r = Math.round(v * 1000) / 1000;
+    return Object.is(r, -0) ? "0" : String(r);
+  };
+  let d = "";
+  let open = false;
+  for (const c of cmds) {
+    if (c.type === "M") {
+      if (open) d += "Z";
+      d += `M${n(c.x)} ${n(c.y)}`;
+      open = true;
+    } else if (c.type === "L") d += `L${n(c.x)} ${n(c.y)}`;
+    else if (c.type === "Q") d += `Q${n(c.x1)} ${n(c.y1)} ${n(c.x)} ${n(c.y)}`;
+    else if (c.type === "C") d += `C${n(c.x1)} ${n(c.y1)} ${n(c.x2)} ${n(c.y2)} ${n(c.x)} ${n(c.y)}`;
+    else if (c.type === "Z") {
+      if (open) d += "Z";
+      open = false;
+    }
+  }
+  return open ? `${d}Z` : d;
+}
+
+/**
+ * SVG path data of glyphs at `size` px: the baseline is y = 0, each glyph starts at its x. The outlines
+ * are the font's own, so this is exactly the text, as a shape.
+ */
+export function outline(font: FontSpec, items: { ch: string; x: number }[], size: number): string {
+  const key = `${alias(font)}|${size.toFixed(3)}|${items.map((g) => `${g.ch}${g.x.toFixed(3)}`).join("")}`;
+  let d = pathCache.get(key);
+  if (d === undefined) {
+    const f = outlineFont(font);
+    d = items
+      .map((g) => {
+        const glyph = f.charToGlyph(g.ch);
+        return glyph.index === 0 ? "" : pathData(glyph.getPath(g.x, 0, size).commands, `${font.file} "${g.ch}"`);
+      })
+      .join("");
+    if (pathCache.size > 4000) pathCache.clear();
+    pathCache.set(key, d);
+  }
+  return d;
+}
+
 export type FontMetrics = { capH: number; xH: number; asc: number; desc: number }; // em
 const metricCache = new Map<string, FontMetrics>();
 
 /** Ink metrics of the font in em: cap height, x-height, tallest ascender, deepest descender. */
 export function fontMetrics(font: FontSpec): FontMetrics {
-  const key = `${alias(font)}|${cssWeight(font)}`;
+  const key = alias(font);
   let m = metricCache.get(key);
   if (!m) {
     const ctx = document.createElement("canvas").getContext("2d");
     if (!ctx) throw new Error("no 2d canvas for font metrics");
-    ctx.font = `${cssWeight(font)} ${REF}px "${alias(font)}"`;
+    ctx.font = `${REF}px "${alias(font)}"`;
     const ink = (s: string) => ctx.measureText(s);
     m = {
       capH: ink("HXE").actualBoundingBoxAscent / REF,
@@ -118,18 +174,21 @@ export function fontMetrics(font: FontSpec): FontMetrics {
   return m;
 }
 
-/** True when every character of `text` is drawn from the caption font or the emoji font: no fallback. */
+/** True when every character of `text` has a glyph in the caption font or, failing that, is an emoji
+ * drawn by the system emoji font: nothing falls through to another font. */
 export function covered(text: string, font: FontSpec, emoji: string): boolean {
+  const f = outlineFont(font);
+  const rest = Array.from(text).filter((ch) => f.charToGlyphIndex(ch) === 0);
+  if (rest.length === 0) return true;
+  if (!emoji) return false;
   const ctx = document.createElement("canvas").getContext("2d");
   if (!ctx) return false;
-  const stack = `${cssWeight(font)} 64px ${familyStack(font, emoji)}`;
-  // A character missing from both fonts falls through to the last family. If two very different last
-  // families give the same width, nothing fell through.
-  ctx.font = `${stack}, monospace`;
-  const a = ctx.measureText(text).width;
-  ctx.font = `${stack}, serif`;
-  const b = ctx.measureText(text).width;
-  ctx.font = `${stack}, cursive`;
-  const c = ctx.measureText(text).width;
-  return Math.abs(a - b) < 0.01 && Math.abs(a - c) < 0.01;
+  // a character the emoji font lacks falls through to the last family: two very different last families
+  // then give two different widths
+  const s = rest.join("");
+  ctx.font = `64px "${emoji}", monospace`;
+  const a = ctx.measureText(s).width;
+  ctx.font = `64px "${emoji}", serif`;
+  const b = ctx.measureText(s).width;
+  return Math.abs(a - b) < 0.01 && rest.every((ch) => /\p{Extended_Pictographic}/u.test(ch));
 }

@@ -1,20 +1,21 @@
 import React, { useLayoutEffect, useRef } from "react";
-import { decompose, toSvg } from "./affine";
-import { textAttrs } from "./measure";
+import { decompose, mul, toSvg, translate } from "./affine";
+import { outline, textAttrs } from "./measure";
 import type { Grad, Rect, Scene, Shape, Unit } from "./scene";
 
 /**
- * Draws a Scene as one SVG. Text is SVG <text> with round-joined strokes: CSS text-stroke has mitred
- * joins that spike on A, M, W at caption stroke widths. Units that share a z are drawn layer by layer
- * (all outlines, then all fills), so the outline of one word never covers the fill of its neighbour.
+ * Draws a Scene as one SVG. Text is drawn as the font's glyph outlines (vector paths, round-joined
+ * strokes): exact at any sub-pixel position, scale and rotation, and the same on every machine. Units
+ * that share a z are drawn layer by layer (all outlines, then all fills), so the outline of one word
+ * never covers the fill of its neighbour.
  */
 
 export const DEBUG_TAG = "CWDBG";
 
 type Draw = { z: number; pass: number; order: number; node: React.ReactNode };
 
-const gradDef = (id: string, g: Grad) => (
-  <linearGradient key={id} id={id} gradientUnits="userSpaceOnUse" x1={g.x1} y1={g.y1} x2={g.x2} y2={g.y2}>
+const gradDef = (id: string, g: Grad, dx = 0, dy = 0) => (
+  <linearGradient key={id} id={id} gradientUnits="userSpaceOnUse" x1={g.x1 - dx} y1={g.y1 - dy} x2={g.x2 - dx} y2={g.y2 - dy}>
     {g.stops.map((s, i) => (
       <stop key={i} offset={s.o} stopColor={s.c} />
     ))}
@@ -23,7 +24,7 @@ const gradDef = (id: string, g: Grad) => (
 
 const clipDef = (id: string, c: Rect) => (
   <clipPath key={id} id={id} clipPathUnits="userSpaceOnUse">
-    <rect x={c.x} y={c.y} width={c.w} height={c.h} />
+    <rect x={c.x} y={c.y} width={Math.max(0, c.w)} height={Math.max(0, c.h)} />
   </clipPath>
 );
 
@@ -68,9 +69,9 @@ function shapeNode(s: Shape, defs: React.ReactNode[]): React.ReactNode {
 }
 
 /**
- * An emoji is a colour picture, not an outline: a text stroke draws nothing around it and a "stroke" layer
- * would paint the whole picture again. So an emoji unit is drawn once, and every stroke layer of its stack
- * becomes a filter step that grows the picture's own alpha into a halo of that layer's colour.
+ * An emoji is a colour picture, not an outline: there is nothing to stroke, and a "stroke" layer would
+ * paint the whole picture again. So an emoji unit is drawn once as text, and every stroke layer of its
+ * stack becomes a filter step that grows the picture's own alpha into a halo of that layer's colour.
  */
 function emojiDraw(u: Unit, order: number, emoji: string, defs: React.ReactNode[], clipId: string | null): Draw[] {
   const attrs = textAttrs(u.font, emoji, u.size, 0);
@@ -117,58 +118,51 @@ function emojiDraw(u: Unit, order: number, emoji: string, defs: React.ReactNode[
 }
 
 function unitDraws(u: Unit, order: number, emoji: string, defs: React.ReactNode[]): Draw[] {
-  const attrs = textAttrs(u.font, emoji, u.size, u.letterSpacing);
-  const transform = toSvg(u.m);
   let clipId: string | null = null;
   if (u.clip) {
     clipId = `c-${u.id}`;
     defs.push(clipDef(clipId, u.clip));
   }
   if (u.emoji) return emojiDraw(u, order, emoji, defs, clipId);
+  // the glyph outlines once, with the baseline start at the origin; every layer is a <use> of them
+  const pid = `o-${u.id}`;
+  defs.push(<path key={pid} id={pid} d={outline(u.font, u.glyphs, u.size)} />);
   const lastFill = u.layers.map((l) => l.kind).lastIndexOf("fill");
   const out: Draw[] = [];
   u.layers.forEach((l, i) => {
     const key = `u-${u.id}-${i}`;
-    const x = u.x + (l.dx ?? 0);
-    const y = u.y + (l.dy ?? 0);
+    const dx = u.x + (l.dx ?? 0);
+    const dy = u.y + (l.dy ?? 0);
+    const transform = toSvg(mul(u.m, translate(dx, dy)));
     let node: React.ReactNode;
     if (l.kind === "fill") {
       let fill = l.color;
       if (l.grad) {
-        defs.push(gradDef(`g-${u.id}-${i}`, l.grad));
+        defs.push(gradDef(`g-${u.id}-${i}`, l.grad, dx, dy));
         fill = `url(#g-${u.id}-${i})`;
       }
-      node = (
-        <text key={key} x={x} y={y} transform={transform} fill={fill} {...attrs} {...(i === lastFill ? { "data-u": u.id } : {})}>
-          {u.text}
-        </text>
-      );
+      node = <use key={key} href={`#${pid}`} transform={transform} fill={fill} {...(i === lastFill ? { "data-u": u.id } : {})} />;
     } else if (l.kind === "stroke") {
       node = (
-        <text
+        <use
           key={key}
-          x={x}
-          y={y}
+          href={`#${pid}`}
           transform={transform}
           fill={l.color}
           stroke={l.color}
           strokeWidth={Math.max(0, l.width) * 2}
           strokeLinejoin="round"
           strokeLinecap="round"
-          {...attrs}
-        >
-          {u.text}
-        </text>
+        />
       );
     } else {
       const n = Math.max(1, Math.round(l.steps));
       node = (
-        <g key={key} opacity={1}>
+        <g key={key}>
           {Array.from({ length: n }, (_, s) => (
-            <text
+            <use
               key={s}
-              x={x}
-              y={y}
+              href={`#${pid}`}
               transform={transform}
               fill={l.color}
               stroke={l.color}
@@ -176,10 +170,7 @@ function unitDraws(u: Unit, order: number, emoji: string, defs: React.ReactNode[
               strokeLinejoin="round"
               strokeLinecap="round"
               opacity={l.alpha}
-              {...attrs}
-            >
-              {u.text}
-            </text>
+            />
           ))}
         </g>
       );
@@ -232,9 +223,12 @@ export const Stage: React.FC<{
         sc: Math.round(d.scale * 1e4) / 1e4,
         rot: r2(d.rot),
         z: u.z,
+        // the fill as drawn: the glyphs' own ink box (the em box for an emoji)
         box: box(svg.querySelector(`[data-u="${u.id}"]`)),
         clip: u.clip ? [r2(u.clip.x), r2(u.clip.y), r2(u.clip.w), r2(u.clip.h)] : null,
-        halo: Math.max(0, ...u.layers.map((l) => (l.kind === "stroke" ? l.width : 0))),
+        // how far the outline reaches outside the fill, and how far any layer reaches at all (px, unscaled)
+        halo: Math.max(0, ...u.layers.map((l) => (l.kind === "stroke" && !l.dx && !l.dy ? l.width : 0))),
+        reach: Math.max(0, ...u.layers.map((l) => (l.kind === "fill" ? 0 : l.width) + Math.hypot(l.dx ?? 0, l.dy ?? 0))),
       };
     });
     const shapes = scene.shapes.map((s) => ({

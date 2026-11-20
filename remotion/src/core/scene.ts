@@ -36,7 +36,7 @@ export type Unit = {
   w: number; // advance width at `size`
   size: number;
   font: FontSpec;
-  letterSpacing: number; // px
+  glyphs: { ch: string; x: number }[]; // the characters and where each starts, from the unit's x
   m: Affine; // transform in overlay coordinates
   z: number; // higher draws on top; units with equal z are drawn layer by layer, not unit by unit
   layers: Layer[]; // back to front; the last "fill" is the legible one
@@ -113,13 +113,14 @@ export type LabelCtx<P extends BaseParams = BaseParams> = Omit<Ctx<P>, "page" | 
 
 export const emptyScene = (): Scene => ({ units: [], shapes: [] });
 
-type UnitOpts = {
+export type UnitOpts = {
   m?: Affine;
   z?: number;
   layers: Layer[];
   fg: string[];
   clip?: Rect;
   active?: boolean;
+  key?: string; // suffix for the unit id when a template draws the same word more than once per frame
 };
 
 /** A unit for a whole word of the current page. */
@@ -127,7 +128,7 @@ export function wordUnit(c: Ctx | LabelCtx, w: WordState, o: UnitOpts): Unit {
   const label = "label" in c;
   const owner = label ? (c as LabelCtx).label.id : (c as Ctx).page.id;
   return {
-    id: `${label ? "l" : "p"}${owner}w${w.index}`,
+    id: `${label ? "l" : "p"}${owner}w${w.index}${o.key ?? ""}`,
     page: owner,
     word: w.index,
     letter: -1,
@@ -137,8 +138,8 @@ export function wordUnit(c: Ctx | LabelCtx, w: WordState, o: UnitOpts): Unit {
     y: c.cy + w.box.y,
     w: w.box.w,
     size: w.box.size,
-    font: c.P.font,
-    letterSpacing: c.P.letterSpacing * w.box.size,
+    font: w.box.font,
+    glyphs: w.box.glyphs.map((g) => ({ ch: g.ch, x: g.x })),
     m: o.m ?? IDENTITY,
     z: o.z ?? 0,
     layers: o.layers,
@@ -146,7 +147,7 @@ export function wordUnit(c: Ctx | LabelCtx, w: WordState, o: UnitOpts): Unit {
     clip: o.clip,
     active: o.active ?? w.phase === "active",
     emph: w.emph,
-    emoji: isEmoji(w.text, c.P.font),
+    emoji: isEmoji(w.text, w.box.font),
   };
 }
 
@@ -166,7 +167,7 @@ export function letterUnits(
     const o = fn(g, k, n, gx, w.cy);
     if (!o) return;
     out.push({
-      id: `${label ? "l" : "p"}${owner}w${w.index}c${k}`,
+      id: `${label ? "l" : "p"}${owner}w${w.index}c${k}${o.key ?? ""}`,
       page: owner,
       word: w.index,
       letter: k,
@@ -176,8 +177,8 @@ export function letterUnits(
       y: c.cy + w.box.y,
       w: g.w,
       size: w.box.size,
-      font: c.P.font,
-      letterSpacing: 0,
+      font: w.box.font,
+      glyphs: [{ ch: g.ch, x: 0 }],
       m: o.m ?? IDENTITY,
       z: o.z ?? 0,
       layers: o.layers,
@@ -185,7 +186,7 @@ export function letterUnits(
       clip: o.clip,
       active: o.active ?? w.phase === "active",
       emph: w.emph,
-      emoji: isEmoji(g.ch, c.P.font),
+      emoji: isEmoji(g.ch, w.box.font),
     });
   });
   return out;

@@ -2,14 +2,14 @@
  "template": "punch",
  "params": {
   "title": "Punch",
-  "description": "The viral standard: fat geometric caps with a thick outline; the phrase pops in, the spoken word punches up in the highlight colour, shouted words shake.",
+  "description": "The viral standard, built from the animation library: fat geometric caps with a thick outline; the phrase pops in, the spoken word punches up in the highlight colour, shouted words shake, the phrase shrinks away before a pause. Each of those motions can be swapped by name from the settings.",
   "font": {
    "family": "Poppins",
    "file": "captions/Poppins-Black.ttf",
    "weight": 900,
-   "style": "normal",
-   "variations": {}
+   "style": "normal"
   },
+  "emphFont": null,
   "size": 92,
   "minSize": 56,
   "lineHeight": 1.1,
@@ -40,7 +40,7 @@
    "activeInS": 0.1,
    "activeOutS": 0.16,
    "colorS": 0.25,
-   "staggerS": 0
+   "staggerS": 0.06
   },
   "colors": {
    "text": "#FFFFFF",
@@ -115,58 +115,74 @@
   "fx": {
    "halo": 0.1,
    "shadowY": 0.08,
-   "enterScale": 0.62,
-   "enterFreq": 4.5,
-   "enterDamp": 0.55,
-   "enterRise": 0.3,
-   "activeScale": 1.14,
-   "activeLift": 0.05,
-   "activeOvershoot": 2.2,
-   "emphScale": 1.16,
-   "emphShakeDeg": 4,
-   "emphShakeS": 0.4,
-   "emphShakeHz": 6,
-   "exitDrop": 0.35
+   "enter": {
+    "name": "pop",
+    "params": {
+     "from": 0.62,
+     "freq": 4.5,
+     "damp": 0.55,
+     "rise": 0.3
+    }
+   },
+   "enterBy": "page",
+   "exit": {
+    "name": "shrink",
+    "params": {
+     "windup": 1.4,
+     "drop": 0.35
+    }
+   },
+   "exitBy": "page",
+   "active": {
+    "name": "punch",
+    "params": {
+     "scale": 1.14,
+     "lift": 0.05
+    }
+   },
+   "emph": {
+    "name": "shake",
+    "params": {
+     "angle": 4,
+     "hz": 5.5,
+     "shakeS": 0.45
+    }
+   },
+   "emphBoost": 1.15,
+   "idle": null
   }
  },
- "fps": 60,
+ "fps": 60.0,
  "width": 1080,
- "height": 400,
- "durationInFrames": 300,
+ "height": 256,
+ "durationInFrames": 600,
  "region": {
   "x0": 60,
-  "y0": 60,
+  "y0": 0,
   "x1": 1020,
-  "y1": 340,
-  "anchorY": 200
+  "y1": 256,
+  "anchorY": 190
  },
  "pages": [
   {
    "id": 0,
-   "start": 0.3,
-   "end": 1.2,
-   "exit": 0,
+   "start": 0.27,
+   "end": 1.02,
+   "exit": 0.0,
    "words": [
     {
      "text": "NO",
-     "start": 0.3,
-     "end": 0.58,
-     "activeEnd": 0.6,
+     "start": 0.27,
+     "end": 0.52,
+     "activeEnd": 0.52,
      "emph": true
     },
     {
-     "text": "WAY",
-     "start": 0.6,
-     "end": 0.88,
-     "activeEnd": 0.9,
-     "emph": false
-    },
-    {
-     "text": "DID",
-     "start": 0.9,
-     "end": 1.18,
-     "activeEnd": 1.2,
-     "emph": false
+     "text": "WAY!",
+     "start": 0.52,
+     "end": 0.92,
+     "activeEnd": 1.02,
+     "emph": true
     }
    ],
    "colors": {
@@ -187,30 +203,30 @@
   },
   {
    "id": 1,
-   "start": 1.2,
-   "end": 2.1,
-   "exit": 0,
+   "start": 1.02,
+   "end": 1.67,
+   "exit": 0.0,
    "words": [
     {
+     "text": "DID",
+     "start": 1.02,
+     "end": 1.22,
+     "activeEnd": 1.22,
+     "emph": false
+    },
+    {
      "text": "YOU",
-     "start": 1.2,
-     "end": 1.48,
-     "activeEnd": 1.5,
+     "start": 1.22,
+     "end": 1.42,
+     "activeEnd": 1.42,
      "emph": false
     },
     {
      "text": "SEE",
-     "start": 1.5,
-     "end": 1.78,
-     "activeEnd": 1.8,
+     "start": 1.42,
+     "end": 1.67,
+     "activeEnd": 1.67,
      "emph": false
-    },
-    {
-     "text": "THAT!",
-     "start": 1.8,
-     "end": 2.08,
-     "activeEnd": 2.1,
-     "emph": true
     }
    ],
    "colors": {
@@ -231,29 +247,15 @@
   },
   {
    "id": 2,
-   "start": 2.1,
-   "end": 3.0,
-   "exit": 0,
+   "start": 1.67,
+   "end": 2.82,
+   "exit": 0.14,
    "words": [
     {
-     "text": "HE",
-     "start": 2.1,
-     "end": 2.38,
-     "activeEnd": 2.4,
-     "emph": false
-    },
-    {
-     "text": "JUST",
-     "start": 2.4,
-     "end": 2.68,
-     "activeEnd": 2.7,
-     "emph": false
-    },
-    {
-     "text": "WENT",
-     "start": 2.7,
-     "end": 2.98,
-     "activeEnd": 3.0,
+     "text": "THAT?",
+     "start": 1.67,
+     "end": 2.07,
+     "activeEnd": 2.32,
      "emph": false
     }
    ],
@@ -275,22 +277,265 @@
   },
   {
    "id": 3,
-   "start": 3.0,
-   "end": 4.1,
-   "exit": 0.14,
+   "start": 2.97,
+   "end": 3.72,
+   "exit": 0.0,
+   "words": [
+    {
+     "text": "HE",
+     "start": 2.97,
+     "end": 3.17,
+     "activeEnd": 3.17,
+     "emph": false
+    },
+    {
+     "text": "JUST",
+     "start": 3.17,
+     "end": 3.42,
+     "activeEnd": 3.42,
+     "emph": false
+    },
+    {
+     "text": "WENT",
+     "start": 3.42,
+     "end": 3.72,
+     "activeEnd": 3.72,
+     "emph": false
+    }
+   ],
+   "colors": {
+    "text": "#FFFFFF",
+    "active": "#FFE600",
+    "emph": "#FF6B5E",
+    "stroke": "#000000",
+    "shadow": "#000000",
+    "plate": "#000000",
+    "plateText": "#FFFFFF",
+    "accent": "#FFE600",
+    "accent2": "#00E5FF",
+    "cycle": [
+     "#FFE600"
+    ]
+   },
+   "from": null
+  },
+  {
+   "id": 4,
+   "start": 3.72,
+   "end": 4.42,
+   "exit": 0.0,
    "words": [
     {
      "text": "ALL",
-     "start": 3.0,
-     "end": 3.28,
-     "activeEnd": 3.3,
+     "start": 3.72,
+     "end": 3.97,
+     "activeEnd": 3.97,
      "emph": false
     },
     {
      "text": "IN",
-     "start": 3.3,
-     "end": 3.58,
-     "activeEnd": 3.83,
+     "start": 3.97,
+     "end": 4.37,
+     "activeEnd": 4.42,
+     "emph": false
+    }
+   ],
+   "colors": {
+    "text": "#FFFFFF",
+    "active": "#FFE600",
+    "emph": "#FF6B5E",
+    "stroke": "#000000",
+    "shadow": "#000000",
+    "plate": "#000000",
+    "plateText": "#FFFFFF",
+    "accent": "#FFE600",
+    "accent2": "#00E5FF",
+    "cycle": [
+     "#FFE600"
+    ]
+   },
+   "from": null
+  },
+  {
+   "id": 5,
+   "start": 4.42,
+   "end": 5.07,
+   "exit": 0.0,
+   "words": [
+    {
+     "text": "AND",
+     "start": 4.42,
+     "end": 4.59,
+     "activeEnd": 4.59,
+     "emph": false
+    },
+    {
+     "text": "IT",
+     "start": 4.59,
+     "end": 4.75,
+     "activeEnd": 4.75,
+     "emph": false
+    },
+    {
+     "text": "ACTUALLY",
+     "start": 4.75,
+     "end": 5.07,
+     "activeEnd": 5.07,
+     "emph": false
+    }
+   ],
+   "colors": {
+    "text": "#FFFFFF",
+    "active": "#FFE600",
+    "emph": "#FF6B5E",
+    "stroke": "#000000",
+    "shadow": "#000000",
+    "plate": "#000000",
+    "plateText": "#FFFFFF",
+    "accent": "#FFE600",
+    "accent2": "#00E5FF",
+    "cycle": [
+     "#FFE600"
+    ]
+   },
+   "from": null
+  },
+  {
+   "id": 6,
+   "start": 5.07,
+   "end": 6.27,
+   "exit": 0.14,
+   "words": [
+    {
+     "text": "WORKED!",
+     "start": 5.07,
+     "end": 5.52,
+     "activeEnd": 5.77,
+     "emph": true
+    }
+   ],
+   "colors": {
+    "text": "#FFFFFF",
+    "active": "#FFE600",
+    "emph": "#FF6B5E",
+    "stroke": "#000000",
+    "shadow": "#000000",
+    "plate": "#000000",
+    "plateText": "#FFFFFF",
+    "accent": "#FFE600",
+    "accent2": "#00E5FF",
+    "cycle": [
+     "#FFE600"
+    ]
+   },
+   "from": null
+  },
+  {
+   "id": 7,
+   "start": 6.37,
+   "end": 7.12,
+   "exit": 0.0,
+   "words": [
+    {
+     "text": "THAT'S",
+     "start": 6.37,
+     "end": 6.62,
+     "activeEnd": 6.62,
+     "emph": false
+    },
+    {
+     "text": "100%",
+     "start": 6.62,
+     "end": 6.92,
+     "activeEnd": 6.92,
+     "emph": true
+    },
+    {
+     "text": "THE",
+     "start": 6.92,
+     "end": 7.12,
+     "activeEnd": 7.12,
+     "emph": false
+    }
+   ],
+   "colors": {
+    "text": "#FFFFFF",
+    "active": "#FFE600",
+    "emph": "#FF6B5E",
+    "stroke": "#000000",
+    "shadow": "#000000",
+    "plate": "#000000",
+    "plateText": "#FFFFFF",
+    "accent": "#FFE600",
+    "accent2": "#00E5FF",
+    "cycle": [
+     "#FFE600"
+    ]
+   },
+   "from": null
+  },
+  {
+   "id": 8,
+   "start": 7.12,
+   "end": 8.22,
+   "exit": 0.0,
+   "words": [
+    {
+     "text": "CRAZIEST",
+     "start": 7.12,
+     "end": 7.57,
+     "activeEnd": 7.57,
+     "emph": false
+    },
+    {
+     "text": "PLAY",
+     "start": 7.57,
+     "end": 7.97,
+     "activeEnd": 8.02,
+     "emph": false
+    },
+    {
+     "text": "I'VE",
+     "start": 8.02,
+     "end": 8.22,
+     "activeEnd": 8.22,
+     "emph": false
+    }
+   ],
+   "colors": {
+    "text": "#FFFFFF",
+    "active": "#FFE600",
+    "emph": "#FF6B5E",
+    "stroke": "#000000",
+    "shadow": "#000000",
+    "plate": "#000000",
+    "plateText": "#FFFFFF",
+    "accent": "#FFE600",
+    "accent2": "#00E5FF",
+    "cycle": [
+     "#FFE600"
+    ]
+   },
+   "from": null
+  },
+  {
+   "id": 9,
+   "start": 8.22,
+   "end": 9.05,
+   "exit": 0.0,
+   "words": [
+    {
+     "text": "EVER",
+     "start": 8.22,
+     "end": 8.47,
+     "activeEnd": 8.47,
+     "emph": false
+    },
+    {
+     "text": "SEEN",
+     "start": 8.47,
+     "end": 8.87,
+     "activeEnd": 9.05,
      "emph": false
     }
    ],
@@ -314,14 +559,14 @@
  "labels": [
   {
    "id": 0,
-   "start": 4.0,
-   "end": 4.9,
+   "start": 9.05,
+   "end": 9.95,
    "exit": 0.12,
-   "text": "*FAIL*",
-   "kind": "fail",
+   "text": "*LET'S GO*",
+   "kind": "hype",
    "colors": {
-    "text": "#FF6B5E",
-    "active": "#FFE600",
+    "text": "#8DFF2F",
+    "active": "#8DFF2F",
     "emph": "#FF6B5E",
     "stroke": "#000000",
     "shadow": "#000000",

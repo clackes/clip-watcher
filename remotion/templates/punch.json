@@ -1,13 +1,13 @@
 {
   "title": "Punch",
-  "description": "The viral standard: fat geometric caps with a thick outline; the phrase pops in, the spoken word punches up in the highlight colour, shouted words shake.",
+  "description": "The viral standard, built from the animation library: fat geometric caps with a thick outline; the phrase pops in, the spoken word punches up in the highlight colour, shouted words shake, the phrase shrinks away before a pause. Each of those motions can be swapped by name from the settings.",
   "font": {
     "family": "Poppins",
     "file": "captions/Poppins-Black.ttf",
     "weight": 900,
-    "style": "normal",
-    "variations": {}
+    "style": "normal"
   },
+  "emphFont": null,
   "size": 92,
   "minSize": 56,
   "lineHeight": 1.1,
@@ -38,7 +38,7 @@
     "activeInS": 0.1,
     "activeOutS": 0.16,
     "colorS": 0.25,
-    "staggerS": 0
+    "staggerS": 0.06
   },
   "colors": {
     "text": "#FFFFFF",
@@ -113,17 +113,40 @@
   "fx": {
     "halo": 0.1,
     "shadowY": 0.08,
-    "enterScale": 0.62,
-    "enterFreq": 4.5,
-    "enterDamp": 0.55,
-    "enterRise": 0.3,
-    "activeScale": 1.14,
-    "activeLift": 0.05,
-    "activeOvershoot": 2.2,
-    "emphScale": 1.16,
-    "emphShakeDeg": 4,
-    "emphShakeS": 0.4,
-    "emphShakeHz": 6,
-    "exitDrop": 0.35
+    "enter": {
+      "name": "pop",
+      "params": {
+        "from": 0.62,
+        "freq": 4.5,
+        "damp": 0.55,
+        "rise": 0.3
+      }
+    },
+    "enterBy": "page",
+    "exit": {
+      "name": "shrink",
+      "params": {
+        "windup": 1.4,
+        "drop": 0.35
+      }
+    },
+    "exitBy": "page",
+    "active": {
+      "name": "punch",
+      "params": {
+        "scale": 1.14,
+        "lift": 0.05
+      }
+    },
+    "emph": {
+      "name": "shake",
+      "params": {
+        "angle": 4,
+        "hz": 5.5,
+        "shakeS": 0.45
+      }
+    },
+    "emphBoost": 1.15,
+    "idle": null
   }
 }

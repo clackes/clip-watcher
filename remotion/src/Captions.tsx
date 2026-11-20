@@ -5,7 +5,7 @@ import { E, prog, pulse } from "./core/ease";
 import { useFonts } from "./core/fonts";
 import { fitWords, placeY, type Layout } from "./core/layout";
 import { covered, fontMetrics } from "./core/measure";
-import type { BaseParams, CaptionProps, Colors, Label, Page } from "./core/schema";
+import type { BaseParams, CaptionProps, Colors, FontSpec, Label, Page } from "./core/schema";
 import type { Ctx, LabelCtx, Scene, WordState } from "./core/scene";
 import { DEBUG_TAG, Stage } from "./core/Stage";
 import type { Template } from "./core/template";
@@ -15,7 +15,7 @@ type Placed = { layout: Layout; cx: number; cy: number };
 type Plan = { pages: Placed[]; labels: Placed[] };
 
 function place(
-  texts: { text: string; scale: number }[],
+  texts: { text: string; scale: number; font?: FontSpec }[],
   P: BaseParams,
   props: CaptionProps,
   size: number,
@@ -63,7 +63,11 @@ function prepare(props: CaptionProps, P: BaseParams): Plan {
   return {
     pages: props.pages.map((p) =>
       place(
-        p.words.map((w) => ({ text: w.text, scale: w.emph ? P.emphScale : 1 })),
+        p.words.map((w) => ({
+          text: w.text,
+          scale: w.emph ? P.emphScale : 1,
+          font: w.emph && P.emphFont ? P.emphFont : undefined,
+        })),
         P,
         props,
         P.size,
@@ -210,7 +214,7 @@ export const Captions: React.FC<CaptionProps> = (props) => {
   const { fps, width, height } = useVideoConfig();
   const tpl = getTemplate(props.template);
   const P = useMemo(() => tpl.schema.parse(props.params) as BaseParams, [tpl, props.params]);
-  const fonts = useMemo(() => [P.font, ...(tpl.fonts?.(P) ?? [])], [P, tpl]);
+  const fonts = useMemo(() => [P.font, ...(P.emphFont ? [P.emphFont] : []), ...(tpl.fonts?.(P) ?? [])], [P, tpl]);
   const ready = useFonts(fonts);
   const plan = useMemo(() => (ready ? prepare(props, P) : null), [ready, props, P]);
 
@@ -218,7 +222,7 @@ export const Captions: React.FC<CaptionProps> = (props) => {
     if (!props.debug || !plan) return;
     // once per browser tab: which fonts drew the text, and how every page was laid out
     const texts = [...props.pages.flatMap((p) => p.words.map((w) => w.text)), ...props.labels.map((l) => l.text)];
-    const missing = texts.filter((t) => !covered(t, P.font, props.emojiFamily));
+    const missing = texts.filter((t) => !covered(t, P.font, props.emojiFamily) || (P.emphFont && !covered(t, P.emphFont, props.emojiFamily)));
     console.log(
       `${DEBUG_TAG}INIT${JSON.stringify({
         fonts: fonts.map((f) => f.file),
@@ -231,6 +235,12 @@ export const Captions: React.FC<CaptionProps> = (props) => {
           fit: Math.round(pl.layout.fit * 1000) / 1000,
           cx: pl.cx,
           cy: Math.round(pl.cy * 100) / 100,
+          words: pl.layout.words.map((w) => ({
+            t: w.text,
+            x: Math.round(w.x * 100) / 100,
+            w: Math.round(w.w * 100) / 100,
+            g: w.glyphs.map((g) => Math.round(g.x * 100) / 100),
+          })),
           lines: pl.layout.lines.map((l) => ({ w: Math.round(l.w * 100) / 100, y: Math.round(l.y * 100) / 100, n: l.words.length })),
         })),
       })}`,
