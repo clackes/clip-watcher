@@ -179,8 +179,8 @@ function capLib(root, o) {
     const quick = !Object.keys(st.settings).length && c.preview;
     if (quick) { show(c.preview); wait.hidden = true; }
     else { wait.hidden = false; wait.className = 'capwait'; wait.lastElementChild.textContent = video.dataset.url ? 'Rendering your change' : 'Rendering the preview'; }
-    try { const r = await previewOf(c.id, animated() ? st.settings : null); if (mine !== st.seq) return; if (!Object.keys(st.settings).length) c.preview = r.url; show(r.url); wait.hidden = true; paintWarn(r.warnings || []); paintTile(c); }
-    catch (err) { if (mine !== st.seq) return; wait.hidden = true; st.err = err.message; paintWarn([]); }
+    try { const r = await previewOf(c.id, animated() ? st.settings : null); if (mine !== st.seq) return; if (!Object.keys(st.settings).length) c.preview = r.url; show(r.url); wait.hidden = true; paintWarn(r.warnings || []); paintTile(c); paintActs(); }
+    catch (err) { if (mine !== st.seq) return; wait.hidden = true; st.err = err.message; paintWarn([]); paintActs(); }
   }
   function paintWarn(list) { const el = R$('warn'), all = [...(st.err ? [st.err] : []), ...list]; el.hidden = !all.length; el.textContent = all.join(' '); }
   function paintStage() {
@@ -194,7 +194,7 @@ function capLib(root, o) {
   }
   function paintCol() { R$('colnote').textContent = st.colors === 'auto' ? 'For every phrase the video under it is looked at: a highlight that is not already in the picture, always readable (at least 4.5 to 1). The preview shows the template\'s own colours.' : 'The colours you see here, on every video.'; }
   function paintActs() {
-    const c = cur(), s = state(), p = o.primary, off = blocked(c) || (p.disabled && p.disabled(s));
+    const c = cur(), s = state(), p = o.primary, off = blocked(c) || !!st.err || (p.disabled && p.disabled(s));
     R$('acts').innerHTML = `<button type="button" class="btn btn-primary" data-a="go"${off ? ' disabled' : ''}>${esc(p.label(s))}</button>` + (c.kind === 'animated' && !blocked(c) ? `<button type="button" class="btn btn-glass" data-a="tune" aria-expanded="${st.tune}">${st.tune ? 'Close the settings' : 'Fine-tune'}</button>` : '') + (o.note ? `<small class="cap-note">${esc(o.note(s))}</small>` : '');
   }
   R$('acts').onclick = async e => { const b = e.target.closest('button'); if (!b) return;
