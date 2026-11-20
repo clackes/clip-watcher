@@ -368,6 +368,56 @@ def test_an_animation_is_swapped_whole_from_the_settings(monkeypatch):
     }  # same name: merged
 
 
+def test_an_own_template_is_its_base_as_it_shipped_with_its_settings(monkeypatch):
+    base, P = config.global_config(), raw_punch()
+    over = {
+        "templates": {"punch": {"size": 100}},  # this machine's edit of the base: not under an own one
+        "presets": {
+            "loud": {"name": "Loud", "base": "punch", "settings": {"size": 130}, "created": 5},
+            "plain": {"name": "Plain", "base": "punch"},
+            "punch": {"name": "Shadowed", "base": "jelly"},  # a shipped template's name: never an id
+            "Not An Id": {"name": "x", "base": "punch"},
+            "orphan": {"name": "x", "base": "gone"},
+        },
+    }
+    monkeypatch.setattr(
+        config, "global_config", lambda: {**base, "render": {**base.get("render", {}), "rm": over}}
+    )
+    assert rm.presets() == {
+        "loud": {"name": "Loud", "base": "punch", "settings": {"size": 130}, "created": 5.0},
+        "plain": {"name": "Plain", "base": "punch", "settings": {}, "created": 0.0},
+    }
+    assert "loud" not in rm.templates()  # the shipped ones, which the frame checks go through
+    assert rm.load_template("loud") == {**P, "size": 130} and rm.load_template("plain") == P
+    assert rm.load_template("punch")["size"] == 100 and rm.load_template("punch")["title"] == "Punch"
+    assert rm.load_template("loud", {"tilt": 2})["tilt"] == 2
+    assert rm.base_name("loud") == "punch" and rm.base_name("punch") == "punch"
+    with rm.overriding({"templates": {"loud": {"size": 70}}}):  # one video's own settings
+        assert rm.load_template("loud")["size"] == 70
+    # the renderer draws the base's component with the own template's parameters
+    words = [Word(0.2, 0.6, "hello"), Word(0.6, 1.0, "there")]
+    props, _ = rm.build_props(words, 2.0, "loud", box=rm.caption_box(960, "seam"), fps=30, colors="fixed")
+    assert props["template"] == "punch" and props["params"]["size"] == 130
+    for gone in ("orphan", "nope"):
+        with pytest.raises(rm.RemotionError, match="unknown caption template"):
+            rm.load_template(gone)
+
+
+def test_a_short_falls_back_when_its_own_template_is_gone(monkeypatch, tmp_path):
+    """A style that names an own template nobody has any more is a template that cannot be rendered: the
+    clip gets the built-in style and says why."""
+    calls = []
+    monkeypatch.setattr(rm, "missing", lambda: None)
+    monkeypatch.setattr(rm, "color_mode", lambda: "fixed")
+    box = rm.caption_box(960, "seam")
+    used = template._encode_with_captions(
+        lambda style, overlay: calls.append((style, overlay)),
+        "rm:gone_one", tmp_path, [Word(0.2, 0.6, "hello")], 2.0, 30.0, box, None, None, lambda p: ["true"],
+    )  # fmt: skip
+    assert calls == [("word", None)] and used["captions"] == "word"
+    assert "unknown caption template 'gone_one'" in used["captions_error"]
+
+
 def test_unknown_templates_and_modes_are_errors_not_crashes():
     with pytest.raises(rm.RemotionError):
         rm.load_template("no-such-template")

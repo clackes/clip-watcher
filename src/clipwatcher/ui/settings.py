@@ -272,15 +272,29 @@ def save_template(name: str, overrides: dict[str, Any]) -> None:
     """Keep ``overrides`` as this machine's own version of an animated caption template
     (render.rm.templates.<name> in config/local.yaml); none puts the template back as it came. The values
     are the caller's to check (ui/captions.check)."""
+    _keep_rm("templates", name, overrides or None)
+
+
+def save_preset(preset_id: str, preset: dict[str, Any] | None) -> None:
+    """Keep one of this machine's own caption templates (render.rm.presets.<id> in config/local.yaml:
+    {"name", "base", "settings", "created"}); None takes it away. What is in it is the caller's to check
+    (ui/library)."""
+    _keep_rm("presets", preset_id, preset)
+
+
+def _keep_rm(block: str, key: str, value: dict[str, Any] | None) -> None:
+    """render.rm.<block>.<key> of config/local.yaml set to ``value``, or taken out; nothing empty stays."""
     tree = copy.deepcopy(config.local_overrides())
     rm = tree.setdefault("render", {}).setdefault("rm", {})
-    templates = rm.setdefault("templates", {})
-    if overrides:
-        templates[name] = overrides
+    held = rm.get(block)
+    if not isinstance(held, dict):
+        held = rm[block] = {}
+    if value:
+        held[key] = value
     else:
-        templates.pop(name, None)
-    if not templates:
-        del rm["templates"]
+        held.pop(key, None)
+    if not held:
+        del rm[block]
     if not rm:
         del tree["render"]["rm"]
     if not tree["render"]:
@@ -292,7 +306,7 @@ def _flat(tree: dict[str, Any], prefix: str = "") -> dict[str, Any]:
     out: dict[str, Any] = {}
     for k, v in tree.items():
         key = f"{prefix}{k}"
-        if isinstance(v, dict) and key not in FIELDS:
+        if isinstance(v, dict) and v and key not in FIELDS:  # an empty block is a value: it is kept
             out.update(_flat(v, key + "."))
         else:
             out[key] = v
