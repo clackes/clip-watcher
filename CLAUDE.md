@@ -249,7 +249,27 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   channels 239 / 56 / 0 (261 / 0 / 34), so 46 moments that were right are now held back as well. Wrong on
   fresh: a reframe although an overlay cam is there (5), a panel where there is no cam (3: an empty
   inventory slot, a spectator in a broadcast), a sponsor panel or text strip inside the panel (2), a panel
-  too tight inside a drawn frame (2). Detection needs a face detector: mediapipe with
+  too tight inside a drawn frame (2). Round three, 20 Nov (a third fresh set, and the reframe back for
+  known full-screen channels): a confirmed `has_webcam: false` scene in the streamer's `layouts:` with no
+  gameplay crop now decides `fullcam` when there is a face, no webcam-sized rectangle of drawn sides
+  around it and no cam proposal in the picture (D12's reframe is back for those channels; the picture
+  still wins when it shows an overlay). In the rectangle: a thin label strip drawn over a side of the
+  cam is peeled, and the room rule reads the rectangle's own sides. Not sure any more (whole frame): a
+  full camera beside a rectangle that could be a webcam, a cut-out that is not at its place through the
+  whole stretch, three sure sides with a face only the enlarged look found. Tried and taken out again
+  because each held back far more right panels than wrong ones: "several faces, one placed like a
+  cut-out" (11 right for 1 wrong) and "a line more than a third into the rectangle" (7 for 1). Counted
+  right / whole frame / wrong, no confirmed scenes: a third fresh set of 47 channels 142 / 79 / 14 of 235
+  moments (142 / 74 / 19 with round two's code), Shorts 30 / 12 / 5; fresh-2 169 / 32 / 4 (Shorts 30 / 9
+  / 2); the 31 of round one 123 / 32 / 0; the first 59 channels 233 / 62 / 0; all four sets 667 / 205 /
+  18 of 890 (round two 674 / 185 / 31). With the full-camera scene confirmed for the 29 channels that
+  film full screen: 94 / 48 / 3 of their 145 moments (70 / 74 / 1 without). Wrong on the third set: a
+  reframe although an overlay cam is there (8: a still title screen, menu or browser with one face on
+  it), a panel where there is no cam (3: a video being watched, an emote), a cut-out on a full-camera
+  broadcast (1), a frame or name bar inside the panel (2). What the picture cannot decide, and a
+  confirmed scene or the judge can: one face in a still picture with no rectangle (a full camera, or a
+  menu with a face on it: right 13 times, wrong 7), a face low in a moving picture (a cut-out webcam, or
+  a mascot), a rectangle with a face that is a video being watched. Detection needs a face detector: mediapipe with
   models/blaze_face_short_range.tflite (README), else OpenCV; without one the configured default scene is
   used and the companion app says so on the step.
 - D19 Animated caption templates (owner, 19-20 Nov: brand-new, highly styled, animated templates rendered
