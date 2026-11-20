@@ -30,6 +30,32 @@ const api = {
 };
 const S = { ov: null, live: null, clips: [], ins: null, cfg: null };  // what the server told us
 
+/* ---------- who the streamers are: picture, badges, display name ----------
+   Asked of the app's server (which asks Twitch and Kick once a day and keeps the pictures), a batch at a
+   time, then painted into whatever on the page names that streamer. */
+const PROF = {}; let profWant = new Set(), profTimer = 0;
+const pkey = (platform, login) => (platform === 'kick' ? 'kick' : 'twitch') + ':' + String(login || '').toLowerCase();
+const platformOf = login => { const s = S.ov && S.ov.streamers.find(x => x.login === String(login).toLowerCase()); return s ? s.platform : 'twitch'; };
+function touch(k) {
+  if (!PROF[k] && /^(twitch|kick):[a-z0-9_]{2,40}$/.test(k)) profWant.add(k);
+  if (profTimer) return;
+  profTimer = setTimeout(async () => { profTimer = 0; const ks = [...profWant]; profWant = new Set();
+    if (ks.length) { try { (await api.get('/api/profiles?who=' + encodeURIComponent(ks.join(',')))).forEach(r => { PROF[pkey(r.platform, r.login)] = r; }); } catch (e) { ks.forEach(k2 => { PROF[k2] = PROF[k2] || { badges: [] }; }); } }
+    paintProfiles(); }, 40);
+}
+function avatar(platform, login, cls = '') { const k = pkey(platform, login); touch(k); return `<span class="av ${cls}" data-av="${esc(k)}"><i>${esc(String(login || '?')[0].toUpperCase())}</i><span class="pfm pf-${platform === 'kick' ? 'kick' : 'twitch'}">${ic(platform === 'kick' ? 'kick' : 'twitch')}</span></span>`; }
+function badges(platform, login, max = 2) { const k = pkey(platform, login); touch(k); return `<span class="bdg" data-bd="${esc(k)}" data-max="${max}"></span>`; }
+function named(platform, login) { const k = pkey(platform, login); touch(k); return `<span data-nm="${esc(k)}">${esc(PROF[k] && PROF[k].known ? PROF[k].name : login)}</span>`; }
+function paintProfiles() {
+  $$('[data-av]').forEach(el => { const pr = PROF[el.dataset.av]; if (!pr || !pr.avatar || el.querySelector('img')) return;
+    const img = new Image(); img.alt = ''; img.decoding = 'async'; img.onload = () => el.classList.add('has'); img.src = pr.avatar; el.insertBefore(img, el.querySelector('.pfm')); });
+  $$('[data-bd]').forEach(el => { const pr = PROF[el.dataset.bd]; if (!pr || el.dataset.done) return; el.dataset.done = '1';
+    el.innerHTML = (pr.badges || []).slice(0, +el.dataset.max || 2).map((b, i) => b.image ? `<img src="${esc(b.image)}" alt="${esc(b.title)}" title="${esc(b.title)}" style="--i:${i}">` : `<span class="vf vf-${pr.platform}" role="img" aria-label="${esc(b.title)}" title="${esc(b.title)}" style="--i:${i}">${ic('check')}</span>`).join(''); });
+  $$('[data-nm]').forEach(el => { const pr = PROF[el.dataset.nm]; if (pr && pr.known && el.textContent !== pr.name) el.textContent = pr.name; });
+  $$('[data-fo]').forEach(el => { const pr = PROF[el.dataset.fo]; if (pr && pr.followers != null) el.textContent = compact(pr.followers) + ' followers' + (pr.verified ? (pr.platform === 'kick' ? ' · verified on Kick' : ' · Twitch partner') : pr.affiliate ? ' · affiliate' : ''); });
+}
+const compact = n => n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1).replace(/\.0$/, '') + 'M' : n >= 1e3 ? (n / 1e3).toFixed(n >= 1e4 ? 0 : 1).replace(/\.0$/, '') + 'K' : String(n);
+
 function tilt(el, max = 5) {
   if (reduce) return;
   el.addEventListener('pointermove', e => { const r = el.getBoundingClientRect(), x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height; el.style.setProperty('--ty', ((x - .5) * 2 * max).toFixed(2) + 'deg'); el.style.setProperty('--tx', ((.5 - y) * 2 * max).toFixed(2) + 'deg'); el.style.setProperty('--gx', (x * 100).toFixed(0) + '%'); el.style.setProperty('--gy', (y * 100).toFixed(0) + '%'); });
@@ -96,7 +122,7 @@ function paintSource() {
     else {
     const on = s => { const st = liveOf(s.login); return st && st.live ? 1 : 0; };
     $('#whoCards').innerHTML = [...list].sort((a, b) => on(b) - on(a)).map(s => { const st = liveOf(s.login), line = !S.live ? 'Checking...' : !st ? '' : st.error ? 'Could not be checked' : st.live ? `<i class="dot"></i>Live${st.category ? ' · ' + esc(st.category) : ''}` : 'Offline';
-      return `<button type="button" class="choice sm${S.live && !on(s) ? ' off' : ''}" data-k="${s.login}" aria-pressed="${W.streamer === s.login}"><span class="tick">${ic('check')}</span><span class="row" style="gap:10px;flex-wrap:nowrap">${pf(s.platform)}<b>${esc(s.login)}</b></span><small>${line}</small></button>`; }).join(''); }
+      return `<button type="button" class="choice sm${S.live && !on(s) ? ' off' : ''}" data-k="${s.login}" aria-pressed="${W.streamer === s.login}"><span class="tick">${ic('check')}</span><span class="byline">${avatar(s.platform, s.login, on(s) ? 'live' : '')}<span class="who"><b>${named(s.platform, s.login)}${badges(s.platform, s.login)}</b><small>${line}</small></span></span></button>`; }).join(''); }
     seg($('#minSeg'), [[5, '5 minutes'], [15, '15 minutes'], [60, '1 hour'], [0, 'Until I stop it']], W.minutes, v => { W.minutes = +v; store.set('minutes', +v); });
     if (!S.live && list.length) api.get('/api/live').then(rows => { S.live = rows; if (W.step === 2 && W.mode === 'live') paintSource(); }).catch(() => { S.live = []; });
   } else {
@@ -149,6 +175,8 @@ function resetRunView(kind, params) {
   const tests = kind === 'tests', name = kind === 'live' ? 'live lane' : kind === 'vod' ? 'VOD lane' : 'test suite';
   $('#runTitle').innerHTML = kind === 'render' ? 'Rendering the Short <span class="gt">again</span>' : `Running the <span class="gt">${name}</span>`;
   $('#runNote').textContent = kind === 'live' ? `${params.streamer}, ${+params.minutes ? 'for ' + params.minutes + ' minutes' : 'until you stop it'}.` : kind === 'vod' ? `${params.streamer} on ${PFN[params.platform] || 'Twitch'}: up to ${plural(params.top || 3, 'clip')}.` : kind === 'render' ? `${params.clip}: ${params.captions || 'the same'} captions, ${params.layout === 'stack' ? 'the older stack' : 'webcam over gameplay'}.` : 'Every test of the project, as pytest runs them.';
+  const rp = kind === 'vod' ? params.platform : platformOf(params.streamer), rw = $('#runWho'); rw.hidden = !(kind === 'live' || kind === 'vod');
+  rw.innerHTML = rw.hidden ? '' : `${avatar(rp, params.streamer, 'lg')}<span class="who"><b>${named(rp, params.streamer)}${badges(rp, params.streamer, 4)}</b><small data-fo="${esc(pkey(rp, params.streamer))}">${rp === 'kick' ? 'kick.com/' : 'twitch.tv/'}${esc(params.streamer)}</small></span>`;
   $('#steps').innerHTML = ''; $('#log').innerHTML = ''; $('#stepsBox').hidden = false; $('#resultBox').hidden = true; $('#resultBox').innerHTML = '';
   $('#runCtl').hidden = false; $('#stopBtn').disabled = false; $('#stopBtn').textContent = 'Stop'; $('#forceBtn').hidden = true; $('#forceBtn').disabled = false;
   $('#stagePhone').hidden = tests; $('#stageDots').hidden = !tests; $('#dots').innerHTML = ''; $('#dotsNote').textContent = 'Collecting the tests';
@@ -265,7 +293,7 @@ async function loadClips() { if (!S.clips.length) { try { S.clips = await api.ge
 function renderClips() {
   const rows = S.clips.filter(c => histFilter === 'all' || c.platform === histFilter), up = S.clips.filter(c => c.state === 'PUBLISHED').length;
   $('#clipSum').textContent = S.clips.length ? `${S.clips.length} ${S.clips.length === 1 ? 'clip' : 'clips'} in the staging folder, ${up} uploaded. A person approves each one in Telegram before it goes anywhere. Pick one to watch it and see why it was chosen.` : 'Nothing is staged yet. Clips appear here as soon as a run makes one.';
-  $('#clipList').innerHTML = rows.length ? rows.map((c, i) => `<button type="button" class="clip" data-id="${esc(c.id)}">${pf(c.platform)}<span class="ct"><b>${esc(c.title || c.id)}</b><small>${esc(c.streamer)} · ${when(c.created)} · ${c.seconds != null ? c.seconds + ' s' : ''}${c.captions ? ' · ' + esc(c.captions) + ' captions' : ''}</small></span><span class="sc"><b class="num">${c.final_score != null ? (+c.final_score).toFixed(2) : '–'}</b><small>score</small></span>${stateBadge(c.state)}</button>`).join('')
+  $('#clipList').innerHTML = rows.length ? rows.map((c, i) => `<button type="button" class="clip" data-id="${esc(c.id)}">${avatar(c.platform, c.streamer, 'lg')}<span class="ct"><b>${esc(c.title || c.id)}</b><small>${named(c.platform, c.streamer)}${badges(c.platform, c.streamer, 1)} · ${when(c.created)} · ${c.seconds != null ? c.seconds + ' s' : ''}${c.captions ? ' · ' + esc(c.captions) + ' captions' : ''}</small></span><span class="sc"><b class="num">${c.final_score != null ? (+c.final_score).toFixed(2) : '–'}</b><small>score</small></span>${stateBadge(c.state)}</button>`).join('')
     : `<div class="empty card"><span class="tile">${ic('clips')}</span><b>${S.clips.length ? 'None on this platform' : 'No clips yet'}</b><span>${S.clips.length ? 'Choose All to see every clip.' : 'Start a run and the first clip lands here.'}</span>${S.clips.length ? '' : '<a class="btn btn-primary" href="#run">Start a run</a>'}</div>`;
 }
 const stateBadge = s => s === 'PUBLISHED' ? '<span class="badge live"><i class="dot"></i>Uploaded</span>' : s === 'APPROVED' ? '<span class="badge live"><i class="dot"></i>Approved</span>' : s === 'REJECTED' ? '<span class="badge"><i class="dot off"></i>Rejected</span>' : s === 'CLAIMED' ? '<span class="badge warn"><i class="dot warn"></i>Being reviewed</span>' : '<span class="badge warn"><i class="dot warn"></i>Waiting</span>';
@@ -285,7 +313,8 @@ async function openClip(id) {
       <div class="row"><button class="btn btn-primary btn-sm" id="dRender">Render again with these</button></div>
       <p class="cap-note">${words}</p></div></div>`;
   $('#drawer').innerHTML = `<div class="row" style="justify-content:space-between"><span class="pill"><span>${c.lane === 'vod' ? 'VOD lane' : 'Live lane'} · ${when(c.created)}</span></span><button class="btn btn-glass btn-sm" id="dClose">Close</button></div>
-    <div class="row" style="flex-wrap:nowrap;align-items:flex-start">${pf(c.platform)}<h2 style="font-size:1.4rem">${esc(c.title || c.id)}</h2></div>${c.hook ? `<p style="color:var(--muted)">${esc(c.hook)}</p>` : ''}
+    <h2 style="font-size:1.4rem">${esc(c.title || c.id)}</h2>${c.hook ? `<p style="color:var(--muted)">${esc(c.hook)}</p>` : ''}
+    <div class="byline">${avatar(c.platform, c.streamer, 'lg')}<span class="who"><b>${named(c.platform, c.streamer)}${badges(c.platform, c.streamer, 4)}</b><small data-fo="${esc(pkey(c.platform, c.streamer))}">${esc(c.credit)}</small></span></div>
     ${c.files['short_9x16.mp4'] ? `<video class="dvideo" controls playsinline preload="metadata" src="/media/${encodeURIComponent(c.id)}/short_9x16.mp4"></video>` : ''}
     <div class="card"><h3 style="margin-bottom:12px">How it scored</h3>
       <dl class="kv"><dt>Final score</dt><dd>${c.final_score != null ? (+c.final_score).toFixed(2) : '–'}</dd><dt>From the chat</dt><dd>${c.chat_score != null ? (+c.chat_score).toFixed(2) : '–'}</dd><dt>Loudness and viewer clips</dt><dd>+${bonus.toFixed(2)}</dd><dt>Chatters in the spike</dt><dd>${c.chatters || '–'}</dd><dt>Rank in the stream</dt><dd>${c.chat_rank != null ? '#' + Math.round(c.chat_rank) : '–'}</dd><dt>A viewer clipped it too</dt><dd>${c.viewer_clip ? 'yes' : 'no'}</dd></dl>
@@ -424,7 +453,7 @@ function renderSettings() {
   const ov = S.ov || { streamers: [] };
   const rows = g => g.fields.map(f => { const id = 'f-' + f.key.replace(/\./g, '-'); const ctl = f.type === 'range' ? `<input type="range" id="${id}" min="${f.min}" max="${f.max}" step="${f.step}">` : f.type === 'toggle' ? `<button class="sw-t" role="switch" id="${id}" aria-label="${esc(f.label)}"></button>` : `<select id="${id}">${f.options.map(o => `<option>${o}</option>`).join('')}</select>`; return `<div class="cfg-row" data-k="${f.key}"><label for="${id}">${esc(f.label)}</label>${ctl}<output></output>${f.hint ? `<small>${esc(f.hint)}</small>` : ''}</div>`; }).join('');
   $('#cfgGrid').innerHTML = S.cfg.groups.map((g, gi) => `<details class="acc" name="acc"${gi === 0 ? ' open' : ''}><summary><i>${gi + 1}</i><span><b>${esc(g.title)}</b><small>${esc(g.about)}</small></span></summary><div class="cfg">${gi === 0 ? '<div class="wbar" id="wbar"></div><p class="cap-note" id="wsum"></p>' : ''}${rows(g)}</div></details>`).join('') +
-    `<details class="acc" name="acc"><summary><i>${S.cfg.groups.length + 1}</i><span><b>Sources and destinations</b><small>Who the bot watches and where approved clips go</small></span></summary><div class="cfg"><div class="row">${ov.streamers.length ? ov.streamers.map(s => `<span class="badge">${ic(s.platform, 'pf-' + s.platform)} ${esc(s.login)}</span>`).join('') : '<span class="cap-note">No streamers in config/streamers.yaml yet.</span>'}</div><div class="row"><span class="badge">${ic('telegram', 'pf-telegram')} Telegram approval${ov.telegram ? '' : ' (no bot token set)'}</span><span class="badge">${ic('youtube', 'pf-youtube')} YouTube Shorts${ov.dry_run ? ' (dry run: no uploads)' : ''}</span><span class="badge">${ic('claude', 'pf-claude')} Judge${ov.judge_key ? '' : ' (no API key: fallback titles)'}</span></div><p class="cap-note">Streamers, keys and tokens are set in the config files and the environment, not here.</p></div></details>`;
+    `<details class="acc" name="acc"><summary><i>${S.cfg.groups.length + 1}</i><span><b>Sources and destinations</b><small>Who the bot watches and where approved clips go</small></span></summary><div class="cfg"><div class="row">${ov.streamers.length ? ov.streamers.map(s => `<span class="badge src">${avatar(s.platform, s.login, 'xs')}${named(s.platform, s.login)}${badges(s.platform, s.login, 1)}</span>`).join('') : '<span class="cap-note">No streamers in config/streamers.yaml yet.</span>'}</div><div class="row"><span class="badge">${ic('telegram', 'pf-telegram')} Telegram approval${ov.telegram ? '' : ' (no bot token set)'}</span><span class="badge">${ic('youtube', 'pf-youtube')} YouTube Shorts${ov.dry_run ? ' (dry run: no uploads)' : ''}</span><span class="badge">${ic('claude', 'pf-claude')} Judge${ov.judge_key ? '' : ' (no API key: fallback titles)'}</span></div><p class="cap-note">Streamers, keys and tokens are set in the config files and the environment, not here.</p></div></details>`;
   $$('#cfgGrid [data-k]').forEach(rowEl => { const f = fieldOf(rowEl.dataset.k), inp = rowEl.querySelector('input,select,.sw-t'); paintRow(rowEl);
     const set = v => { E[f.key] = v; paintRow(rowEl); paintSave(); };
     if (f.type === 'toggle') inp.onclick = () => set(!E[f.key]); else inp.oninput = () => set(f.type === 'range' ? +inp.value : inp.value); });

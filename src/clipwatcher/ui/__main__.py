@@ -24,11 +24,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Port {a.port} cannot be used ({e}). Try --port {a.port + 1}.", file=sys.stderr)
         return 2
     url = f"http://{'127.0.0.1' if a.host in ('127.0.0.1', '0.0.0.0') else a.host}:{a.port}/"  # noqa: S104
-    print(f"Companion for Clip Watcher: {url}   (Ctrl-C to stop)")
+    print(f"Companion for Clip Watcher: {url}   (Ctrl-C to stop)", flush=True)
     print(
         "DRY_RUN is on: nothing is uploaded."
         if config.dry_run()
-        else "DRY_RUN=0: approved clips will be uploaded."
+        else "DRY_RUN=0: approved clips will be uploaded.",
+        flush=True,
     )
     if a.open:
         webbrowser.open(url)

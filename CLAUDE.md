@@ -193,7 +193,13 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   runs with DRY_RUN=1 and without this machine's CLIPWATCHER_STAGING / CONFIG / LEDGER / EVENTS. The page
   lists the channels of config/streamers.yaml only (the example file is a template, not a list) and takes
   any other Twitch channel typed in; a Twitch VOD is held back with a sentence when TwitchDownloaderCLI is
-  not installed. Checked 20 Nov through the page on real streams: two live runs (kaicenat, clix) with a
+  not installed. Streamers are shown with their profile picture, display name and badges (owner, 20 Nov):
+  `ui/profiles.py` asks Twitch's GQL (picture, partner, the badges the streamer displays) and Kick's channel
+  address (picture, verified, the channel's subscriber badges) without a login, keeps the answer for a day
+  in work/ui/profiles/ and the pictures by the hash of their address, and the page loads them from the app
+  only (https on static-cdn.jtvnw.net and files.kick.com, PNG/JPEG/GIF/WebP by their first bytes, 2 MB at
+  most; a failed lookup keeps the last profile and is tried again after ten minutes). Kick has no picture
+  for "verified": the page draws that tick. Checked 20 Nov through the page on real streams: two live runs (kaicenat, clix) with a
   forced clip each, staged and played in the page; a Short rendered again with another caption style; a
   render stopped midway (the clip kept its video).
 - D9 .ts seek bug: never `-ss` exact on MPEG-TS. Coarse input seek to max(0, START-6), then
@@ -252,3 +258,5 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   `.start(kind, params) -> Run`, `.stop(id)`, `.force(id, seconds)`, `.history()`; `data.clips() / clip(id) /
   media_path(id, name) / overview() / insights()`; `settings.schema()`, `settings.save(values, merge=False)`;
   `jobs.rerender(clip_id, captions=None, layout=None, root=None) -> Path`.
+  `profiles.Profiles(root=None)` `.get(platform, login) -> dict`, `.many([(platform, login)])`,
+  `.image(image_id) -> (Path, content type) | None`.
