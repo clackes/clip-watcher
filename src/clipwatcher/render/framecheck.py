@@ -147,10 +147,32 @@ FIXTURES: dict[str, Fixture] = {
             (*_seq(0.15, 0.27, "I can't BELIEVE that actually just happened"), (2.4, 2.9, "WOW!")),
             box="reframe",
         ),  # fmt: skip
+        # found on a real clip: three shouted words in a row, each spoken while its letters still land, and
+        # a last page that leaves letter by letter
+        Fixture(
+            "shouts",
+            5.555,
+            (
+                (0.4, 0.612, "we"),
+                (0.632, 0.761, "are"),
+                (0.811, 1.043, "so"),
+                (1.043, 1.215, "back"),
+                (2.115, 2.245, "wait"),
+                (2.295, 2.464, "wait"),
+                (2.464, 2.676, "wait"),
+                (2.726, 2.997, "why"),
+                (2.997, 3.264, "would"),
+                (3.314, 3.492, "you"),
+                (3.542, 3.727, "do"),
+                (3.747, 3.996, "that"),
+                (4.016, 4.308, "what"),
+                (4.328, 4.555, "is"),
+            ),
+        ),  # fmt: skip
     )
 }
 QUICK = ("short", "single", "empty")
-FULL = ("mix", "fast", "overlap", "single", "empty", "long", "tall")
+FULL = ("mix", "fast", "overlap", "single", "empty", "long", "tall", "shouts")
 
 
 def pseudo_transcript(dur: float, seed: int = 7) -> list[Word]:
@@ -513,23 +535,41 @@ def check_layout(res: CaseResult, init: dict, params: dict, props: dict) -> None
                 )
 
 
+def _reached(np, clear):
+    """The clear pixels that a path of clear pixels (up, down, left, right) joins to the outside of the
+    picture. A whole run of clear pixels at a time, along the rows and then the columns, until nothing is
+    added. (Pillow's flood fill leaves an image made from an array untouched, without a word: until 20 Nov
+    this was one, and every clear pixel near a compact shape counted as walled in.)"""
+    c = np.pad(clear, 1, constant_values=True)
+    r = np.zeros_like(c)
+    r[0, :] = r[-1, :] = r[:, 0] = r[:, -1] = True
+
+    def sweep(c, r):  # a run with a reached pixel in it is reached whole
+        ids = np.cumsum(~c, axis=1) + np.arange(c.shape[0])[:, None] * (c.shape[1] + 1)
+        hit = np.zeros(c.shape[0] * (c.shape[1] + 1) + 1, bool)
+        hit[ids[r]] = True
+        return c & hit[ids]
+
+    n = -1
+    while n != (n := int(r.sum())):
+        r = sweep(c, r)
+        r = sweep(c.T, r.T).T
+    return r[1:-1, 1:-1]
+
+
 def pinholes(np, alpha) -> int:
     """Transparent pixels in specks that ink walls in: inside a counter an outline has all but closed, or
     between two outlines that touch above and below. A see-through region counts when no path of
     transparent pixels leads from it to the outside of the drawing and no part of it is 5 px across (the
     renderer fills counters whose opening would be under 7 px, so anything smaller is a defect). The open
     counters of big letters and the gaps between words do not count."""
-    from PIL import Image, ImageDraw
-
     clear = alpha < 128
     if not (~clear).any():
         return 0
     ys, xs = np.nonzero(~clear)
     y0, y1, x0, x1 = max(0, ys.min() - 2), ys.max() + 3, max(0, xs.min() - 2), xs.max() + 3
     crop = clear[y0:y1, x0:x1]
-    im = Image.fromarray(np.pad(crop, 1, constant_values=True).astype(np.uint8) * 255)
-    ImageDraw.floodfill(im, (0, 0), 128)  # everything transparent that the outside reaches
-    enclosed = (np.asarray(im)[1:-1, 1:-1] == 255) & crop
+    enclosed = crop & ~_reached(np, crop)
     if not enclosed.any():
         return 0
     big = _morph(np, enclosed, 5, grow=False)  # the parts at least 5 px across ...
@@ -620,7 +660,8 @@ def check_geometry(
             res.stats["speck_frames_checked"] = res.stats.get("speck_frames_checked", 0) + 1
             if holes:
                 res.stats["speck_frames"] = res.stats.get("speck_frames", 0) + 1
-                res.stats["speck_px_max"] = max(res.stats.get("speck_px_max", 0), holes)
+                if holes > res.stats.get("speck_px_max", 0):
+                    res.stats["speck_px_max"], res.stats["speck_px_at"] = holes, f  # the frame to look at
         if rec["u"] or rec["s"]:
             res.ran("stray_ink")
             stray = int((solid & ~allowed).sum())
@@ -714,8 +755,12 @@ def _moved(a: dict | None, b: dict) -> bool:
     """True when some unit visibly differs between two scene records (more than a hundredth of a pixel)."""
     if a is None:
         return False
-    ua = {u["id"]: u for u in a["u"]}
-    for u in b["u"]:
+
+    def shown(rec: dict) -> list[dict]:  # a unit scaled to nothing draws no pixel: it cannot stutter
+        return [u for u in rec["u"] if not (u["box"] and u["sc"] < 0.02)]
+
+    ua = {u["id"]: u for u in shown(a)}
+    for u in (ub := shown(b)):
         if u.get("em"):  # an emoji is system text, which the browser moves in whole-pixel steps
             continue
         o = ua.get(u["id"])
@@ -723,7 +768,7 @@ def _moved(a: dict | None, b: dict) -> bool:
             return True
         if any(abs(x - y) > 0.35 for x, y in zip(o["box"], u["box"], strict=True)):
             return True
-    return len(ua) != len(b["u"])
+    return len(ua) != len(ub)
 
 
 def _series(frames: dict[int, dict], n: int) -> dict[str, dict[int, dict]]:
@@ -843,11 +888,36 @@ def unit_masks(np, img, u: dict):
     # under a thinner one or none (text on a plate): what is there is what the fill is read against
     outer = 9 if reach >= 5 else 7
     ring = _morph(np, core, outer, grow=True) & ~_morph(np, alike, 3, grow=True)
+    ring &= ~_slivers(np, ov, pts, opaque, alike)
     if win is not None:
         ring &= win
     if int(ring.sum()) < 12:
         return None
     return (y0, y1, x0, x1), core, ring
+
+
+def _slivers(np, ov, colours, opaque, alike):
+    """What is left of a letter while a shape slides over it can be under two pixels wide for a frame: no
+    pixel of it has the fill's full colour, so it is not `alike`, yet it is the letter and not what the
+    letter is read against. The shades of the fill (the fill dimmed towards black, at least half of it
+    left) in strips under 3 px wide that touch the fill; a wider light area beside the fill is not one."""
+    rgb = ov[..., :3].astype(np.float32)
+    shade = np.zeros(ov.shape[:2], bool)
+    for c in colours:
+        cv = np.array(c, np.float32)
+        if float(cv @ cv) < 1:
+            continue  # black has no shades
+        s = (rgb @ cv) / float(cv @ cv)
+        shade |= opaque & (s >= 0.5) & (s < 1) & (np.abs(rgb - s[..., None] * cv).max(axis=-1) <= 14)
+    shade &= ~alike
+    strip = shade & ~_morph(np, _morph(np, shade, 3, grow=False), 3, grow=True)
+    sliver = strip & _morph(np, alike, 3, grow=True)
+    for _ in range(12):
+        grown = _morph(np, sliver, 3, grow=True) & strip
+        if (grown == sliver).all():
+            break
+        sliver = grown
+    return sliver
 
 
 def masks_contrast(np, ov, bg, core, ring) -> float:

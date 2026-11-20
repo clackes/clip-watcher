@@ -183,6 +183,69 @@ def test_adversarial_backgrounds_are_deterministic_and_cover_the_cases():
 # ------------------------------------------------------------------ every frame of every template
 
 
+def test_a_unit_scaled_to_nothing_that_leaves_is_not_a_stutter():
+    unit = {"id": "p0w0c0", "fg": ["#FFFFFF"], "box": [540.0, 272.0, 49.0, 49.0], "sc": 1.0}
+    gone = {"id": "p0w0c1", "fg": ["#FFFFFF"], "box": [512.0, 350.4, 0.0, 0.0], "sc": 0.0}
+    assert not fc._moved({"u": [unit, gone]}, {"u": [unit]})  # nothing of it was drawn
+    small = {**gone, "box": [512.0, 350.4, 6.0, 6.0], "sc": 0.12}
+    assert fc._moved({"u": [unit, small]}, {"u": [unit]})  # a letter still on screen that vanishes
+    assert fc._moved({"u": [unit]}, {"u": [{**unit, "box": [541.0, 272.0, 49.0, 49.0]}]})
+    assert not fc._moved({"u": [unit]}, {"u": [dict(unit)]})
+
+
+def test_a_sliver_of_the_letter_itself_is_not_what_it_is_read_against(monkeypatch):
+    """A box sliding over a white E left 2 px of its stem for one frame (glide, on a real clip): shades of
+    white, part of the letter. A light area beside the letter is still a contrast failure."""
+    np = pytest.importorskip("numpy")
+    img = np.zeros((94, 130, 4), np.uint8)
+    img[..., 3] = 255  # black and opaque: the outline and the box's rim
+    for top in (20, 41, 62):  # the three arms of the E, eleven rows each, ten rows between them
+        img[top : top + 11, 51:81, :3] = 255
+    img[20:73, 50, :3] = 215  # what the rim left of the stem: one column a shade of white ...
+    for top in (31, 52):
+        img[top : top + 10, 51, :3] = 188  # ... and, between the arms, the stem's own soft edge
+    u = {"box": [50.0, 20.0, 31.0, 53.0], "fg": ["#FFFFFF"], "halo": 6.7, "sc": 1, "clip": None}
+    u["m"] = [1, 0, 0, 1, 0, 0]
+
+    def measured(picture):
+        (y0, y1, x0, x1), core, ring = fc.unit_masks(np, picture, u)
+        return fc.masks_contrast(np, picture[y0:y1, x0:x1], None, core, ring)
+
+    assert measured(img) > 15
+    plate = img.copy()
+    plate[20:73, 42:51, :3] = 215  # nine pixels of the same light grey: something else beside the letter
+    assert measured(plate) < fc.palette.FLOOR
+    # without the rule the sliver reads as a light neighbour: this is the case it is there for
+    monkeypatch.setattr(fc, "_slivers", lambda np, ov, pts, opaque, alike: np.zeros(ov.shape[:2], bool))
+    assert measured(img) < fc.palette.FLOOR
+
+
+def test_specks_are_only_what_ink_walls_in():
+    np = pytest.importorskip("numpy")
+
+    def drawn(*holes):
+        a = np.zeros((90, 220), np.uint8)
+        a[20:70, 30:190] = 255  # a plate, like a chip: nothing but its edge
+        for y0, y1, x0, x1 in holes:
+            a[y0:y1, x0:x1] = 0
+        return a
+
+    assert fc.pinholes(np, drawn()) == 0  # the clear pixels around a compact shape are not walled in
+    assert fc.pinholes(np, drawn((30, 50, 60, 62))) == 40  # a slit 2 px wide inside it is
+    assert fc.pinholes(np, drawn((30, 50, 60, 70))) == 0  # a counter 10 px across is a counter
+    assert fc.pinholes(np, drawn((20, 50, 60, 62))) == 0  # a 2 px channel open at the top is not walled in
+    # the outside reaches round corners: a channel that turns twice before it ends
+    assert fc.pinholes(np, drawn((20, 40, 60, 62), (38, 40, 60, 120), (38, 60, 118, 120))) == 0
+    reached = fc._reached(np, drawn((30, 50, 60, 62)) < 128)
+    assert reached[0, 0] and reached[89, 219] and not reached[40, 60] and not reached[40, 100]
+
+
+def test_the_full_set_holds_the_case_found_on_a_real_clip():
+    assert "shouts" in fc.FULL and "shouts" not in fc.QUICK
+    said = [w.text for w in fc.FIXTURES["shouts"].word_list()]
+    assert said[4:7] == ["wait", "wait", "wait"] and len(said) == 14 and fc.FIXTURES["shouts"].dur > 5
+
+
 FIXTURES = fc.FULL if os.environ.get("CLIPWATCHER_FRAMECHECK") == "full" else fc.QUICK
 
 
