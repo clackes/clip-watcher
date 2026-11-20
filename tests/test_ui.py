@@ -250,6 +250,20 @@ def test_commands_are_built_from_checked_values(monkeypatch):
             command(kind, params)
 
 
+def test_the_example_file_is_not_offered_as_a_list_of_channels(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(config, "global_config", lambda: {})
+    (tmp_path / "streamers.example.yaml").write_text("streamers:\n  examplestreamer: {platform: twitch}\n")
+    assert config.streamers() == {"examplestreamer": {"platform": "twitch"}} and data.own_streamers() == {}
+    assert data.overview()["streamers"] == []
+    (tmp_path / "streamers.yaml").write_text("streamers:\n  zack: {platform: kick}\n")
+    assert [(s["login"], s["platform"]) for s in data.overview()["streamers"]] == [("zack", "kick")]
+    monkeypatch.setenv("CLIPWATCHER_TDL", str(tmp_path / "no-such-tool"))
+    assert data.overview()["tools"] == {"twitch_vod": False}
+    monkeypatch.setenv("CLIPWATCHER_TDL", sys.executable)
+    assert data.overview()["tools"] == {"twitch_vod": True}
+
+
 @pytest.fixture
 def served(tmp_path, monkeypatch):
     monkeypatch.setenv("CLIPWATCHER_STAGING", str(tmp_path / "staging"))

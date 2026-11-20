@@ -83,6 +83,7 @@ function paintModes() {
   $('#modeCards').innerHTML = MODES.map(([k, t, d, icn]) => `<button type="button" class="choice" data-k="${k}" aria-pressed="${W.mode === k}"><span class="tick">${ic('check')}</span><span class="tile">${ic(icn)}</span><b>${t}</b><p>${d}</p></button>`).join('');
   $$('#modeCards .choice').forEach(el => tilt(el, 6));
 }
+const needsTool = () => W.mode === 'vod' && W.platform === 'twitch' && S.ov && S.ov.tools && !S.ov.tools.twitch_vod;
 function liveOf(login) { return (S.live || []).find(r => r.login === login); }
 function paintSource() {
   const live = W.mode === 'live'; $('#srcLive').hidden = !live; $('#srcVod').hidden = live;
@@ -91,16 +92,19 @@ function paintSource() {
   const list = S.ov ? S.ov.streamers : [];
   if (live) {
     if (!list.some(s => s.login === W.streamer)) { $('#otherWho').value = W.streamer; }
+    if (!list.length) { $('#whoCards').innerHTML = `<div class="empty card" style="grid-column:1 / -1"><span class="tile">${ic('run')}</span><b>No channels of your own yet</b><span>Type a Twitch channel below. To have yours listed here with their live status, copy <code>config/streamers.example.yaml</code> to <code>config/streamers.yaml</code> and put them in.</span></div>`; }
+    else {
     const on = s => { const st = liveOf(s.login); return st && st.live ? 1 : 0; };
     $('#whoCards').innerHTML = [...list].sort((a, b) => on(b) - on(a)).map(s => { const st = liveOf(s.login), line = !S.live ? 'Checking...' : !st ? '' : st.error ? 'Could not be checked' : st.live ? `<i class="dot"></i>Live${st.category ? ' · ' + esc(st.category) : ''}` : 'Offline';
-      return `<button type="button" class="choice sm${S.live && !on(s) ? ' off' : ''}" data-k="${s.login}" aria-pressed="${W.streamer === s.login}"><span class="tick">${ic('check')}</span><span class="row" style="gap:10px;flex-wrap:nowrap">${pf(s.platform)}<b>${esc(s.login)}</b></span><small>${line}</small></button>`; }).join('');
+      return `<button type="button" class="choice sm${S.live && !on(s) ? ' off' : ''}" data-k="${s.login}" aria-pressed="${W.streamer === s.login}"><span class="tick">${ic('check')}</span><span class="row" style="gap:10px;flex-wrap:nowrap">${pf(s.platform)}<b>${esc(s.login)}</b></span><small>${line}</small></button>`; }).join(''); }
     seg($('#minSeg'), [[5, '5 minutes'], [15, '15 minutes'], [60, '1 hour'], [0, 'Until I stop it']], W.minutes, v => { W.minutes = +v; store.set('minutes', +v); });
-    if (!S.live) api.get('/api/live').then(rows => { S.live = rows; if (W.step === 2 && W.mode === 'live') paintSource(); }).catch(() => { S.live = []; });
+    if (!S.live && list.length) api.get('/api/live').then(rows => { S.live = rows; if (W.step === 2 && W.mode === 'live') paintSource(); }).catch(() => { S.live = []; });
   } else {
     seg($('#platSeg'), [['twitch', ic('twitch', 'pf-twitch') + ' Twitch'], ['kick', ic('kick', 'pf-kick') + ' Kick']], W.platform, v => { W.platform = v; store.set('platform', v); paintSource(); });
     $('#whoList').innerHTML = list.filter(s => s.platform === W.platform).map(s => `<option value="${esc(s.login)}">`).join('');
     $('#vodLink').placeholder = W.platform === 'kick' ? 'https://kick.com/channel/videos/...' : 'https://www.twitch.tv/videos/...';
     seg($('#topSeg'), [[1, '1'], [2, '2'], [3, '3'], [5, '5']], W.top, v => { W.top = +v; });
+    $('#vodNeeds').hidden = !needsTool(); $('#vodNeeds').innerHTML = needsTool() ? '<i class="dot warn"></i><span>Twitch broadcasts are fetched with TwitchDownloaderCLI, which is not installed on this machine (put it in <code>bin/</code>, or name it in CLIPWATCHER_TDL). Kick broadcasts need nothing extra.</span>' : '';
   }
 }
 /* caption previews: the renderer's four styles, drawn here the way they move */
@@ -241,6 +245,7 @@ function initRun() {
   $('#back2').onclick = () => goStep(1);
   $('#next2').onclick = () => {
     if (W.mode === 'live' && !W.streamer) return toast('Pick a stream, or type a channel');
+    if (needsTool()) return toast('Twitch broadcasts need TwitchDownloaderCLI on this machine');
     if (W.mode === 'vod') { W.vodWho = $('#vodWho').value.trim(); W.vod = $('#vodLink').value.trim(); if (!W.vodWho) return toast('Whose broadcast is it?'); if (!W.vod) return toast('Paste the link of the VOD'); }
     goStep(3);
   };

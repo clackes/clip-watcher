@@ -188,8 +188,14 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   cannot change after staging (the wider footage is not kept). Guards: the Host must be this machine, a POST
   needs the page's token and a same-host Origin, commands are fixed lists built from checked values, only
   the two videos of a clip folder are served. The app never approves, uploads or posts: that stays with the
-  operators in Telegram. Checked 20 Nov on a live Twitch stream through the page: recorded, a forced clip
-  staged and played in the page, rendered again with another caption style.
+  operators in Telegram. A run keeps every event it made (work/ui/runs/<id>/replay.jsonl), so the page can
+  play a finished run back ("Watch it again"), runs of earlier sessions too. pytest started from the app
+  runs with DRY_RUN=1 and without this machine's CLIPWATCHER_STAGING / CONFIG / LEDGER / EVENTS. The page
+  lists the channels of config/streamers.yaml only (the example file is a template, not a list) and takes
+  any other Twitch channel typed in; a Twitch VOD is held back with a sentence when TwitchDownloaderCLI is
+  not installed. Checked 20 Nov through the page on real streams: two live runs (kaicenat, clix) with a
+  forced clip each, staged and played in the page; a Short rendered again with another caption style; a
+  render stopped midway (the clip kept its video).
 - D9 .ts seek bug: never `-ss` exact on MPEG-TS. Coarse input seek to max(0, START-6), then
   trim/atrim=start=TRIM in the graph, then setpts=PTS-STARTPTS. Regression test required. Commands that decode
   only the picture or only the sound (judge frames, transcript, loudness, reframe) go through

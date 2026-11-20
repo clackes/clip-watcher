@@ -73,7 +73,7 @@ class App:
                 return row
 
             with ThreadPoolExecutor(max_workers=6) as pool:
-                rows = list(pool.map(one, config.streamers().items()))
+                rows = list(pool.map(one, data.own_streamers().items()))
             self._live = (time.time(), rows)
             return rows
 

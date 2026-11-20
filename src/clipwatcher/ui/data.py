@@ -8,6 +8,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import time
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -151,6 +152,16 @@ def media_path(clip_id: str, name: str, root: Path | None = None) -> Path | None
     return p if p.is_file() else None
 
 
+def own_streamers() -> dict[str, Any]:
+    """The streamers of config/streamers.yaml. Without that file the bot falls back on the example file, which
+    is a template to copy and not a list of channels to offer."""
+    return config.streamers() if (config.CONFIG_DIR / "streamers.yaml").is_file() else {}
+
+
+def _tool(path: str) -> bool:
+    return shutil.which(path) is not None or (config.ROOT / path).is_file()
+
+
 def overview() -> dict[str, Any]:
     g = config.global_config()
     j = g.get("judge", {})
@@ -161,7 +172,7 @@ def overview() -> dict[str, Any]:
             "language": v.get("language"),
             "url": v.get("url"),
         }
-        for k, v in config.streamers().items()
+        for k, v in own_streamers().items()
     ]
     return {
         "dry_run": config.dry_run(),
@@ -170,6 +181,8 @@ def overview() -> dict[str, Any]:
         # captions need the words: without a speech model clips are rendered without them
         "speech": importlib.util.find_spec("faster_whisper") is not None,
         "staging": str(staging_root()),
+        # what a lane needs beyond the project itself
+        "tools": {"twitch_vod": _tool(config.twitch_downloader_bin())},
         "streamers": streamers,
         "language": config.channel_language(),
         "captions": [
