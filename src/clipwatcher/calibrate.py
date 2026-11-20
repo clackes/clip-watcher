@@ -762,7 +762,7 @@ def _tighten(maps: SceneMaps, rect: Rect, face: Box) -> Rect:
       (within CHORD_DEEP of a side) when that line is as constant as drawn graphics, or when the
       rectangle's own sides change there (a bar has borders of its own). Deeper than that the same
       signs are the edge of a wall as often as a sponsor panel (infume, 247loltyler1, pobelter against
-      genburten): no cut, layout.doubts() says so.
+      genburten): no cut.
     A line of the room (a shelf, the edge of a wall) is neither and stays inside. Tried and dropped on the
     labelled moments: peeling single lines near a side and cutting at drawn lines however deep (more
     panels too tight than bars removed). The rectangle only gets smaller here, never smaller than the

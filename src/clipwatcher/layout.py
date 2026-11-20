@@ -433,9 +433,6 @@ def doubts(e: dict, hinted: bool = False) -> list[str]:
       inventory slot). Either alone is common among real cams; together nothing else holds the panel;
     - behind a line across the rectangle a strip moves far more than the rest: a second camera attached
       to the cam (infume's keyboard cam), or the hands on the desk: the picture cannot say which;
-    - a line across the rectangle at which its own sides change, too deep to be cut off as a bar: a
-      sponsor panel as tall as half the cam (genburten) or the edge of a wall (infume): the picture
-      does not say which;
     - several rectangles with a face, of different sizes, and no judge to say which is the streamer's
       (hasanabi: a video window; warn, pikabooirl: the stream being watched)."""
     out = []
@@ -451,10 +448,6 @@ def doubts(e: dict, hinted: bool = False) -> list[str]:
         cov, depth, _jump = e["chords"][k]
         if ratio >= STRIP_LIVE and cov >= STRIP_LINE and STRIP_DEPTH[0] <= depth <= STRIP_DEPTH[1]:
             out.append("behind a line across the rectangle a strip moves far more than the rest of it")
-            break
-    for cov, depth, jump in e["chords"].values():
-        if cov >= calibrate.CHORD_CUT and depth > calibrate.CHORD_DEEP and (jump or 0) >= calibrate.SIDE_JUMP:
-            out.append("a line across the rectangle, more than a third in, at which its sides change")
             break
     cams = sorted(e["cams"], key=lambda c: -c["seen"])
     sizes = sorted(c["rect"][2] * c["rect"][3] for c in cams)
@@ -619,10 +612,6 @@ def _decide(
     if held is not None and (here or steady):
         x, y, w, h = held
         return _unsure([f"a rectangle around the face could be a webcam ({w}x{h} at {x},{y})"], 0.4, None)
-    if len(steady) >= 2 and any(_cutout_like(f, maps) for f in steady):
-        # purgegamers: a cut-out streamer and the game's character were 'two people in front of a camera'
-        why = "several faces with no rectangle, one of them placed like a cut-out webcam over a game"
-        return _unsure([why], 0.3, None)
     if (here and calibrate.scene_still(maps)) or len(steady) >= 2:
         no_cam = match_scene(face, True, sc)
         if no_cam and no_cam.get("gameplay_rect"):  # the operator's scene without a cam: its gameplay crop

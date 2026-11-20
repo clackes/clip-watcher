@@ -206,20 +206,15 @@ def attached_maps(strip_sd: float, panel_sides: float):
     return calibrate.SceneMaps(pv, ph, sd, 12, (0, 0, 400, 320))
 
 
-def test_a_label_strip_over_the_cam_is_peeled_and_a_deep_panel_is_left_to_the_doubts():
+def test_a_label_strip_over_the_cam_is_peeled_and_a_deep_panel_is_not_cut():
     """aidanbeans: 8 px of sub-goal text over the cam's top, behind a line as good as the side itself:
     a thin strip that changes far more than the webcam is not the webcam's. genburten: a sponsor panel
     under the cam, 36 % of the rectangle, with borders of its own. Cutting there whatever the depth
-    also cut infume's and 247loltyler1's cams at the edge of a wall, so it is not cut: the evidence
-    carries the line and layout.doubts() holds the panel back."""
+    also cut infume's and 247loltyler1's cams at the edge of a wall, so it is not cut."""
     whole, face = (100, 51, 200, 209), (170, 80, 50, 56)
     assert near(calibrate._tighten(attached_maps(12.0, 1.0), whole, face), (100, 60, 200, 200), tol=1)
     assert calibrate._tighten(attached_maps(3.0, 1.0), whole, face) == whole  # a calm strip: the room's
-    maps = attached_maps(12.0, 0.3)
-    rect = calibrate._tighten(maps, whole, face)
-    assert near(rect, (100, 60, 200, 200), tol=1)
-    cov, depth, jump = calibrate.cam_evidence(maps, rect, face)["chords"]["b"]
-    assert cov >= calibrate.CHORD_CUT and depth > calibrate.CHORD_DEEP and jump >= calibrate.SIDE_JUMP
+    assert near(calibrate._tighten(attached_maps(12.0, 0.3), whole, face), (100, 60, 200, 200), tol=1)
 
 
 # --------------------------------------------------------------------------- gameplay crop, scenes

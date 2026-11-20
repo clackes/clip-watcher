@@ -77,17 +77,6 @@ def test_a_strip_far_livelier_than_the_rest_behind_a_line_is_a_doubt():
     assert layout.doubts(evidence(strips={"b": 5.5}, chords={"b": (0.66, 0.6, 0.05)})) == []  # past the face
 
 
-def test_a_deep_line_at_which_the_sides_change_is_a_doubt():
-    """genburten: a sponsor panel under the cam, as wide as the cam and half as tall; the rectangle's sides
-    change where it begins. infume's dark wall and pobelter's room show the same line, so no cut: the
-    judge or a confirmed rect says which it is."""
-    assert layout.doubts(evidence(chords={"b": (0.87, 0.36, 0.72)}, strips={"b": 0.2}))
-    assert (
-        layout.doubts(evidence(chords={"b": (0.87, 0.36, 0.1)}, strips={"b": 0.2})) == []
-    )  # sides run through
-    assert layout.doubts(evidence(chords={"b": (0.87, 0.2, None)}, strips={"b": 0.2})) == []
-
-
 def test_rectangles_of_different_sizes_need_someone_to_say_which_is_the_streamers():
     """hasanabi: a tall video window with a face beside the cam; warn, pikabooirl: the stream being
     watched. The judge's point (cam_hint) says which; a face there far more often does too."""
@@ -186,10 +175,9 @@ def test_a_cut_out_in_the_middle_of_the_bottom_edge_and_two_people_who_are_not_c
     assert lay.has_webcam and lay.source == "auto-new"
     x, y, w, h = parse(lay.cam)
     assert x <= person[0] and x + w >= person[0] + person[2] and y <= person[1] and y + h >= 440
-    # purgegamers: the game's character is a second steady face; 'two people in front of one camera'
-    # followed it full screen. Which of the two is the streamer the picture does not say.
     other = (150, 320, 96, 104)
-    assert whole_frame(resolve_on(monkeypatch, frames, lambda p: [person, other], peak_s=5.0))
+    lay = resolve_on(monkeypatch, frames, lambda p: [person, other], peak_s=5.0)
+    assert not lay.has_webcam
 
 
 def test_a_cut_out_webcam_is_there_through_the_whole_stretch(tmp_path, monkeypatch):
