@@ -21,6 +21,7 @@ from typing import Any
 
 from clipwatcher import config
 from clipwatcher.ui import data, settings
+from clipwatcher.ui.profiles import Profiles
 from clipwatcher.ui.runs import RunManager
 
 STATIC = Path(__file__).parent / "static"
@@ -30,9 +31,13 @@ CHUNK = 256 * 1024
 
 class App:
     def __init__(
-        self, manager: RunManager | None = None, hosts: tuple[str, ...] = ("127.0.0.1", "localhost")
+        self,
+        manager: RunManager | None = None,
+        hosts: tuple[str, ...] = ("127.0.0.1", "localhost"),
+        profiles: Profiles | None = None,
     ):
         self.manager = manager or RunManager()
+        self.profiles = profiles or Profiles()
         self.token = secrets.token_urlsafe(24)
         self.hosts = hosts
         self._live: tuple[float, list[dict[str, Any]]] = (0.0, [])
@@ -108,7 +113,7 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
         def _error(self, code: int, message: str) -> None:
             self._json({"error": message}, code)
 
-        def _file(self, path: Path, ctype: str | None = None) -> None:
+        def _file(self, path: Path, ctype: str | None = None, cache: str | None = None) -> None:
             """A file, whole or the byte range asked for (video players seek with ranges)."""
             size = path.stat().st_size
             ctype = ctype or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
@@ -133,6 +138,9 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(end - start + 1))
             self.send_header("Accept-Ranges", "bytes")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            if cache:
+                self.send_header("Cache-Control", cache)
             if code == 206:
                 self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
             self.end_headers()
@@ -196,6 +204,10 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                 path = data.media_path(parts[1], parts[2])
                 if path is not None:
                     return self._file(path, "video/mp4")
+            elif head == "profile" and len(parts) == 3 and parts[1] == "image":
+                found = app.profiles.image(parts[2])  # a picture kept from Twitch or Kick, named by its hash
+                if found is not None:
+                    return self._file(found[0], found[1], cache="private, max-age=31536000, immutable")
             elif head == "api":
                 return self._api_get(parts[1:], query)
             self._error(404, "Not found.")
@@ -207,6 +219,12 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                 return self._json({**data.overview(), "active": active.summary() if active else None})
             if parts == ["live"]:
                 return self._json(app.live_status())
+            if parts == ["profiles"]:  # ?who=twitch:clix,kick:n3on
+                who = [w.partition(":") for w in (query.get("who") or [""])[0].split(",") if w][:60]
+                try:
+                    return self._json(app.profiles.many([(a, b) for a, _, b in who]))
+                except ValueError as e:
+                    return self._error(400, str(e))
             if parts == ["clips"]:
                 return self._json(data.clips())
             if len(parts) == 2 and parts[0] == "clips":
@@ -296,6 +314,12 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
     return Handler
 
 
+class _Server(ThreadingHTTPServer):
+    daemon_threads = True
+    # a page asks for a dozen pictures at once; the default of 5 waiting connections resets the rest
+    request_queue_size = 128
+
+
 def make_server(
     host: str = "127.0.0.1", port: int = 8765, app: App | None = None
 ) -> tuple[ThreadingHTTPServer, App]:
@@ -303,6 +327,4 @@ def make_server(
         ("127.0.0.1", "localhost") if host in ("127.0.0.1", "localhost") else ("127.0.0.1", "localhost", host)
     )
     app = app or App(hosts=hosts)
-    server = ThreadingHTTPServer((host, port), make_handler(app))
-    server.daemon_threads = True
-    return server, app
+    return _Server((host, port), make_handler(app)), app
