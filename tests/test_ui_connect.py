@@ -174,6 +174,10 @@ def test_claude_check_says_what_went_wrong_in_plain_words(judge):
         assert (res["outcome"], res["ok"]) == (outcome, False), error
         assert words in res["headline"] and res["steps"][-1]["state"] == "failed"
         assert CLAUDE_KEY not in json.dumps(res) and "said" not in json.dumps(res)  # no SDK text passed on
+    res = keys.test_claude(
+        _Client(RuntimeError(f"header x-api-key: {CLAUDE_KEY}"))
+    )  # whatever else goes wrong
+    assert res["outcome"] == "failed" and CLAUDE_KEY not in json.dumps(res)
     # the key is fine, the judge's own model is not there for it
     info = type("Info", (), {"display_name": "Model A"})()
     gone = _status_error(anthropic.NotFoundError, 404)

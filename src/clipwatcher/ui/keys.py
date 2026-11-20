@@ -388,6 +388,13 @@ def test_claude(client: Any = None) -> dict[str, Any]:
                 name,
                 f"Answer {code}.",
             )
+        except Exception as e:  # noqa: BLE001 - anything else: its text stays here, the key may be in it
+            return end(
+                "failed",
+                "The check did not get through. Try again in a minute.",
+                name,
+                type(e).__name__,
+            )
         if not accepted:
             steps.append(_step(accept, "done", "The key is known to Claude."))
             accepted = True

@@ -24,8 +24,9 @@
 @media (max-width:820px){.cn-card{min-height:0}.cn-card p{min-height:0}}
 
 /* a walk: the stage on one side, what to do on the other */
-.cn-wrap{align-items:stretch}
+.cn-wrap{align-items:start}
 .cn-stagecard{overflow:hidden;display:grid}
+@media (min-width:901px){.cn-stagecard{position:sticky;top:96px}}
 .cn-stage{min-height:380px;padding:28px 0}
 .cn-panel{display:grid;gap:22px;align-content:start}
 .cn-panel .actions{margin-top:4px}
@@ -34,7 +35,7 @@
 .cn-steps{max-height:none;padding:0}
 .cn-acts{gap:10px}
 .note>.ic{flex:none;margin-top:3px;font-size:16px;color:var(--subtle)}
-@media (max-width:900px){.cn-stage,.cn-ytstage{min-height:220px;padding:14px 0}}
+@media (max-width:900px){.cn-stage{min-height:220px;padding:14px 0}.cn-facts{gap:10px}.cn-panel{gap:16px}}
 
 /* a key: the pass that tilts, the field */
 .cn-pass{--rx:8deg;--ry:-16deg;position:relative;width:min(320px,74vw);aspect-ratio:1.62;border-radius:24px;padding:22px;display:grid;align-content:space-between;justify-items:start;border:1px solid transparent;background:linear-gradient(150deg,rgb(42 42 60),rgb(18 18 30)) padding-box,linear-gradient(135deg,rgb(255 255 255 / .28),rgb(255 255 255 / .06)) border-box;box-shadow:0 40px 70px rgb(0 0 0 / .6);transform-style:preserve-3d;transform:rotateX(var(--rx)) rotateY(var(--ry));transition:transform .6s var(--ease),background .6s}
@@ -79,7 +80,7 @@
 @media (max-width:560px){.cn-acct{grid-template-columns:minmax(0,1fr);justify-items:start}.cn-acts .btn{flex:1 1 auto}}
 
 /* adding an account: a browser window in the round */
-.cn-ytstage{min-height:440px}
+@media (min-width:901px){.cn-ytstage{min-height:440px}}
 .cn-o1{left:4%;top:5%}.cn-o2{right:3%;top:13%;animation-delay:-2s}.cn-o3{left:7%;bottom:6%;animation-delay:-3.5s}
 .cn-win{--rx:6deg;--ry:-15deg;position:relative;width:min(340px,76vw);aspect-ratio:1.42;border-radius:18px;background:#0b0b14;box-shadow:inset 0 0 0 1px var(--border-strong),0 40px 70px rgb(0 0 0 / .65);transform-style:preserve-3d;transform:rotateX(var(--rx)) rotateY(var(--ry));transition:transform .6s var(--ease)}
 .cn-win.float{animation:cn-float 8s var(--inout) infinite alternate}
@@ -107,6 +108,10 @@
 @keyframes cn-type{0%,8%{width:0}45%,80%{width:52%}100%{width:0}}
 .cn-win[data-ph="waiting"] .cn-signin{opacity:1}
 .cn-win[data-ph="reading"] .cn-signin{opacity:0;transform:translateZ(0) scale(.9)}
+.cn-load{display:grid;justify-items:center;gap:9px;width:50%;opacity:0;transform:translateZ(30px)}
+.cn-load>*{background:linear-gradient(110deg,rgb(237 245 255 / .08) 30%,rgb(237 245 255 / .22) 50%,rgb(237 245 255 / .08) 70%) 0 0/200% 100%;animation:shim 1.6s linear infinite}
+.cn-load i{width:62px;height:62px;border-radius:50%}.cn-load b{width:100%;height:11px;border-radius:6px}.cn-load b:last-child{width:60%}
+.cn-win[data-ph="reading"] .cn-load{opacity:1}
 .cn-chan{display:grid;justify-items:center;gap:6px;text-align:center;opacity:0;transform-style:preserve-3d;max-width:86%}
 .cn-chan b{font-size:1.05rem;font-weight:600;letter-spacing:-.03em;color:var(--strong);transform:translateZ(30px);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cn-chan small{font-size:.78rem;color:var(--muted);transform:translateZ(22px);min-height:1em}

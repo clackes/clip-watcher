@@ -121,8 +121,7 @@ class Accounts:
         rec = _read_json(self.root / account_id / "account.json")
         return {**rec, "id": account_id} if rec else None
 
-    def list(self) -> list[dict[str, Any]]:
-        """Every account, oldest first, each with ``posting`` (the one the publisher uses)."""
+    def _rows(self) -> list[dict[str, Any]]:
         rows = []
         if self.root.is_dir():
             for d in self.root.iterdir():
@@ -130,23 +129,23 @@ class Accounts:
                 if rec and not rec.get("pending"):
                     rows.append(rec)
         rows.sort(key=lambda r: (r.get("added") or 0, r["id"]))
+        return rows
+
+    def list(self) -> list[dict[str, Any]]:
+        """Every account, oldest first, each with ``posting`` (the one the publisher uses)."""
+        rows = self._rows()
         posting = self.posting_id(rows)
         return [{**r, "posting": r["id"] == posting} for r in rows]
 
     def posting_id(self, rows: list[dict[str, Any]] | None = None) -> str | None:
-        """The account that posts: the one chosen, else the first that is there."""
-        rows = self.list_ids() if rows is None else [r["id"] for r in rows]
+        """The account that posts: the one chosen; without a choice the first that is ready, else the
+        first that is there."""
+        rows = self._rows() if rows is None else rows
         chosen = (_read_json(self.root / "registry.json") or {}).get("posting")
-        return chosen if chosen in rows else (rows[0] if rows else None)
-
-    def list_ids(self) -> list[str]:
-        rows = []
-        if self.root.is_dir():
-            for d in self.root.iterdir():
-                rec = self.get(d.name) if d.is_dir() else None
-                if rec and not rec.get("pending"):
-                    rows.append((rec.get("added") or 0, d.name))
-        return [i for _, i in sorted(rows)]
+        if any(r["id"] == chosen for r in rows):
+            return chosen
+        ready = [r for r in rows if r.get("state") == READY]
+        return (ready or rows)[0]["id"] if rows else None
 
     def posting(self) -> dict[str, Any] | None:
         pid = self.posting_id()
@@ -184,7 +183,7 @@ class Accounts:
 
     def set_posting(self, account_id: str) -> None:
         with _GUARD:
-            if self.get(account_id) is None or account_id not in self.list_ids():
+            if not any(r["id"] == account_id for r in self._rows()):
                 raise ValueError("No such account.")
             _write_json(self.root / "registry.json", {"posting": account_id})
 

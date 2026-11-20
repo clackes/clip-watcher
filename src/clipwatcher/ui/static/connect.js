@@ -72,7 +72,7 @@ function paintKey() {
     <div class="vhead"><div><h1 data-a data-r="h1"></h1><p class="lead" data-a data-r="lead"></p></div></div>
     <div class="runwrap cn-wrap"><div class="card cn-stagecard" data-a><div class="stage3d cn-stage"><div class="rings"><i></i><i></i><i></i></div>
       <div class="cn-pass float" data-st="empty"><span class="cn-mark pf-${s.icon}">${ic(s.icon)}</span><span class="cn-mask" data-r="mask"></span><span class="cn-light"><i class="dot off"></i><span data-r="light"></span></span><span class="cn-scan"></span></div></div></div>
-      <div class="panel cn-panel" data-a data-r="panel"></div></div></div>`;
+      <div class="panel cn-panel" data-a data-r="panel" aria-live="polite"></div></div></div>`;
   phoneTilt($('.cn-stage', root), $('.cn-pass', root));
   paintKeyStep();
 }
@@ -95,7 +95,7 @@ function paintKeyStep() {
   } else {
     const acts = o === 'works' ? btn('go-hub', 'Done', 'btn-primary') + btn('kcheck', 'Check again') : o === 'rejected' ? btn('kpaste', `Paste another ${s.noun}`, 'btn-primary') : o === 'unchecked' ? btn('kcheck', 'Check it now', 'btn-primary') : btn('kcheck', 'Check again', 'btn-primary');
     set(ok ? 'ok' : res ? 'bad' : 'saved', ok ? 'Connected' : res ? 'Needs a look' : 'Saved, not checked', (TITLE[o] || TITLE.failed)(s), res ? (TITLE[o] ? res.advice || res.headline : res.headline + ' ' + (res.advice || '')) : `A ${s.noun} ending in ${k.hint} is saved on this machine. It has not been checked yet.`,
-      `<div class="result">${res && res.steps.length ? `<ol class="steps cn-steps">${res.steps.map(stepRow).join('')}</ol>` : ''}${res && res.at ? `<p class="cap-note">Checked ${when(res.at)} · ${s.noun} ending in ${esc(k.hint)}</p>` : ''}
+      `<div class="result">${res && res.steps.length ? `<ol class="steps cn-steps">${res.steps.map(stepRow).join('')}</ol>` : ''}${res && res.at ? `<p class="cap-note">Checked ${when(res.at)} · ${s.noun} ending in ${esc(k.hint)}${ok ? '. Runs you start from here use it at once; a bot or lane that is already running picks it up when it is started again.' : ''}</p>` : ''}
       <div class="row cn-acts">${acts}${o === 'rejected' ? '' : btn('kpaste', `Replace the ${s.noun}`)}${btn('kask', 'Remove')}</div></div>`);
   }
 }
@@ -158,8 +158,8 @@ function paintAdd() {
       <div class="cn-win float" data-ph="intro"><div class="cn-bar"><i></i><i></i><i></i><span class="cn-url">${ic('cnLock')}<span data-r="url">studio.youtube.com</span></span></div>
         <div class="cn-body"><span class="cn-logo pf-youtube">${ic('youtube')}</span>
           <div class="cn-signin"><span class="cn-face">${ic('cnUser')}</span><i></i><i></i><b></b></div>
-          <div class="cn-chan" data-r="chan"></div><span class="cn-scan"></span></div></div></div></div>
-      <div class="panel cn-panel" data-a data-r="panel"></div></div></div>`;
+          <div class="cn-load"><i></i><b></b><b></b></div><div class="cn-chan" data-r="chan"></div><span class="cn-scan"></span></div></div></div></div>
+      <div class="panel cn-panel" data-a data-r="panel" aria-live="polite"></div></div></div>`;
   phoneTilt($('.cn-stage', root), $('.cn-win', root)); C.sig = ''; paintWalk();
 }
 function paintWalk() {
@@ -168,7 +168,7 @@ function paintWalk() {
   if (sig === C.sig) { const t = R('left'); if (t && j.left_s != null) t.textContent = clock(j.left_s) + ' left'; return; }
   C.sig = sig;
   const win = $('.cn-win', root), busy = ['signed_in', 'reading', 'closing'].includes(ph), end = ENDS[ph];
-  const step = ph === 'intro' || ph === 'opening' ? 1 : ph === 'waiting' || busy ? 2 : ph === 'done' || ph === 'confirm' ? 3 : ph === 'ready' ? 5 : end ? (ph === 'duplicate' ? 3 : 2) : 1;
+  const step = ph === 'intro' || ph === 'opening' ? 1 : ph === 'waiting' ? 2 : busy || ph === 'done' || ph === 'confirm' ? 3 : ph === 'ready' ? 5 : end ? (ph === 'duplicate' ? 3 : 2) : 1;
   R('wiz').innerHTML = wiz(WALK, step);
   win.dataset.ph = end ? 'bad' : busy ? 'reading' : ph === 'confirm' || ph === 'ready' ? 'done' : ph;
   R('url').textContent = ph === 'waiting' && !check ? 'accounts.google.com' : 'studio.youtube.com';

@@ -73,6 +73,14 @@ def test_the_account_that_posts_is_the_one_chosen_else_the_first(accounts):
         accounts.set_posting("0123456789ab")
     accounts.remove(ids[1])  # the one that posted is gone: the other one posts
     assert [(r["name"], r["posting"]) for r in accounts.list()] == [("Channel 0", True)]
+    later = accounts.create()
+    accounts.found(later["id"], {"channel_id": "UC" + "c" * 22, "name": "Later"})
+    accounts.update(
+        ids[0], state=youtube_accounts.SIGN_IN
+    )  # nobody chose: a signed-out account does not post
+    assert accounts.posting()["name"] == "Later"
+    accounts.set_posting(ids[0])  # a choice is kept, and the page says it needs signing in
+    assert accounts.posting()["name"] == "Channel 0"
     assert not (accounts.root / ids[1]).exists()
     assert accounts.same_channel(ids[1], UC1)["id"] == ids[0] and accounts.same_channel(ids[0], UC1) is None
 
