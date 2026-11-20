@@ -215,7 +215,36 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   cannot be rendered leaves the clip as it was. Without the Node setup the animated ones say what to
   run. Checked 20 Nov through the page on real streams: two live runs (kaicenat, clix) with a
   forced clip each, staged and played in the page; a Short rendered again with another caption style; a
-  render stopped midway (the clip kept its video).
+  render stopped midway (the clip kept its video). Later the same day (owner: a Library to manage,
+  configure and create caption templates, kept on this machine and pickable for any clip; the two keys set
+  and tested in the page; YouTube accounts signed in through a Chrome window the page opens, listed with
+  picture and numbers, the onboarding step by step and 3D; logs in plain words, not technical): six
+  places, Run, Clips, Library, Insights, Connect, Settings. Library and Connect keep their requests in
+  `ui/library.py` and `ui/connect.py` (`server.PLACES`) and their page in `static/library.*` and
+  `static/connect.*`, built on `window.CW`. Library: a template of one's own is a shipped template under
+  its own name with its own settings, `render.rm.presets.<id>` in config/local.yaml ({name, base,
+  settings, created}); its caption style is `rm:<id>` wherever a shipped one goes (lanes, render again,
+  previews); it stands on the base as it shipped, not on this machine's edit of the base; deleting one
+  that is in use sends new clips back to its base; step 3 of Run only picks, fine-tuning is in the
+  Library (a clip's own settings stay in its drawer). Connect: the Claude key and the Telegram bot token
+  are kept in `.env` (mode 0600, every other line kept; the app loads the file at start and what the
+  environment already sets wins) and never come back out of the server: the page gets "set" and the last
+  four characters. Each has a check that costs nothing and sends nothing: the judge's model asked of the
+  API; getMe, then getChat for the operators' group. YouTube accounts: one Chrome profile per account
+  under ~/.clipwatcher/youtube (CLIPWATCHER_ACCOUNTS), signed in by `python -m
+  clipwatcher.publish.youtube_login`, which the app starts one at a time and which only watches the
+  address the window is on (it never types); uploads go through the profile of the account that posts
+  (`YT_BROWSER_PROFILE` still wins; the single profile of before can be adopted). Plain words: every
+  event goes to the page with a sentence (`ui/friendly.py`: what is happening, a known error as what it
+  means and what to do), the steps have names a person would use, and the lane's own output is under
+  "Technical details". Settings also holds the recording quality (720p, or the sharpest the stream
+  offers: the webcam of a Short is cut out of the recording). Checked through the page: a template
+  created, renamed, used to render a staged clip again, a shipped one edited and reset, all kept over a
+  restart; made-up keys refused by the real services with a sentence; the sign-in with real Chrome up to
+  the waiting step, cancel and every early end, no process left; a live run with the speech model and
+  the face detector installed (a clip staged in 30 s, the story readable). Not run for real: a sign-in
+  to its end (no account on the build machine: reading the channel and "ready to post" ran on a
+  stand-in browser), a working key or token, a lane run with a template of one's own.
 - D18 The webcam is read from the picture (owner, 19 Nov: verify adversarially, on many streams and frame
   by frame, that the webcam is found every time and the 9:16 looks right; measured 20 Nov, not there yet).
   `layout.resolve` finds the overlay's own rectangle in the frames around the moment and that rectangle is
@@ -360,7 +389,8 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   (`captions=` a built-in style or `rm:<template>`, `report=` a dict filled with the style the Short got)
   and `render_clean(src, start_s, dur_s, out, *, profile="cpu_batch") -> Path`. `render/captions.py` ASS writer.
   CLI `python -m clipwatcher.render`.
-- `render/remotion.py` (D19) `templates()`, `load_template(name, overrides=None)`, `missing() -> str | None`,
+- `render/remotion.py` (D19) `templates()` (the shipped ones), `presets()` and `base_name(name)` (this
+  machine's own, D17), `load_template(name, overrides=None)`, `missing() -> str | None`,
   `available()`, `render_overlay(words, dur_s, template, out_dir, *, box, fps, ...) -> Overlay | None`,
   `overriding(values)` (render.rm for the renders inside the block), `RemotionError`. `render/rm_plan.py`
   `plan(words, dur_s, params, *, box_w, box_h, ...) -> Plan`; `render/palette.py` `contrast(a, b)`,
@@ -374,7 +404,9 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 - `queue/db.py` ClipDB (SQLite: clips, jobs, audit; atomic claim, card tracking). `queue/staging.py`
   `staging_root()`, `stage_package(clip_id, short, clean, meta) -> Path`, `mark_approved(...)`.
   `queue/telegram_bot.py` `post_card(app, db, clip_id, video) -> bool`, `post_missing_cards`, `sweep`.
-- `publish/youtube.py` behind DRY_RUN.
+- `publish/youtube.py` behind DRY_RUN. `publish/youtube_browser.py` `profile_dir()` (the account that posts);
+  `publish/youtube_accounts.py` `Accounts(root=None)`, `posting_profile()`; `publish/youtube_login.py` the
+  sign-in process (`python -m clipwatcher.publish.youtube_login --account <id> [--check]`).
 - `vod.py` Day-0 VOD lane CLI `python -m clipwatcher.vod`.
 - Live ingest (`ingest/`): `ringbuffer.RingBuffer(root, window_min, segment_s)` with `add_segment(path, pdt_ms)`,
   `pin(start_ms, end_ms, ttl_s)`, `prune()`, `cut(start_ms, end_ms, out) -> Path` (wall-clock epoch ms via
@@ -406,5 +438,9 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   `jobs.rerender(clip_id, captions=None, layout=None, root=None, *, colors=None, settings=None) -> Path`.
   `captions.library()`, `styles()`, `fields(style)`, `check(style, values) -> overrides`,
   `preview(style, values=None, root=None) -> {"file", "warnings"}`, `warm()`.
+  `library.get/post(app, parts, ...)` and `connect.get/post(app, parts, ...)`, `connect.image(id)` (the
+  requests of the two places, `server.PLACES`); `friendly.say(event)`, `problem(error)`, `explain(line)`,
+  `dress(event)`; `keys.load_env()`, `save(which, value)`, `remove(which)`, `status()`,
+  `test_claude(client=None)`, `test_telegram(transport=None)`; `settings.save_preset(...)`.
   `profiles.Profiles(root=None)` `.get(platform, login) -> dict`, `.many([(platform, login)])`,
   `.image(image_id) -> (Path, content type) | None`.

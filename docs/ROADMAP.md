@@ -53,8 +53,11 @@ Status (17 Nov 2026, night). Handoff and next steps: docs/HANDOFF.md.
 - Companion app (20 Nov, D17): `python -m clipwatcher.ui --open`. Runs the live lane, the VOD lane and the
   tests from one page with live progress; staged clips with their score make-up and per-video caption
   settings (render again); speed, judge cost, judge decisions and detector charts; settings saved for this
-  machine in config/local.yaml. To come with it: real judge numbers once an API key is set (the cost page
-  estimates until then).
+  machine in config/local.yaml. Since 20 Nov evening also a Library (templates of one's own, kept on the
+  machine) and Connect (the Claude key and Telegram token set and checked in the page, YouTube accounts
+  signed in through Chrome), and a run told in plain words. To come with it: a real sign-in to YouTube
+  and real keys (neither has been through the page yet), real judge numbers once a key is set (the cost
+  page estimates until then).
 - Animated captions (20 Nov, D19): 25 Remotion templates as `rm:<template>` caption styles, the built-in
   styles as default and fallback; in the companion app's library with live previews, every parameter of a
   template to fine-tune, and per-video template, colours and settings. Needs `npm ci && npm run setup` in

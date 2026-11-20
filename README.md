@@ -29,8 +29,13 @@ gets the layout its streamer has in `streamers.yaml`, or the whole frame.
 One page to run the bot and see what it does: pick the live lane, a finished broadcast or the test suite,
 watch each step as it happens (join, read the chat, spike, cut, judge, render, stage), then watch the clip.
 Clips lists everything staged, with how each scored and settings for that one video (caption template with
-its colours and settings, layout, render again). The caption library plays every style on a stand-in Short and
-opens each animated template's own settings. Insights answers one question at a time: what each step costs in seconds, what the judge
+its colours and settings, layout, render again). Library plays every caption style on a stand-in Short, opens
+each animated template's own settings and keeps templates of your own (a shipped one under your name with
+your settings, in `config/local.yaml`), which any run or clip can then use. Connect holds what the bot talks
+to: the Claude key and the Telegram bot token (kept in `.env`, each with a check that costs nothing), and
+the YouTube accounts, signed in step by step in a Chrome window the page opens (one Chrome profile per
+account under `~/.clipwatcher/youtube/`; uploads go through the one marked as posting). A run is told in
+plain sentences, with the lane's own output one click further. Insights answers one question at a time: what each step costs in seconds, what the judge
 costs in dollars, what the judge decided, what the detector found. Settings changes a chosen few values for
 this machine (`config/local.yaml`, laid over `config/global.yaml`). Streamers appear with their Twitch or
 Kick picture, name and badges, fetched once a day and kept in `work/ui/profiles/`; a finished run can be
