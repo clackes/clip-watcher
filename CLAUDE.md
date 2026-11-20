@@ -222,7 +222,20 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   enlargement of the same crop); what was lost was the over-tight crop (median enlargement 4.25x -> 3.4x);
   unsharp and CAS were rejected (halos double on compressed input). A cam under about 300 px wide is
   limited by the source, and a 720p recording keeps 27-49% of 1080p's fine detail in the cam panel
-  (`buffer.quality`; the owner's call: disk and line). Detection needs a face detector: mediapipe with
+  (`buffer.quality`; the owner's call: disk and line). Round two, the same day (the bar: a Short never
+  shows something else as the webcam): `Layout` carries `sure`, `doubts` and `evidence`; what the picture
+  cannot decide comes out as source `unsure` and is rendered as the whole 16:9 frame over its blurred copy
+  (no panel, no reframe), the doubts in meta.layout_doubts and on the clip in the companion app. Guess paths
+  are gone (a box around the judge's point, a cam-like rectangle with no face, a confirmed rect that is not
+  in the picture, a face alone); the 9:16 reframe is for `fullcam` only, no longer for `no-face`, so a
+  handheld camera with one face (IRL) now gets the whole frame unless the picture is still around the face
+  or several faces are there (owner to say whether known IRL channels should be followed again: it needs a
+  switch per streamer). Counted right / whole frame / wrong: 41 fresh channels 170 / 23 / 12 of 205 moments
+  (168 / 0 / 37 before), Shorts 32 / 7 / 2; the 31 of round one 123 / 32 / 0 (120 / 0 / 35); the first 59
+  channels 239 / 56 / 0 (261 / 0 / 34), so 46 moments that were right are now held back as well. Wrong on
+  fresh: a reframe although an overlay cam is there (5), a panel where there is no cam (3: an empty
+  inventory slot, a spectator in a broadcast), a sponsor panel or text strip inside the panel (2), a panel
+  too tight inside a drawn frame (2). Detection needs a face detector: mediapipe with
   models/blaze_face_short_range.tflite (README), else OpenCV; without one the configured default scene is
   used and the companion app says so on the step.
 - D9 .ts seek bug: never `-ss` exact on MPEG-TS. Coarse input seek to max(0, START-6), then

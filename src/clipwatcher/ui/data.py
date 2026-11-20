@@ -106,6 +106,7 @@ def _clip(d: Path, row: dict[str, Any] | None) -> dict[str, Any] | None:
         "chat_pct": meta.get("chat_pct"),
         "captions": meta.get("captions") or "",
         "layout": meta.get("layout") or "",
+        "layout_doubts": [str(d) for d in meta.get("layout_doubts") or []],
         "credit": meta.get("credit") or "",
         "judge": {
             "source": judge,

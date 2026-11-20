@@ -496,6 +496,8 @@ class FastLane:
             "chat_score": cand.chat_score, "final_score": cand.final_score, "peak_s": cand.peak_s,
             "start_s": cand.start_s, "end_s": cand.end_s, "funny_score": screen.get("funny_score"),
             "hype_score": screen.get("hype_score"), "layout": lay.source,
+            # D18: why the layout was not sure (then the whole frame is shown), for the operator
+            "layout_doubts": list(getattr(lay, "doubts", ()) or ()),
             "captions": caption_style(cid),
             # the spike's standing in its own stream: share of seconds that scored lower, rank so far
             "chat_pct": cand.signals.get("session_pct"), "chat_rank": cand.signals.get("session_rank"),

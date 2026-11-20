@@ -250,6 +250,7 @@ def process_candidate(
             src, streamer, peak_s=peak_media, cam_hint=getattr(jr, "cam_xy", None)
         )
     meta["layout"] = lay.source
+    meta["layout_doubts"] = list(getattr(lay, "doubts", ()) or ())  # D18: why it was not sure
     meta["captions"] = _mod("clipwatcher.render.captions").caption_style(clip_id)
     beats, actions = cold_open.clip_beats(jr or {}, pl), cold_open.clip_actions(jr or {}, pl)
     with timed("render_short"):
