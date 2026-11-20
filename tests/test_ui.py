@@ -168,6 +168,22 @@ def test_settings_are_saved_beside_the_global_file_and_checked_first(cfgdir):
     assert not (cfgdir / "local.yaml").exists()
 
 
+def test_the_recording_quality_is_a_choice_in_words(cfgdir):
+    """720p or the sharpest the stream offers (the webcam of a Short is cut out of the recording)."""
+    f = {f["key"]: f for g in settings.schema() for f in g["fields"]}["buffer.quality"]
+    assert f["options"] == [settings.QUALITY_LIGHT, "best"] and set(f["labels"]) == set(f["options"])
+    assert settings.save({"buffer.quality": "best"}) == {"buffer.quality": "best"}
+    assert config.global_config()["buffer"]["quality"] == "best"  # what the live lane records with
+    with pytest.raises(ValueError):
+        settings.save({"buffer.quality": "4k; rm -rf"})
+    # a ladder someone wrote into the config by hand stays a choice, and saving the page does not refuse it
+    (cfgdir / "local.yaml").write_text("buffer:\n  quality: 480p,best\n")
+    config.global_config.cache_clear()
+    f = {f["key"]: f for g in settings.schema() for f in g["fields"]}["buffer.quality"]
+    assert f["options"][-1] == "480p,best" and f["value"] == "480p,best"
+    assert settings.save({"buffer.quality": "480p,best"}) == {"buffer.quality": "480p,best"}
+
+
 def test_a_run_gathers_what_the_command_says_and_what_the_lane_reports(tmp_path):
     m = RunManager(tmp_path, build=lambda kind, params: [sys.executable, "-c", LANE])
     run = _wait(m.start("live", {"streamer": "zack"}))

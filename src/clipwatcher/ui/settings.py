@@ -19,6 +19,8 @@ def _r(
     return _f(key, label, "range", hint, min=lo, max=hi, step=step, unit=unit)
 
 
+QUALITY_LIGHT = "720p,720p30,720p60,best"  # the ladder global.yaml ships with: 720p where the stream has it
+
 GROUPS: list[dict[str, Any]] = [
     {
         "title": "Detector",
@@ -167,6 +169,18 @@ GROUPS: list[dict[str, Any]] = [
                 "The chat of a broadcast is kept whole.",
                 "min",
             ),
+            _f(
+                "buffer.quality",
+                "Recording quality",
+                "select",
+                "The webcam in a Short is cut out of this picture and enlarged: at 1080p it has more than "
+                "twice the pixels of 720p. It also takes about three times the disk and line per stream.",
+                options=[QUALITY_LIGHT, "best"],
+                labels={
+                    QUALITY_LIGHT: "Lighter (720p)",
+                    "best": "Sharpest the stream offers (usually 1080p)",
+                },
+            ),
             _r("chat.backfill_max_h", "Chat read back on joining", 1, 24, 1, "", "h"),
             _r("kick.max_rps", "Requests a second to Kick", 0.5, 1.6, 0.1, "Kick blocks beyond about 1.6."),
             _f(
@@ -224,6 +238,9 @@ def _options(field: dict[str, Any]) -> list[Any]:
         from clipwatcher.ui import captions
 
         return list(captions.styles())
+    if field["key"] == "buffer.quality":  # a ladder written by hand in the config stays a choice
+        now = config.global_config().get("buffer", {}).get("quality")
+        return [*field["options"], *([now] if isinstance(now, str) and now not in field["options"] else [])]
     return field["options"]
 
 
