@@ -96,10 +96,9 @@ function paintWiz() {
   $('#wiz').innerHTML = WIZ.map((l, i) => { const n = i + 1, st = skipped(n) ? 'skip' : n < W.step ? 'done' : n === W.step ? 'now' : 'todo', can = n < W.step && W.step <= 3 && !skipped(n);
     return `<li data-st="${st}"><button type="button" data-go="${n}" ${can ? '' : 'disabled'} ${n === W.step ? 'aria-current="step"' : ''}><i>${st === 'done' ? ic('check') : n}</i><span>${l}</span></button></li>`; }).join('');
 }
-let capTimer = 0, capTick = 0;
 function goStep(n) {
   const from = $('#' + paneOf(W.step)), to = $('#' + paneOf(n)); W.step = n; paintWiz();
-  clearInterval(capTimer); if (n === 3) { capTick = 0; capFrame(); capTimer = setInterval(capFrame, reduce ? 1200 : 340); }
+  if (n === 3 && capW) capW.refresh();
   if (n === 2) paintSource();
   if (from === to) return;
   const enter = () => { from.hidden = true; from.classList.remove('out'); to.hidden = false; stagger(to); scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' }); };
@@ -134,25 +133,169 @@ function paintSource() {
     $('#vodNeeds').hidden = !needsTool(); $('#vodNeeds').innerHTML = needsTool() ? '<i class="dot warn"></i><span>Twitch broadcasts are fetched with TwitchDownloaderCLI, which is not installed on this machine (put it in <code>bin/</code>, or name it in CLIPWATCHER_TDL). Kick broadcasts need nothing extra.</span>' : '';
   }
 }
-/* caption previews: the renderer's four styles, drawn here the way they move */
-const SAMPLE = 'NO WAY DID YOU SEE THAT HE JUST WENT ALL IN AND IT ACTUALLY WORKED CHAT GO CRAZY'.split(' ');
-const SHOUT = new Set(['NO', 'WAY', 'ALL', 'IN', 'CRAZY', 'WORKED']);
-const BOUNCE = ['#ffe600', '#00f0ff', '#7cff3a', '#ff8a1e'];
-const TPL = { word: { per: 1 }, pop: { per: 3 }, classic: { per: 4, low: 1 }, bounce: { per: 3 } };
-function capHTML(id, i) {
-  const t = TPL[id]; if (!t) return '';
-  const start = Math.floor(i / t.per) * t.per, page = SAMPLE.slice(start, start + t.per), at = i - start, y = '#ffe600';
-  return page.map((w, k) => id === 'word' ? `<b class="w-in" style="color:${SHOUT.has(w) ? y : '#fff'}">${w}</b>`
-    : id === 'pop' ? `<b style="color:${k === at ? y : '#fff'};transform:scale(${k === at ? 1.25 : 1})" ${k === at ? 'class="w-in"' : ''}>${w}</b>`
-    : id === 'classic' ? `<b style="color:${k === at ? y : '#fff'};transform:scale(${k === at ? 1.1 : 1})">${w}</b>`
-    : k <= at ? `<b ${k === at ? 'class="b-in"' : ''} style="color:${BOUNCE[(start + k) % 4]}">${w}</b>` : `<b style="opacity:0">${w}</b>`).join('');
+/* ---------- the caption library ----------
+   Every style a Short can get: four built in, the rest animated templates. One is on the stage, playing
+   on a stand-in Short; the shelf holds them all; "Fine-tune" opens the template's own settings and each
+   change plays on the stage. The clips are made by the server, once each, then kept. */
+const PREV = {}, prevQueue = []; let prevBusy = 0;
+function previewOf(style, settings) {
+  const tuned = settings && Object.keys(settings).length, key = style + (tuned ? JSON.stringify(settings) : '');
+  if (!PREV[key]) PREV[key] = new Promise((res, rej) => { prevQueue[tuned ? 'unshift' : 'push']({ style, settings: tuned ? settings : null, res, rej, key }); pumpPrev(); });
+  return PREV[key];
 }
-function capFrame() { $$('#tplGrid [data-mini]').forEach(el => { el.innerHTML = capHTML(el.dataset.mini, capTick % SAMPLE.length); }); capTick++; }
+function pumpPrev() {
+  while (prevBusy < 2 && prevQueue.length) {
+    const q = prevQueue.shift(); prevBusy++;
+    api.post('/api/captions/preview', { style: q.style, settings: q.settings }).then(q.res, err => { delete PREV[q.key]; q.rej(err); }).finally(() => { prevBusy--; pumpPrev(); });
+  }
+}
+const sameV = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const capOf = id => (S.ov ? S.ov.captions : []).find(x => x.id === id);
+const capName = id => { const c = capOf(id); return c ? c.name : id || 'none'; };
+const decimals = step => step >= 1 ? 0 : step >= .1 ? 1 : 2;
+function capLib(root, o) {
+  const st = { style: o.style, colors: o.colors || 'auto', settings: { ...(o.settings || {}) }, filter: 'all', fields: null, tune: false, seq: 0, err: '' };
+  const lib = () => (S.ov ? S.ov.captions : []), info = () => (S.ov && S.ov.caption_library) || {};
+  const cur = () => capOf(st.style) || lib()[0] || { id: 'word', name: 'Word', about: '', kind: 'built-in' };
+  const animated = () => cur().kind === 'animated', blocked = c => c.kind === 'animated' && !info().ready;
+  root.className = 'caplib' + (o.compact ? ' compact' : '');
+  root.innerHTML = `<div class="capstage">
+      <div class="capphone"><video muted loop playsinline preload="auto" aria-label="How the captions move"></video><div class="capwait" hidden><i></i><span></span></div></div>
+      <div class="capside"><div class="capinfo"><span class="eyebrow" data-r="meta"></span><h2 data-r="name"></h2><p data-r="about"></p>
+        <div class="field" data-r="colbox"><span class="eyebrow">Colours</span><div class="seg" data-r="colors"></div><small class="cap-note" data-r="colnote"></small></div>
+        <p class="capwarn" data-r="warn" hidden></p><div class="row" data-r="acts"></div></div>
+        <div class="captune" data-r="tune" hidden></div>
+        <div class="capbar"><div class="seg" data-r="filter"></div><span class="cap-note" data-r="count"></span></div>
+        <div class="capshelf" data-r="shelf"></div></div></div>`;
+  const R$ = n => $(`[data-r="${n}"]`, root), video = $('.capphone video', root), wait = $('.capwait', root);
+  const state = () => ({ style: st.style, colors: st.colors, settings: animated() ? { ...st.settings } : {}, animated: animated(), tuned: Object.keys(st.settings).length > 0 });
+  const changed = () => { paintActs(); if (o.onChange) o.onChange(state()); };
+
+  /* the stage */
+  function show(url) { if (video.dataset.url === url) return; video.dataset.url = url; video.src = url; if (!reduce) video.play().catch(() => {}); }
+  async function play() {
+    const mine = ++st.seq, c = cur(); st.err = '';
+    if (blocked(c)) { wait.hidden = false; wait.className = 'capwait still'; wait.lastElementChild.textContent = 'Needs its one-time setup'; video.removeAttribute('src'); video.dataset.url = ''; video.load(); return paintWarn([]); }
+    const quick = !Object.keys(st.settings).length && c.preview;
+    if (quick) { show(c.preview); wait.hidden = true; }
+    else { wait.hidden = false; wait.className = 'capwait'; wait.lastElementChild.textContent = video.dataset.url ? 'Rendering your change' : 'Rendering the preview'; }
+    try { const r = await previewOf(c.id, animated() ? st.settings : null); if (mine !== st.seq) return; if (!Object.keys(st.settings).length) c.preview = r.url; show(r.url); wait.hidden = true; paintWarn(r.warnings || []); paintTile(c); }
+    catch (err) { if (mine !== st.seq) return; wait.hidden = true; st.err = err.message; paintWarn([]); }
+  }
+  function paintWarn(list) { const el = R$('warn'), all = [...(st.err ? [st.err] : []), ...list]; el.hidden = !all.length; el.textContent = all.join(' '); }
+  function paintStage() {
+    const c = cur(), lb = info();
+    R$('meta').textContent = c.kind === 'animated' ? `Animated · ${c.font}${c.words ? ' · ' + (c.words === 1 ? 'one word' : 'up to ' + c.words + ' words') + ' at a time' : ''}${c.tuned ? ' · with your settings' : ''}` : 'Built in · Anton';
+    R$('name').textContent = c.name; R$('about').textContent = c.about;
+    R$('colbox').hidden = c.kind !== 'animated' || blocked(c);
+    seg(R$('colors'), [['auto', 'Picked for each video'], ['fixed', 'The template\'s own']], st.colors, v => { st.colors = v; paintCol(); changed(); }); paintCol();
+    if (blocked(c)) { R$('about').innerHTML = `${esc(c.about)}<br><br><span class="cap-note">The animated templates are rendered with Node. Run this once on this machine, then reload the page:</span><br><code class="cmd">${esc(lb.setup || '')}</code><br><span class="cap-note">${esc(lb.missing || '')}</span>`; }
+    paintActs();
+  }
+  function paintCol() { R$('colnote').textContent = st.colors === 'auto' ? 'For every phrase the video under it is looked at: a highlight that is not already in the picture, always readable (at least 4.5 to 1). The preview shows the template\'s own colours.' : 'The colours you see here, on every video.'; }
+  function paintActs() {
+    const c = cur(), s = state(), p = o.primary, off = blocked(c) || (p.disabled && p.disabled(s));
+    R$('acts').innerHTML = `<button type="button" class="btn btn-primary" data-a="go"${off ? ' disabled' : ''}>${esc(p.label(s))}</button>` + (c.kind === 'animated' && !blocked(c) ? `<button type="button" class="btn btn-glass" data-a="tune" aria-expanded="${st.tune}">${st.tune ? 'Close the settings' : 'Fine-tune'}</button>` : '') + (o.note ? `<small class="cap-note">${esc(o.note(s))}</small>` : '');
+  }
+  R$('acts').onclick = async e => { const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.a === 'tune') return tune(!st.tune);
+    b.disabled = true; try { await o.primary.run(state()); } catch (err) { toast(err.message); } paintActs(); };
+
+  /* the shelf */
+  function tileHTML(c) { return `<button type="button" class="captile${blocked(c) ? ' off' : ''}" data-id="${esc(c.id)}" aria-pressed="${c.id === st.style}" title="${esc(c.about)}"><span class="capband">${c.preview ? `<video muted loop playsinline preload="metadata" data-src="${esc(c.preview)}"></video>` : `<i>${esc(c.name)}</i>`}</span><b>${esc(c.name)}</b><small>${c.kind === 'animated' ? esc(c.font) : 'Built in'}</small></button>`; }
+  function paintTile(c) { const el = $(`.captile[data-id="${CSS.escape(c.id)}"]`, root); if (!el || !c.preview || $('video', el)) return; $('.capband', el).innerHTML = `<video muted loop playsinline preload="metadata" data-src="${esc(c.preview)}"></video>`; watch(el); }
+  const seen = new IntersectionObserver(es => es.forEach(en => { if (!en.isIntersecting) return; const v = $('video', en.target), c = capOf(en.target.dataset.id); seen.unobserve(en.target);
+    if (v && !v.src) { v.src = v.dataset.src; v.addEventListener('loadedmetadata', () => { v.currentTime = 1.62; }, { once: true }); }
+    else if (!v && c && !blocked(c)) previewOf(c.id).then(r => { c.preview = r.url; paintTile(c); }, () => {}); }), { rootMargin: '120px' });
+  function watch(el) { seen.observe(el); }
+  function paintShelf() {
+    const all = lib(), rows = all.filter(c => st.filter === 'all' || c.kind === st.filter), n = k => all.filter(c => c.kind === k).length;
+    seg(R$('filter'), [['all', `All ${all.length}`], ['animated', `Animated ${n('animated')}`], ['built-in', `Built in ${n('built-in')}`]], st.filter, v => { st.filter = v; paintShelf(); });
+    R$('count').textContent = info().ready === false && n('animated') ? 'The animated ones need their one-time setup on this machine.' : '';
+    R$('shelf').innerHTML = rows.map(tileHTML).join(''); $$('.captile', root).forEach(watch);
+  }
+  const hover = (e, on) => { const t = e.target.closest && e.target.closest('.captile'), v = t && $('video', t); if (!v || !v.src || reduce || t.contains(e.relatedTarget)) return; if (on) v.play().catch(() => {}); else { v.pause(); v.currentTime = 1.62; } };
+  R$('shelf').addEventListener('pointerover', e => hover(e, true)); R$('shelf').addEventListener('pointerout', e => hover(e, false));
+  R$('shelf').onclick = e => { const b = e.target.closest('.captile'); if (!b || b.dataset.id === st.style) return; pick(b.dataset.id); };
+  function pick(id) { st.style = id; st.settings = {}; st.fields = null; $$('.captile', root).forEach(x => x.setAttribute('aria-pressed', x.dataset.id === id)); paintStage(); play(); if (st.tune) { if (animated() && !blocked(cur())) loadFields(); else tune(false); } changed(); }
+
+  /* the template's own settings */
+  const fieldOf = path => { for (const g of st.fields.groups) for (const f of g.fields) if (f.path === path) return f; };
+  const valOf = f => f.path in st.settings ? st.settings[f.path] : f.value;
+  let later = 0;
+  function setVal(f, v) { if (sameV(v, f.value)) delete st.settings[f.path]; else st.settings[f.path] = v; const row = $(`[data-p="${CSS.escape(f.path)}"]`, root); if (row) row.classList.toggle('changed', !sameV(v, f.own)); clearTimeout(later); later = setTimeout(play, 450); paintTuneHead(); changed(); }
+  const numRow = (id, label, f, v, help) => { const max = f.max != null ? f.max : f.soft_max, d = decimals(f.step || .01); return `<div class="cfg-row${sameV(v, f.own) ? '' : ' changed'}" data-p="${esc(id)}"><label>${esc(label)}</label><input type="range" min="${f.min != null ? f.min : 0}" max="${Math.max(max, v)}" step="${f.step || .01}" value="${v}" aria-label="${esc(label)}"><output>${(+v).toFixed(d)}</output>${help ? `<small>${esc(help)}</small>` : ''}</div>`; };
+  function rowHTML(f) {
+    const v = valOf(f), ch = sameV(v, f.own) ? '' : ' changed';
+    if (f.kind === 'number') return numRow(f.path, f.label, f, v, f.help);
+    if (f.kind === 'select') return `<div class="cfg-row${ch}" data-p="${esc(f.path)}"><label>${esc(f.label)}</label><select aria-label="${esc(f.label)}">${f.options.map(x => `<option value="${esc(x.id)}"${x.id === v ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select><output></output>${f.help ? `<small>${esc(f.help)}</small>` : ''}</div>`;
+    if (f.kind === 'color') return `<div class="cfg-row${ch}" data-p="${esc(f.path)}"><label>${esc(f.label)}</label><input type="color" value="${esc(String(v).toLowerCase())}" aria-label="${esc(f.label)}"><output>${esc(String(v).toUpperCase())}</output>${f.help ? `<small>${esc(f.help)}</small>` : ''}</div>`;
+    if (f.kind === 'colors') return `<div class="cfg-row wide${ch}" data-p="${esc(f.path)}"><label>${esc(f.label)}</label><div class="swatches">${v.map((x, i) => `<input type="color" value="${esc(String(x).toLowerCase())}" data-i="${i}" aria-label="${esc(f.label)} ${i + 1}">`).join('')}${v.length < (f.max || 8) ? '<button type="button" class="chip" data-sw="add">Add</button>' : ''}${v.length > 1 ? '<button type="button" class="chip" data-sw="less">Remove</button>' : ''}</div>${f.help ? `<small>${esc(f.help)}</small>` : ''}</div>`;
+    const a = v && f.choices.find(x => x.id === v.name), units = a && a.units.length > 1 ? a.units : [];
+    return `<div class="motion${ch}" data-p="${esc(f.path)}"><div class="cfg-row"><label>${esc(f.label)}</label><select data-m="name" aria-label="${esc(f.label)}">${f.optional ? `<option value=""${v ? '' : ' selected'}>Holds still</option>` : ''}${f.choices.map(x => `<option value="${esc(x.id)}"${v && x.id === v.name ? ' selected' : ''}>${esc(x.id[0].toUpperCase() + x.id.slice(1))}</option>`).join('')}</select><output></output><small>${esc(a ? a.about : 'Nothing moves while it waits.')}</small></div>
+      ${units.length ? `<div class="cfg-row"><label>Takes its turn</label><select data-m="by" aria-label="${esc(f.label)}: takes its turn">${units.map(u => `<option value="${u}"${u === (v.by || 'page') ? ' selected' : ''}>${esc(st.fields.units[u] || u)}</option>`).join('')}</select><output></output></div>` : ''}
+      ${a ? Object.entries(a.params).map(([k, p]) => { const pv = v.params && v.params[k] != null ? v.params[k] : p.default, span = p.max - p.min; return numRow(f.path + '#' + k, p.label || k, { ...p, step: span > 100 ? 1 : span > 30 ? .5 : span > 6 ? .1 : .01, own: p.default }, pv, ''); }).join('') : ''}</div>`;
+  }
+  function paintTuneHead() { const n = Object.keys(st.settings).length, h = $('.tunehead small', root); if (h) h.textContent = n ? `${n} ${n === 1 ? 'change' : 'changes'}, playing on the preview` : 'Move a setting and watch the preview.'; }
+  function paintTune() {
+    const box = R$('tune'), f = st.fields; if (!f) { box.innerHTML = '<p class="cap-note">Loading the settings…</p>'; return; }
+    box.innerHTML = `<div class="tunehead"><div><b>Settings of ${esc(f.name)}</b><small class="cap-note"></small></div><div class="row"><button type="button" class="btn btn-glass btn-sm" data-t="undo">Undo my changes</button><button type="button" class="btn btn-glass btn-sm" data-t="own">As the template came</button></div></div>
+      <div class="accs">${f.groups.map((g, i) => `<details class="acc slim"${i === 0 ? ' open' : ''}><summary><span><b>${esc(g.title)}</b><small>${g.fields.length} ${g.fields.length === 1 ? 'setting' : 'settings'}</small></span></summary><div class="cfg">${g.fields.map(rowHTML).join('')}</div></details>`).join('')}</div>`;
+    paintTuneHead();
+    $$('.acc', box).forEach(d => d.addEventListener('toggle', () => { if (d.open) $$('.acc', box).forEach(x => { if (x !== d) x.open = false; }); }));
+  }
+  function redraw(f) { const el = $(`[data-p="${CSS.escape(f.path)}"]`, root); if (el) el.outerHTML = rowHTML(f); }
+  R$('tune').addEventListener('input', e => {
+    const t = e.target, row = t.closest('[data-p]'); if (!row) return; const path = row.dataset.p, [fp, sub] = path.split('#'), f = fieldOf(fp); if (!f) return;
+    if (sub) { const v = JSON.parse(JSON.stringify(valOf(f))); v.params = { ...(v.params || {}), [sub]: +t.value }; row.querySelector('output').textContent = (+t.value).toFixed(decimals(+t.step)); row.classList.add('changed'); return setVal(f, v); }
+    if (f.kind === 'number') { row.querySelector('output').textContent = (+t.value).toFixed(decimals(f.step)); return setVal(f, f.whole ? Math.round(+t.value) : +t.value); }
+    if (f.kind === 'color') { row.querySelector('output').textContent = t.value.toUpperCase(); return setVal(f, t.value.toUpperCase()); }
+    if (f.kind === 'colors' && t.dataset.i != null) { const v = [...valOf(f)]; v[+t.dataset.i] = t.value.toUpperCase(); return setVal(f, v); }
+  });
+  R$('tune').addEventListener('change', e => {
+    const t = e.target, row = t.closest('[data-p]'); if (!row || t.tagName !== 'SELECT') return; const f = fieldOf(row.dataset.p.split('#')[0]); if (!f) return;
+    if (f.kind === 'select') return setVal(f, t.value);
+    if (f.kind !== 'motion') return;
+    const old = valOf(f); let v = null;
+    if (t.dataset.m === 'by') v = { ...old, by: t.value };
+    else if (t.value) { const a = f.choices.find(x => x.id === t.value), by = a.units.length ? (a.units.includes(old && old.by) ? old.by : a.units[0]) : null; v = { name: a.id, params: Object.fromEntries(Object.entries(a.params).map(([k, p]) => [k, p.default])) }; if (by) v.by = by; }
+    setVal(f, v); redraw(f);
+  });
+  R$('tune').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.sw) { const row = b.closest('[data-p]'), f = fieldOf(row.dataset.p), v = [...valOf(f)]; if (b.dataset.sw === 'add') v.push(v[v.length - 1]); else v.pop(); setVal(f, v); return redraw(f); }
+    if (b.dataset.t === 'undo') { st.settings = {}; paintTune(); play(); return changed(); }
+    if (b.dataset.t === 'own') { st.settings = {}; st.fields.groups.forEach(g => g.fields.forEach(f => { if (!sameV(f.value, f.own)) st.settings[f.path] = f.own; })); paintTune(); play(); changed(); }
+  });
+  async function loadFields() { paintTune(); const id = st.style; try { const f = await api.get('/api/captions/fields?style=' + encodeURIComponent(id)); if (id !== st.style) return; st.fields = f; paintTune(); } catch (err) { R$('tune').innerHTML = `<p class="capwarn">${esc(err.message)}</p>`; } }
+  function tune(on) { st.tune = on; R$('tune').hidden = !on; root.classList.toggle('tuning', on); paintActs(); if (on) { if (!st.fields) loadFields(); R$('tune').scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'nearest' }); } }
+
+  paintStage(); paintShelf(); play();
+  return {
+    state,
+    /* the template's settings as its own version would hold them: everything that is not as it came */
+    ownVersion() { const out = {}; if (st.fields) st.fields.groups.forEach(g => g.fields.forEach(f => { const v = valOf(f); if (!sameV(v, f.own)) out[f.path] = v; })); return out; },
+    loaded: () => !!st.fields,
+    saved(fields) { st.fields = fields || null; st.settings = {}; const c = cur(); c.tuned = !!(fields && fields.tuned); c.preview = null; delete PREV[c.id]; paintStage(); if (st.tune) paintTune(); play(); },
+    paint() { paintStage(); },
+    refresh() { paintStage(); paintShelf(); if (!video.dataset.url) play(); },
+  };
+}
+let capW = null;
+const capSaved = s => S.ov && s.style === S.ov.caption_default && (!s.animated || (s.colors === S.ov.caption_library.colors && !s.tuned));
+async function useCaptions(quiet) {
+  if (!capW) return; const s = capW.state(); if (capSaved(s)) return;
+  if (s.animated && s.tuned && capW.loaded()) { const r = await api.post('/api/captions/defaults', { style: s.style, settings: capW.ownVersion() }); capW.saved(r); }
+  await api.post('/api/settings', { values: { 'render.captions': s.style, ...(s.animated ? { 'render.rm.colors': s.colors } : {}) }, merge: true });
+  S.ov.caption_default = s.style; if (s.animated) S.ov.caption_library.colors = s.colors; S.cfg = null; capW.paint(); if (!quiet) toast(capName(s.style) + ' is the caption style of new clips');
+}
 function paintTpls() {
   const ov = S.ov; if (!ov) return;
-  $('#tplGrid').innerHTML = ov.captions.filter(c => TPL[c.id]).map(c => `<button type="button" class="card tilt tpl" data-id="${c.id}" aria-pressed="${ov.caption_default === c.id}"><div class="mini"><div class="pane cam"></div><div class="pane game"></div><div class="line${TPL[c.id].low ? ' low' : ''}" data-mini="${c.id}"></div></div><b>${esc(c.name)}</b><span class="cap-note">${esc(c.about)}</span></button>`).join('');
-  $$('#tplGrid .tilt').forEach(el => tilt(el, 7));
-  $('#capLead').textContent = 'The style the renderer burns into every new Short. ' + (ov.speech ? 'Your choice is saved in the settings.' : 'This machine has no speech model installed (faster-whisper), so new clips come out without captions until it is.');
+  if (capW) capW.refresh();
+  else capW = capLib($('#capLib'), { style: capOf(ov.caption_default) ? ov.caption_default : 'word', colors: ov.caption_library.colors,
+    primary: { label: s => capSaved(s) ? 'In use for new clips' : s.tuned ? 'Save and use for new clips' : 'Use for new clips', disabled: capSaved, run: () => useCaptions() },
+    note: s => s.animated ? 'An animated template adds about half a clip\'s length to its render. Too slow for a live run on a busy machine: there the built-in ones are the safe pick.' : '' });
+  $('#capLead').textContent = 'What the renderer puts on every new Short. ' + (ov.speech ? 'Pick one, watch it, make it yours.' : 'This machine has no speech model installed (faster-whisper), so new clips come out without captions until it is.');
 }
 
 /* ---------- a run, as the server reports it ---------- */
@@ -175,7 +318,7 @@ function resetRunView(kind, params) {
   Object.assign(R, { kind, params, clips: [], clip: 0, tests: { seen: 0, failed: [] }, ended: false, timers: [] });
   const tests = kind === 'tests', name = kind === 'live' ? 'live lane' : kind === 'vod' ? 'VOD lane' : 'test suite';
   $('#runTitle').innerHTML = kind === 'render' ? 'Rendering the Short <span class="gt">again</span>' : `Running the <span class="gt">${name}</span>`;
-  $('#runNote').textContent = kind === 'live' ? `${params.streamer}, ${+params.minutes ? 'for ' + params.minutes + ' minutes' : 'until you stop it'}.` : kind === 'vod' ? `${params.streamer} on ${PFN[params.platform] || 'Twitch'}: up to ${plural(params.top || 3, 'clip')}.` : kind === 'render' ? `${params.clip}: ${params.captions || 'the same'} captions, ${params.layout === 'stack' ? 'the older stack' : 'webcam over gameplay'}.` : 'Every test of the project, as pytest runs them.';
+  $('#runNote').textContent = kind === 'live' ? `${params.streamer}, ${+params.minutes ? 'for ' + params.minutes + ' minutes' : 'until you stop it'}.` : kind === 'vod' ? `${params.streamer} on ${PFN[params.platform] || 'Twitch'}: up to ${plural(params.top || 3, 'clip')}.` : kind === 'render' ? `${params.clip}: ${params.captions ? capName(params.captions) : 'the same'} captions${params.settings && Object.keys(params.settings).length ? ' with settings of their own' : ''}, ${params.layout === 'stack' ? 'the older stack' : 'webcam over gameplay'}.` : 'Every test of the project, as pytest runs them.';
   const rp = kind === 'vod' ? params.platform : platformOf(params.streamer), rw = $('#runWho'); rw.hidden = !(kind === 'live' || kind === 'vod');
   rw.innerHTML = rw.hidden ? '' : `${avatar(rp, params.streamer, 'lg')}<span class="who"><b>${named(rp, params.streamer)}${badges(rp, params.streamer, 4)}</b><small data-fo="${esc(pkey(rp, params.streamer))}">${rp === 'kick' ? 'kick.com/' : 'twitch.tv/'}${esc(params.streamer)}</small></span>`;
   $('#steps').innerHTML = ''; $('#log').innerHTML = ''; $('#stepsBox').hidden = false; $('#resultBox').hidden = true; $('#resultBox').innerHTML = '';
@@ -224,7 +367,7 @@ function finish(e) {
     const c = R.clips[R.clips.length - 1], n = R.clips.length;
     $('#runTitle').innerHTML = R.kind === 'render' ? 'Rendered <span class="gt">again</span>' : n === 1 ? 'Clip <span class="gt">staged</span>' : `${n} clips <span class="gt">staged</span>`;
     html = `<span class="badge warn"><i class="dot warn"></i>Waiting for approval</span><h2>${esc(c.title)}</h2><p class="lead">${esc(c.hook || '')}</p>
-      <div class="grid statrow"><div class="card"><div class="tile"><b class="num">${c.final_score}</b><span>final score</span></div></div><div class="card"><div class="tile"><b class="num">${c.seconds} s</b><span>long</span></div></div><div class="card"><div class="tile">${R.kind === 'render' ? `<b class="num long" style="text-transform:capitalize">${esc(c.captions || 'none')}</b>` : numb(fmtS(workOf(c.timings)))}<span>${R.kind === 'render' ? 'captions' : 'of work'}</span></div></div></div>
+      <div class="grid statrow"><div class="card"><div class="tile"><b class="num">${c.final_score}</b><span>final score</span></div></div><div class="card"><div class="tile"><b class="num">${c.seconds} s</b><span>long</span></div></div><div class="card"><div class="tile">${R.kind === 'render' ? `<b class="num long" style="text-transform:capitalize">${esc(c.captions ? capName(c.captions) : 'none')}</b>` : numb(fmtS(workOf(c.timings)))}<span>${R.kind === 'render' ? 'captions' : 'of work'}</span></div></div></div>
       <p class="cap-note">${S.ov && S.ov.dry_run ? 'Nothing was uploaded: this is a dry run, and only clips a person approves go to YouTube.' : 'It is uploaded once a person approves it.'}</p>`;
   } else if (R.kind === 'render') {
     $('#runTitle').innerHTML = 'Not rendered <span class="gt">again</span>';
@@ -263,7 +406,7 @@ async function replay(id) {
 }
 async function startRun() {
   const params = W.mode === 'live' ? { streamer: W.streamer, minutes: W.minutes } : W.mode === 'vod' ? { streamer: W.vodWho, platform: W.platform, vod: W.vod, top: W.top } : {};
-  try { const run = await api.post('/api/runs', { kind: W.mode, params }); goStep(4); follow(run); }
+  try { if (W.mode !== 'tests') await useCaptions(true); const run = await api.post('/api/runs', { kind: W.mode, params }); goStep(4); follow(run); }
   catch (err) { toast(err.message); }
 }
 function initRun() {
@@ -271,8 +414,6 @@ function initRun() {
   $('#modeCards').onclick = e => { const b = e.target.closest('.choice'); if (!b) return; W.mode = b.dataset.k; store.set('mode', W.mode); $$('#modeCards .choice').forEach(x => x.setAttribute('aria-pressed', x === b)); paintWiz(); };
   $('#whoCards').onclick = e => { const b = e.target.closest('.choice'); if (!b) return; W.streamer = b.dataset.k; store.set('streamer', W.streamer); $('#otherWho').value = ''; $$('#whoCards .choice').forEach(x => x.setAttribute('aria-pressed', x === b)); };
   $('#otherWho').oninput = e => { const v = e.target.value.trim().toLowerCase().replace(/^.*twitch\.tv\//, '').replace(/[^a-z0-9_]/g, ''); W.streamer = v; store.set('streamer', v); $$('#whoCards .choice').forEach(x => x.setAttribute('aria-pressed', x.dataset.k === v)); };
-  $('#tplGrid').onclick = async e => { const b = e.target.closest('.tpl'); if (!b) return; $$('#tplGrid .tpl').forEach(x => x.setAttribute('aria-pressed', x === b));
-    try { await api.post('/api/settings', { values: { 'render.captions': b.dataset.id }, merge: true }); S.ov.caption_default = b.dataset.id; S.cfg = null; toast('Caption style saved for new clips'); } catch (err) { toast(err.message); } };
   $('#next1').onclick = () => W.mode === 'tests' ? startRun() : goStep(2);
   $('#back2').onclick = () => goStep(1);
   $('#next2').onclick = () => {
@@ -307,13 +448,13 @@ async function openClip(id) {
   const made = Object.keys(sig).length ? bars([['Chatters', (sig.zU || 0) * w.U], ['Messages', (sig.zM || 0) * w.M], ['Keywords', (sig.zE || 0) * w.E], ['Short messages', (sig.zS || 0) * w.S]]) : '';
   const tim = Object.entries(c.timings || {}).filter(([k]) => !['wait', 'total', 'post'].includes(k));
   const j = c.judge || {}, flags = Object.entries(j.flags || {}).filter(([, v]) => v).map(([k]) => ({ sp: 'spoiler', mu: 'music risk', gb: 'gambling' }[k] || k));
-  const caps = (S.ov ? S.ov.captions : []).filter(t => TPL[t.id]), pick = { captions: c.captions || (S.ov && S.ov.caption_default) || 'word', layout: c.render_layout || 'split' };
+  const pick = { layout: c.render_layout || 'split' }, lb = (S.ov && S.ov.caption_library) || {};
+  const nSet = Object.keys(c.caption_settings || {}).length, capLine = !c.captions ? 'none' : esc(capName(c.captions)) + (c.caption_colors ? (c.caption_colors === 'auto' ? ', colours picked for this video' : ', the template\'s own colours') : '') + (nSet ? `, ${nSet} ${nSet === 1 ? 'setting' : 'settings'} of its own` : '') + (c.captions_error ? `<br><small style="color:var(--muted)">The animated template could not be rendered, so the built-in style was used: ${esc(c.captions_error)}</small>` : '');
   const words = c.recipe ? 'Rendered from the clean cut of this clip, with the words it was first rendered with.' : S.ov && S.ov.speech ? 'Rendered from the clean cut of this clip. Its words are transcribed again first.' : 'This clip was staged without its words and this machine has no speech model (faster-whisper), so it will come out without captions.';
   const again = !c.files['clean_16x9.mp4'] ? '' : c.state !== 'READY' ? `<div class="card"><h3 style="margin-bottom:8px">Settings for this video</h3><p class="cap-note">This clip is already ${esc(c.state.toLowerCase())}, so its video stays as the operator saw it.</p></div>`
     : `<div class="card"><h3 style="margin-bottom:12px">Settings for this video</h3><div class="cfg">
-      <div class="field"><span class="eyebrow">Caption template</span><div class="row" id="dCap">${caps.map(t => `<button type="button" class="chip" data-v="${t.id}" aria-pressed="${pick.captions === t.id}">${esc(t.name)}</button>`).join('')}</div></div>
       <div class="field"><span class="eyebrow">Layout</span><div class="row" id="dLay"><button type="button" class="chip" data-v="split" aria-pressed="${pick.layout === 'split'}">Webcam over gameplay</button><button type="button" class="chip" data-v="stack" aria-pressed="${pick.layout === 'stack'}">Older stack</button></div></div>
-      <div class="row"><button class="btn btn-primary btn-sm" id="dRender">Render again with these</button></div>
+      <div class="field"><span class="eyebrow">Captions</span><div id="dCapLib"></div></div>
       <p class="cap-note">${words}</p></div></div>`;
   $('#drawer').innerHTML = `<div class="row" style="justify-content:space-between"><span class="pill"><span>${c.lane === 'vod' ? 'VOD lane' : 'Live lane'} · ${when(c.created)}</span></span><button class="btn btn-glass btn-sm" id="dClose">Close</button></div>
     <h2 style="font-size:1.4rem">${esc(c.title || c.id)}</h2>${c.hook ? `<p style="color:var(--muted)">${esc(c.hook)}</p>` : ''}
@@ -323,13 +464,14 @@ async function openClip(id) {
       <dl class="kv"><dt>Final score</dt><dd>${c.final_score != null ? (+c.final_score).toFixed(2) : '–'}</dd><dt>From the chat</dt><dd>${c.chat_score != null ? (+c.chat_score).toFixed(2) : '–'}</dd><dt>Loudness and viewer clips</dt><dd>+${bonus.toFixed(2)}</dd><dt>Chatters in the spike</dt><dd>${c.chatters || '–'}</dd><dt>Rank in the stream</dt><dd>${c.chat_rank != null ? '#' + Math.round(c.chat_rank) : '–'}</dd><dt>A viewer clipped it too</dt><dd>${c.viewer_clip ? 'yes' : 'no'}</dd></dl>
       ${made ? `<p class="eyebrow" style="margin:16px 0 10px">What the chat score was made of</p>${made}` : ''}</div>
     ${again}
-    <div class="card"><h3 style="margin-bottom:12px">Title and judge</h3><dl class="kv"><dt>Written by</dt><dd>${j.source === 'claude' ? 'Claude' : j.source === 'heuristic' ? 'the fallback (no API key or a failed call)' : 'the fallback (judge off)'}</dd>${j.score != null ? `<dt>Judge score</dt><dd>${j.score} of 10</dd>` : ''}${j.why ? `<dt>Why</dt><dd>${esc(j.why)}</dd>` : ''}<dt>Flags</dt><dd>${flags.length ? flags.join(', ') : 'none'}</dd><dt>Credit on screen</dt><dd>${esc(c.credit)}</dd><dt>Captions</dt><dd>${esc(c.captions || 'none')}</dd><dt>Webcam layout</dt><dd>${esc(LAYOUTS[c.layout] || (String(c.layout || '').startsWith('scene:') ? 'the confirmed scene "' + c.layout.slice(6) + '"' : c.layout) || '–')}${(c.layout_doubts || []).map(d => '<br><small style="color:var(--muted)">' + esc(d) + '</small>').join('')}</dd></dl></div>
+    <div class="card"><h3 style="margin-bottom:12px">Title and judge</h3><dl class="kv"><dt>Written by</dt><dd>${j.source === 'claude' ? 'Claude' : j.source === 'heuristic' ? 'the fallback (no API key or a failed call)' : 'the fallback (judge off)'}</dd>${j.score != null ? `<dt>Judge score</dt><dd>${j.score} of 10</dd>` : ''}${j.why ? `<dt>Why</dt><dd>${esc(j.why)}</dd>` : ''}<dt>Flags</dt><dd>${flags.length ? flags.join(', ') : 'none'}</dd><dt>Credit on screen</dt><dd>${esc(c.credit)}</dd><dt>Captions</dt><dd>${capLine}</dd><dt>Webcam layout</dt><dd>${esc(LAYOUTS[c.layout] || (String(c.layout || '').startsWith('scene:') ? 'the confirmed scene "' + c.layout.slice(6) + '"' : c.layout) || '–')}${(c.layout_doubts || []).map(d => '<br><small style="color:var(--muted)">' + esc(d) + '</small>').join('')}</dd></dl></div>
     ${tim.length ? `<div class="card"><h3 style="margin-bottom:12px">Where its ${fmtS(tim.reduce((a, [, v]) => a + v, 0))} of work went</h3>${bars(tim.map(([k, v]) => [stepName(k), v]), 's')}</div>` : ''}
     <div class="card"><h3 style="margin-bottom:12px">Where it stands</h3><dl class="kv"><dt>State</dt><dd>${esc(c.state)}</dd>${c.approved_by ? `<dt>Approved by</dt><dd>${esc(c.approved_by)}</dd>` : ''}<dt>YouTube</dt><dd>${c.youtube_id ? esc(c.youtube_id) : 'not uploaded'}</dd><dt>Files</dt><dd>${Object.entries(c.files).map(([n, b]) => n + ' ' + (b / 1048576).toFixed(1) + ' MB').join('<br>')}</dd><dt>Clip id</dt><dd>${esc(c.id)}</dd></dl></div>`;
-  if ($('#dRender')) {
-    const choose = (box, key) => box.onclick = ev => { const b = ev.target.closest('button'); if (!b) return; $$('button', box).forEach(x => x.setAttribute('aria-pressed', x === b)); pick[key] = b.dataset.v; };
-    choose($('#dCap'), 'captions'); choose($('#dLay'), 'layout');
-    $('#dRender').onclick = async () => { try { const run = await api.post('/api/runs', { kind: 'render', params: { clip: c.id, captions: pick.captions, layout: pick.layout } }); closeDrawer(); location.hash = 'run'; R.kind = 'render'; W.step = 4; paintWiz(); $$('.stepbox').forEach(b => { b.hidden = b.id !== 's4'; }); follow(run); } catch (err) { toast(err.message); } };
+  if ($('#dCapLib')) {
+    $('#dLay').onclick = ev => { const b = ev.target.closest('button'); if (!b) return; $$('button', $('#dLay')).forEach(x => x.setAttribute('aria-pressed', x === b)); pick.layout = b.dataset.v; };
+    const has = capOf(c.captions), start = has ? c.captions : capOf(S.ov.caption_default) ? S.ov.caption_default : 'word';
+    capLib($('#dCapLib'), { compact: true, style: start, colors: (has && c.caption_colors) || lb.colors, settings: has ? c.caption_settings : {},
+      primary: { label: () => 'Render again with these', run: async s => { const run = await api.post('/api/runs', { kind: 'render', params: { clip: c.id, captions: s.style, layout: pick.layout, ...(s.animated ? { colors: s.colors, settings: s.settings } : {}) } }); closeDrawer(); location.hash = 'run'; R.kind = 'render'; W.step = 4; paintWiz(); $$('.stepbox').forEach(b => { b.hidden = b.id !== 's4'; }); follow(run); } } });
   }
   $('#dClose').onclick = closeDrawer; $('#drawer').classList.add('open'); $('#scrim').classList.add('open'); $('#drawer').setAttribute('aria-hidden', 'false'); $('#drawer').scrollTop = 0; $('#dClose').focus();
 }
@@ -454,12 +596,12 @@ function paintSave() {
 }
 function renderSettings() {
   const ov = S.ov || { streamers: [] };
-  const rows = g => g.fields.map(f => { const id = 'f-' + f.key.replace(/\./g, '-'); const ctl = f.type === 'range' ? `<input type="range" id="${id}" min="${f.min}" max="${f.max}" step="${f.step}">` : f.type === 'toggle' ? `<button class="sw-t" role="switch" id="${id}" aria-label="${esc(f.label)}"></button>` : `<select id="${id}">${f.options.map(o => `<option>${o}</option>`).join('')}</select>`; return `<div class="cfg-row" data-k="${f.key}"><label for="${id}">${esc(f.label)}</label>${ctl}<output></output>${f.hint ? `<small>${esc(f.hint)}</small>` : ''}</div>`; }).join('');
+  const rows = g => g.fields.map(f => { const id = 'f-' + f.key.replace(/\./g, '-'); const ctl = f.type === 'range' ? `<input type="range" id="${id}" min="${f.min}" max="${f.max}" step="${f.step}">` : f.type === 'toggle' ? `<button class="sw-t" role="switch" id="${id}" aria-label="${esc(f.label)}"></button>` : `<select id="${id}">${f.options.map(o => `<option value="${esc(o)}">${esc(f.key === 'render.captions' ? capName(o) + (String(o).startsWith('rm:') ? ' (animated)' : '') : o)}</option>`).join('')}</select>`; return `<div class="cfg-row" data-k="${f.key}"><label for="${id}">${esc(f.label)}</label>${ctl}<output></output>${f.hint ? `<small>${esc(f.hint)}</small>` : ''}</div>`; }).join('');
   $('#cfgGrid').innerHTML = S.cfg.groups.map((g, gi) => `<details class="acc" name="acc"${gi === 0 ? ' open' : ''}><summary><i>${gi + 1}</i><span><b>${esc(g.title)}</b><small>${esc(g.about)}</small></span></summary><div class="cfg">${gi === 0 ? '<div class="wbar" id="wbar"></div><p class="cap-note" id="wsum"></p>' : ''}${rows(g)}</div></details>`).join('') +
     `<details class="acc" name="acc"><summary><i>${S.cfg.groups.length + 1}</i><span><b>Sources and destinations</b><small>Who the bot watches and where approved clips go</small></span></summary><div class="cfg"><div class="row">${ov.streamers.length ? ov.streamers.map(s => `<span class="badge src">${avatar(s.platform, s.login, 'xs')}${named(s.platform, s.login)}${badges(s.platform, s.login, 1)}</span>`).join('') : '<span class="cap-note">No streamers in config/streamers.yaml yet.</span>'}</div><div class="row"><span class="badge">${ic('telegram', 'pf-telegram')} Telegram approval${ov.telegram ? '' : ' (no bot token set)'}</span><span class="badge">${ic('youtube', 'pf-youtube')} YouTube Shorts${ov.dry_run ? ' (dry run: no uploads)' : ''}</span><span class="badge">${ic('claude', 'pf-claude')} Judge${ov.judge_key ? '' : ' (no API key: fallback titles)'}</span></div><p class="cap-note">Streamers, keys and tokens are set in the config files and the environment, not here.</p></div></details>`;
   $$('#cfgGrid [data-k]').forEach(rowEl => { const f = fieldOf(rowEl.dataset.k), inp = rowEl.querySelector('input,select,.sw-t'); paintRow(rowEl);
     const set = v => { E[f.key] = v; paintRow(rowEl); paintSave(); };
-    if (f.type === 'toggle') inp.onclick = () => set(!E[f.key]); else inp.oninput = () => set(f.type === 'range' ? +inp.value : inp.value); });
+    if (f.type === 'toggle') inp.onclick = () => set(!E[f.key]); else inp.oninput = () => set(f.type === 'range' || typeof f.options[0] === 'number' ? +inp.value : inp.value); });
   $$('#cfgGrid .acc').forEach(d => d.addEventListener('toggle', () => { if (d.open) $$('#cfgGrid .acc').forEach(o => { if (o !== d) o.open = false; }); }));
   paintSave();
 }
@@ -479,8 +621,7 @@ async function loadOverview() {
   return ov;
 }
 function onShow(name) {
-  clearInterval(capTimer);
-  if (name === 'run' && W.step === 3) { capTick = 0; capFrame(); capTimer = setInterval(capFrame, reduce ? 1200 : 340); }
+  if (name === 'run' && W.step === 3 && capW) capW.refresh();
   if (name === 'clips') loadClips().then(() => stagger($('#v-clips')));
   if (name === 'insights') loadInsights();
   if (name === 'setup') loadSettings();
