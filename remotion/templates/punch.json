@@ -120,17 +120,17 @@
         "freq": 4.5,
         "damp": 0.55,
         "rise": 0.3
-      }
+      },
+      "by": "page"
     },
-    "enterBy": "page",
     "exit": {
       "name": "shrink",
       "params": {
         "windup": 1.4,
         "drop": 0.35
-      }
+      },
+      "by": "page"
     },
-    "exitBy": "page",
     "active": {
       "name": "punch",
       "params": {

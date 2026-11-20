@@ -68,8 +68,31 @@ unknown or missing keys before the first frame, and a rejected render falls back
 <!-- TEMPLATES -->
 | template | font | words | look |
 |---|---|---|---|
+| `rm:arcade` | Press Start 2P | up to 3 | 8-bit: pixel caps with a one-pixel outline and a hard stepped extrusion. Letters drop in one by one and bounce, the spoken word hops letter by letter and runs between two colours, shouted words are bigger and blink, and before a pause the letters fall off one by one. |
+| `rm:bounce` | Chewy | up to 4 | Follow the bouncing ball: a glossy ball hops in arcs from word to word and lands on each one as it is spoken; the word gives way under it, springs back and takes the highlight; before a pause the ball bounces away and the words drop out. |
+| `rm:chips` | Bungee | up to 3 | Every word is a chip: a rounded candy-coloured plate with dark letters. Chips fly in from both sides and settle on a spring, the spoken chip turns over like a card onto its dark face with letters in its own colour, shouted chips are bigger and tilted, and at the end they scatter and drop. |
+| `rm:chrome` | Unbounded | up to 2 | Liquid metal: wide caps filled with a chrome reflection whose horizon sloshes, on a dark outline with a hard shadow. Lines are poured in from the left, leaning forward and settling; a slanted glint runs across the spoken word, which takes its own tint; shouted words are gold; before a pause the lines lean back and leave to the right. |
+| `rm:comic` | Bangers | up to 3 | Comic-book title: slanted yellow-to-orange caps with a black outline and a red 3D side; words spin in on a spring, the spoken word punches up white-to-cyan, shouted words get a turning starburst, the block zooms away spinning. |
+| `rm:creep` | Creepster | up to 2 | Horror: dripping acid-green caps on black with a sickly glow. Letters ooze down into place one by one and never hold quite still; the spoken word turns hotter and its heart beats twice; shouted words are blood red and shudder; before a pause the letters melt through the floor. |
+| `rm:focus` | Titan One | up to 3 | A lens moves along the line: the spoken word is large and coloured with a soft glow under it, its neighbours are small, and the whole line re-flows smoothly as the lens moves on; shouted words swell even more; words grow out of the baseline and shrink back into it. |
 | `rm:glide` | Archivo Black | up to 4 | A rounded highlight box glides from word to word and stretches as it goes; the word inside it turns dark on the box colour, the rest stay white with an outline. |
+| `rm:glitch` | Russo One | up to 3 | RGB split: white caps on a dark outline with a cyan and a pink copy behind them. Words arrive torn into three bands that slide into register while the copies snap together, the spoken word takes the highlight with a split pulse, shouted words tear again and lean, and before a pause the copies fly apart and the word collapses to a line. |
+| `rm:hollow` | Alfa Slab One | up to 3 | Outline letters that fill up: slab caps as glass, dark inside a white line. A golden liquid with a head of foam rises in each word as it is spoken and stays, the white line giving way to it; shouted words fill pink and slosh to the brim; lines slide in from opposite sides, then the liquid drains and they slide out. |
+| `rm:jelly` | Fredoka | up to 3 | Soft round lowercase that behaves like jelly: every letter springs up with a stretch and a squash, a wave runs through the spoken word letter by letter and leaves the highlight behind it, the line keeps breathing, and before a pause the letters pop away. Plum outline, candy colours. |
+| `rm:label` | Bricolage Grotesque | up to 5 | The social label look: every line on its own tight white plate, dark letters, no outline. Plates wipe open from the left; the part under the spoken word opens in the highlight colour and lifts with its word; shouted words sit on their own tilted plate in the emphasis colour. |
+| `rm:marker` | Permanent Marker | up to 3 | Hand lettering on a slope: words are written on from left to right, a highlighter is swiped across each word as it is spoken and stays on what has been said, shouted words get a scribbled underline; wiped away from right to left. |
+| `rm:neon` | Tilt Neon | up to 3 | A neon sign: lowercase tube letters on a near-black plate with a glowing rim. The tubes switch on with a stutter, the spoken word runs white-hot in a breathing coloured glow, shouted words buzz in their own hue, and before a pause the tubes go dark and the plate closes. |
 | `rm:punch` | Poppins | up to 3 | The viral standard, built from the animation library: fat geometric caps with a thick outline; the phrase pops in, the spoken word punches up in the highlight colour, shouted words shake, the phrase shrinks away before a pause. Each of those motions can be swapped by name from the settings. |
+| `rm:ransom` | Special Elite | up to 3 | Ransom note: every letter on its own paper scrap, turned and nudged, slapped on one by one; the spoken word lifts, straightens and turns highlighter yellow, shouted words are bigger and red, and the scraps fall off turning. |
+| `rm:reel` | Ultra | 1 | Slot machine: one word at a time rolls into a window between two rails and locks with a bounce while the word before rolls out below. Gold gradient letters arrive white-hot and cool down, shouted words turn red, swell and make the rails flash, and before a pause the word rolls out and the rails close. |
+| `rm:retro` | Shrikhand | up to 2, as spoken | Seventies sign: fat cream script on a dark base with a deep extrusion in three sunset stripes. Words push out of the wall as they are spoken; the spoken word is raised, warms to gold and its stripes flow; shouted words are bigger with cool stripes; the extrusion collapses and the words sink. |
+| `rm:slam` | Anton | 1 | One word at a time, as big as the box allows: every word comes down from far too big, hits, flattens, shakes and throws out a deep extrusion; shouted words are bigger, yellow and shake longer; before a pause the word tips over and drops out. |
+| `rm:stamp` | Barlow Condensed | up to 2 | A rubber stamp: heavy condensed italics in a frame on a dark plate, turned a few degrees. It comes down from too big with a hard stop, settles and lands a second, lighter time; the spoken word takes the highlight colour, a shouted word brings the whole stamp down twice; it lifts and slides off to leave. |
+| `rm:sticker` | Lilita One | up to 3 | Die-cut stickers: every word in its own candy colour with a dark outline, a fat white border and a soft shadow, stuck on askew one after another with a jelly squash; the spoken one lifts, wobbles and gleams; before a pause they peel off one by one. |
+| `rm:surf` | Knewave | up to 3 | The line rides a wave: brush script in an ocean gradient on a navy outline with a white rim, every word bobbing and tilting on a travelling wave over a white water line. Words surf in from the left, the water swells under the spoken word, shouted words splash, and everything is washed away to the right. |
+| `rm:sweep` | Bebas Neue | up to 5 | Karaoke: one line of tall condensed capitals, all up from the start; the highlight colour fills each word from left to right exactly while it is spoken and stays, with a bump when a word is full. The line grows out of its baseline, drains and drops to leave. |
+| `rm:typer` | JetBrains Mono | up to 4, as spoken | A terminal line: a dark plate with a prompt mark and a block caret. Words are typed letter by letter as they are spoken, the caret runs ahead of every key and swells slowly when idle, the spoken word is bright, shouted words are in inverse video, and the plate switches on and off like a CRT. |
+| `rm:vogue` | DM Serif Display + DM Serif Display italic | up to 4 | Editorial: a cream display serif on a soft dark outline. Lines rise out of a mask one after the other, a thin underline draws itself under the spoken word and glides on, shouted words are italic, larger and in the accent colour. |
 <!-- /TEMPLATES -->
 
 ## Animations
@@ -82,8 +105,9 @@ bounded parameters and defaults; none fades anything (things arrive and leave by
 squashing and scaling).
 
 `punch` is built entirely from the library, so every slot of it can be set from the config, with any
-parameter, and entrances and exits can run page by page, word by word or letter by letter
-(`timing.staggerS` apart):
+parameter. Entrances and exits run page by page, word by word or letter by letter (`by`,
+`timing.staggerS` apart), each in the units it suits: a slam or a slide is for the whole block, since word
+by word the pieces would run over each other, and the parameter check refuses the combination.
 
 ```yaml
 render:
@@ -92,8 +116,7 @@ render:
     templates:
       punch:
         fx:
-          enter: {name: drop, params: {height: 1.2}}   # another animation replaces the block whole
-          enterBy: letter
+          enter: {name: drop, by: letter, params: {height: 1.2}}   # another animation replaces the block whole
           active: {params: {scale: 1.2}}               # same animation: only this parameter changes
           idle: {name: float}
         timing: {staggerS: 0.03, exitS: 0.3}           # units that take turns need the time for it

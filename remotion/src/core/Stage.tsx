@@ -1,6 +1,6 @@
 import React, { useLayoutEffect, useRef } from "react";
 import { decompose, mul, toSvg, translate } from "./affine";
-import { outline, textAttrs } from "./measure";
+import { outline, outlineFor, textAttrs } from "./measure";
 import type { Grad, Rect, Scene, Shape, Unit } from "./scene";
 
 /**
@@ -89,9 +89,17 @@ function emojiDraw(u: Unit, order: number, emoji: string, defs: React.ReactNode[
       height={u.size * 1.7 + 2 * pad}
       colorInterpolationFilters="sRGB"
     >
+      {/* the picture's own alpha, without the stray near-transparent pixels at the corners of the font's
+          bitmaps: grown into a halo they would show as faint squares */}
+      <feComponentTransfer in="SourceAlpha" result="solid">
+        <feFuncA type="linear" slope={3} intercept={-0.3} />
+      </feComponentTransfer>
+      <feComponentTransfer in="SourceGraphic" result="pic">
+        <feFuncA type="linear" slope={1.08} intercept={-0.07} />
+      </feComponentTransfer>
       {halos.map((l, i) => (
         <React.Fragment key={i}>
-          <feMorphology in="SourceAlpha" operator="dilate" radius={Math.max(0, l.width)} result={`d${i}`} />
+          <feMorphology in="solid" operator="dilate" radius={Math.max(0, l.width)} result={`d${i}`} />
           <feOffset in={`d${i}`} dx={l.dx ?? 0} dy={l.dy ?? 0} result={`o${i}`} />
           <feFlood floodColor={l.color} result={`f${i}`} />
           <feComposite in={`f${i}`} in2={`o${i}`} operator="in" result={`h${i}`} />
@@ -101,7 +109,7 @@ function emojiDraw(u: Unit, order: number, emoji: string, defs: React.ReactNode[
         {halos.map((_, i) => (
           <feMergeNode key={i} in={`h${i}`} />
         ))}
-        <feMergeNode in="SourceGraphic" />
+        <feMergeNode in="pic" />
       </feMerge>
     </filter>,
   );
@@ -126,7 +134,20 @@ function unitDraws(u: Unit, order: number, emoji: string, defs: React.ReactNode[
   if (u.emoji) return emojiDraw(u, order, emoji, defs, clipId);
   // the glyph outlines once, with the baseline start at the origin; every layer is a <use> of them
   const pid = `o-${u.id}`;
-  defs.push(<path key={pid} id={pid} d={outline(u.font, u.glyphs, u.size)} />);
+  const shape = outline(u.font, u.glyphs, u.size);
+  defs.push(<path key={pid} id={pid} d={shape} />);
+  // the outline layers share the outlines without the counters they would close to a pinhole between them
+  const rims = u.layers.filter((l) => l.kind !== "fill");
+  const closed = outlineFor(
+    u.font,
+    u.glyphs,
+    u.size,
+    Math.max(0, ...rims.map((l) => l.width)),
+    Math.max(0, ...rims.map((l) => Math.abs(l.dx ?? 0))),
+    Math.max(0, ...rims.map((l) => Math.abs(l.dy ?? 0))),
+  );
+  const solidId = closed === shape ? pid : `${pid}-s`;
+  if (closed !== shape) defs.push(<path key={solidId} id={solidId} d={closed} />);
   const lastFill = u.layers.map((l) => l.kind).lastIndexOf("fill");
   const out: Draw[] = [];
   u.layers.forEach((l, i) => {
@@ -146,7 +167,7 @@ function unitDraws(u: Unit, order: number, emoji: string, defs: React.ReactNode[
       node = (
         <use
           key={key}
-          href={`#${pid}`}
+          href={`#${solidId}`}
           transform={transform}
           fill={l.color}
           stroke={l.color}
@@ -162,7 +183,7 @@ function unitDraws(u: Unit, order: number, emoji: string, defs: React.ReactNode[
           {Array.from({ length: n }, (_, s) => (
             <use
               key={s}
-              href={`#${pid}`}
+              href={`#${solidId}`}
               transform={transform}
               fill={l.color}
               stroke={l.color}
@@ -229,6 +250,13 @@ export const Stage: React.FC<{
         // how far the outline reaches outside the fill, and how far any layer reaches at all (px, unscaled)
         halo: Math.max(0, ...u.layers.map((l) => (l.kind === "stroke" && !l.dx && !l.dy ? l.width : 0))),
         reach: Math.max(0, ...u.layers.map((l) => (l.kind === "fill" ? 0 : l.width) + Math.hypot(l.dx ?? 0, l.dy ?? 0))),
+        // everything else that decides how the unit looks: a change here is a change of the scene
+        ly: u.layers
+          .map((l) => {
+            const g = l.kind === "fill" && l.grad ? [l.grad.x1, l.grad.y1, l.grad.x2, l.grad.y2].map(r2).join(",") + l.grad.stops.map((t) => `${r2(t.o)}${t.c}`).join("") : "";
+            return `${l.kind[0]}${l.color}${l.kind === "fill" ? "" : r2(l.width)}${r2(l.dx ?? 0)},${r2(l.dy ?? 0)}${g}`;
+          })
+          .join("|"),
       };
     });
     const shapes = scene.shapes.map((s) => ({
@@ -236,6 +264,7 @@ export const Stage: React.FC<{
       role: s.role,
       fill: s.fill,
       alpha: s.alpha ?? 1,
+      ly: `${s.stroke ?? ""}${r2(s.strokeWidth ?? 0)}${s.grad ? s.grad.stops.map((t) => `${r2(t.o)}${t.c}`).join("") : ""}`,
       box: box(svg.querySelector(`[data-s="${s.id}"]`)),
     }));
     console.log(DEBUG_TAG + JSON.stringify({ f: frame, t: Math.round(time * 1e5) / 1e5, u: units, s: shapes }));

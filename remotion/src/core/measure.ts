@@ -151,6 +151,82 @@ export function outline(font: FontSpec, items: { ch: string; x: number }[], size
   return d;
 }
 
+/** One closed contour of a glyph: its commands, its signed area and its bounding box. */
+type Contour = { cmds: Cmd[]; area: number; w: number; h: number; x0: number; y0: number; x1: number; y1: number };
+
+function contoursOf(cmds: Cmd[]): Contour[] {
+  const out: Contour[] = [];
+  let cur: Cmd[] = [];
+  const close = () => {
+    if (cur.length < 2) return;
+    const pts = cur.filter((c) => c.x !== undefined && c.y !== undefined).map((c) => [c.x as number, c.y as number]);
+    let area = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const [x0, y0] = pts[i];
+      const [x1, y1] = pts[(i + 1) % pts.length];
+      area += x0 * y1 - x1 * y0;
+    }
+    const xs = pts.map((q) => q[0]);
+    const ys = pts.map((q) => q[1]);
+    const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+    out.push({ cmds: cur, area: area / 2, w: x1 - x0, h: y1 - y0, x0, y0, x1, y1 });
+  };
+  for (const c of cmds) {
+    if (c.type === "M") {
+      close();
+      cur = [c];
+    } else if (c.type !== "Z") cur.push(c);
+  }
+  close();
+  return out;
+}
+
+const PINHOLE = 3.5; // px: an opening narrower than twice this is a speck, not a counter
+
+/**
+ * The outlines for the outline layers of a unit whose widest outline reaches `grow` px outside the glyphs
+ * and whose shadow or extrusion is shifted by up to (ox, oy) px. Outlines also grow into the counters (the
+ * holes of a, e, o, %), and a shifted copy covers part of what is left: a counter whose remaining opening
+ * would be under 7 px either way is a pinhole with the video showing through. Such counters are left out
+ * here, so the layers fill them; the fill layer on top keeps the font's real shapes. Bigger counters stay
+ * open.
+ */
+export function outlineFor(font: FontSpec, items: { ch: string; x: number }[], size: number, grow: number, ox = 0, oy = 0): string {
+  const r = (v: number) => Math.round(v * 2) / 2;
+  const key = `${alias(font)}|${size.toFixed(3)}|${r(grow)},${r(ox)},${r(oy)}|${items.map((q) => `${q.ch}${q.x.toFixed(3)}`).join("")}`;
+  let d = pathCache.get(key);
+  if (d === undefined) {
+    const f = outlineFont(font);
+    let prev: { x1: number; y0: number; y1: number } | null = null;
+    d = items
+      .map((q) => {
+        const glyph = f.charToGlyph(q.ch);
+        if (glyph.index === 0) return "";
+        const cs = contoursOf(glyph.getPath(q.x, 0, size).commands);
+        if (cs.length === 0) return "";
+        const main = Math.sign(cs.reduce((a, b) => (Math.abs(b.area) > Math.abs(a.area) ? b : a)).area);
+        const open = (c: Contour) => Math.min(c.w - 2 * grow - ox, c.h - 2 * grow - oy) >= 2 * PINHOLE;
+        const kept = cs.filter((c) => Math.sign(c.area) === main || open(c));
+        let out = pathData(kept.flatMap((c) => c.cmds), `${font.file} "${q.ch}"`);
+        // two letters whose outlines meet leave slivers of video in the channel between them: when the
+        // channel is narrower than the outlines plus an opening worth having, it is filled (a bridge the
+        // height both letters share, wound like the glyphs so it adds to them)
+        const box = { x0: Math.min(...cs.map((c) => c.x0)), x1: Math.max(...cs.map((c) => c.x1)), y0: Math.min(...cs.map((c) => c.y0)), y1: Math.max(...cs.map((c) => c.y1)) };
+        if (prev && box.x0 - prev.x1 < 2 * grow + ox + 2 * PINHOLE) {
+          const [a, b] = [Math.min(prev.x1, box.x0) - 1, Math.max(prev.x1, box.x0) + 1];
+          const [t, u] = [Math.max(prev.y0, box.y0), Math.min(prev.y1, box.y1)];
+          if (u - t > 1) out += main > 0 ? `M${a} ${t}L${b} ${t}L${b} ${u}L${a} ${u}Z` : `M${a} ${t}L${a} ${u}L${b} ${u}L${b} ${t}Z`;
+        }
+        prev = { x1: box.x1, y0: box.y0, y1: box.y1 };
+        return out;
+      })
+      .join("");
+    if (pathCache.size > 4000) pathCache.clear();
+    pathCache.set(key, d);
+  }
+  return d;
+}
+
 export type FontMetrics = { capH: number; xH: number; asc: number; desc: number }; // em
 const metricCache = new Map<string, FontMetrics>();
 

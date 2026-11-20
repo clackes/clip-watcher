@@ -98,8 +98,9 @@ export default defineTemplate<P>({
           layers: inked(colors.text, colors.stroke, fx.halo * u, [dropShadow(colors.shadow, fx.halo * u, 0, fx.shadowY * u)]),
         }),
       );
-      const near = c.cx + w.box.x < box.r && c.cx + w.box.x + w.box.w > box.l && Math.abs(w.box.line - c.words[k].box.line) <= 1;
-      if (near && window.w > 1 && window.h > 1) {
+      // the dark copy of every word, always: only what is inside the box shows, and a unit that came and
+      // went with the box would flicker in and out of the scene
+      if (window.w > 1 && window.h > 1) {
         units.push(
           wordUnit(c, w, { m, z: 2, key: "in", clip: window, fg: [colors.plateText], layers: [{ kind: "fill", color: colors.plateText }] }),
         );

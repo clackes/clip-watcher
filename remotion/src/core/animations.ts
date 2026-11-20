@@ -21,6 +21,8 @@ import { back, clamp, E, lerp, prog, spring } from "./ease";
  */
 
 export type Slot = "enter" | "exit" | "active" | "emph" | "idle";
+/** What takes its turn in an entrance or exit: the whole page at once, word after word, letter after letter. */
+export type By = "page" | "word" | "letter";
 export type Pivot = "centre" | "base" | "top";
 
 export type AnimIn = {
@@ -38,6 +40,9 @@ export type Animation<S extends Shape = Shape> = {
   name: string;
   slot: Slot;
   about: string;
+  // enter and exit: the units the animation suits. A slam or a slide is for the whole block: word by
+  // word the pieces would run over each other.
+  units?: By[];
   shape: S;
   defaults: z.infer<z.ZodObject<S>>;
   // seconds after which the animation is over (enter, emph: back at rest), from its parameters
@@ -61,6 +66,7 @@ const fade = (t: number, d: number) => (t <= 0 ? 1 : t >= d ? 0 : (1 - t / d) * 
 define({
   name: "pop",
   slot: "enter",
+  units: ["page", "word", "letter"],
   about: "Springs up from a smaller size with a little overshoot while rising into place.",
   shape: { from: n(0.5, 1), freq: n(1, 6), damp: n(0.3, 1), rise: n(0, 1) },
   defaults: { from: 0.62, freq: 4.5, damp: 0.55, rise: 0.3 },
@@ -76,9 +82,10 @@ define({
 define({
   name: "drop",
   slot: "enter",
+  units: ["page", "word", "letter"],
   about: "Falls in from above, lands with a squash and bounces twice.",
   shape: { height: n(0.2, 2), fallS: n(0.08, 0.6), squash: n(0, 0.5) },
-  defaults: { height: 0.9, fallS: 0.3, squash: 0.22 },
+  defaults: { height: 0.8, fallS: 0.38, squash: 0.2 },
   length: (p) => p.fallS,
   pose: ({ t, u }, p) => {
     if (t >= p.fallS) return REST;
@@ -93,6 +100,7 @@ define({
 define({
   name: "slide",
   slot: "enter",
+  units: ["page"],
   about: "Shoots in from the side, leaning into the motion, and straightens as it stops.",
   shape: { distance: n(0.3, 6), slideS: n(0.1, 0.8), lean: n(0, 30), alternate: n(0, 1) },
   defaults: { distance: 2.2, slideS: 0.32, lean: 14, alternate: 0 },
@@ -109,6 +117,7 @@ define({
 define({
   name: "twirl",
   slot: "enter",
+  units: ["page", "word", "letter"],
   about: "Spins in from a tilt while growing, overshoots the upright and settles.",
   shape: { angle: n(-180, 180), from: n(0.5, 1), twirlS: n(0.12, 0.8), overshoot: n(0, 3) },
   defaults: { angle: -70, from: 0.5, twirlS: 0.36, overshoot: 1.6 },
@@ -123,6 +132,7 @@ define({
 define({
   name: "unfold",
   slot: "enter",
+  units: ["page", "word"],
   about: "Stands up from flat on the baseline like a pop-up card, rubbery.",
   shape: { freq: n(1, 6), damp: n(0.25, 1), widen: n(0, 0.6) },
   defaults: { freq: 3.4, damp: 0.42, widen: 0.25 },
@@ -139,6 +149,7 @@ define({
 define({
   name: "slam",
   slot: "enter",
+  units: ["page"],
   about: "Comes down from far too big, hits its size hard and shudders.",
   shape: { from: n(1.2, 3), slamS: n(0.06, 0.4), shudder: n(0, 0.2), shudderHz: n(1, 6), settleS: n(0.05, 0.6) },
   defaults: { from: 1.9, slamS: 0.13, shudder: 0.07, shudderHz: 5, settleS: 0.3 },
@@ -155,6 +166,7 @@ define({
 define({
   name: "swing",
   slot: "enter",
+  units: ["page", "word"],
   about: "Swings down on a hinge like a sign and rocks until it hangs still.",
   shape: { angle: n(5, 90), swingHz: n(0.5, 4), swingS: n(0.2, 1.5) },
   defaults: { angle: 38, swingHz: 2.2, swingS: 0.75 },
@@ -170,6 +182,7 @@ define({
 define({
   name: "shrink",
   slot: "exit",
+  units: ["page", "word", "letter"],
   about: "Winds up a touch, then shrinks away to nothing while sinking.",
   shape: { windup: n(0, 3), drop: n(0, 1.5) },
   defaults: { windup: 1.4, drop: 0.35 },
@@ -187,6 +200,7 @@ define({
 define({
   name: "melt",
   slot: "exit",
+  units: ["page", "word"],
   about: "Sags into the floor: flattens downwards and spreads until it is a line, then gone.",
   shape: { spread: n(0, 1), sag: n(0, 1) },
   defaults: { spread: 0.35, sag: 0.25 },
@@ -200,6 +214,7 @@ define({
 define({
   name: "fling",
   slot: "exit",
+  units: ["page"],
   about: "Leans back and is thrown out sideways, thinning as it goes.",
   shape: { distance: n(0.3, 6), lean: n(0, 35), alternate: n(0, 1) },
   defaults: { distance: 2.4, lean: 18, alternate: 0 },
@@ -215,6 +230,7 @@ define({
 define({
   name: "topple",
   slot: "exit",
+  units: ["page", "word"],
   about: "Tips over on its base like a felled tree, falls, and is gone only once it is down.",
   shape: { angle: n(20, 120), fall: n(0, 2), goneFrom: n(0.3, 0.9) },
   defaults: { angle: 82, fall: 0.6, goneFrom: 0.6 },
@@ -229,6 +245,7 @@ define({
 define({
   name: "blink",
   slot: "exit",
+  units: ["page", "word"],
   about: "Closes like an eye: squeezes shut to a horizontal line around its middle, then the line snaps away.",
   shape: { widen: n(0, 0.6), shutAt: n(0.3, 0.9) },
   defaults: { widen: 0.2, shutAt: 0.7 },
@@ -273,7 +290,7 @@ define({
   slot: "active",
   about: "Rocks from side to side for as long as it is spoken.",
   shape: { angle: n(0.5, 15), hz: n(0.3, 3), scale: n(1, 1.3) },
-  defaults: { angle: 5, hz: 1.6, scale: 1.06 },
+  defaults: { angle: 3.5, hz: 1.6, scale: 1.04 },
   length: () => 0,
   pose: ({ t, a }, p) => ({ rot: p.angle * a * Math.sin(2 * Math.PI * p.hz * Math.max(0, t)), scale: 1 + (p.scale - 1) * a }),
 });
@@ -408,17 +425,24 @@ export const animationNames = (slot: Slot): string[] => all.filter((a) => a.slot
 /** What a template's JSON says: the animation by name and any of its parameters to change. */
 export const animRef = (slot: Slot) =>
   z
-    .strictObject({ name: z.string(), params: z.record(z.string(), z.number()) })
+    .strictObject({
+      name: z.string(),
+      params: z.record(z.string(), z.number()),
+      by: z.enum(["page", "word", "letter"]).default("page"), // enter and exit only: what takes its turn
+    })
     .superRefine((ref, ctx) => {
       const a = animations[ref.name];
       if (!a || a.slot !== slot) {
         ctx.addIssue({ code: "custom", message: `no ${slot} animation "${ref.name}" (have: ${animationNames(slot).join(", ")})` });
         return;
       }
+      if (a.units ? !a.units.includes(ref.by) : ref.by !== "page") {
+        ctx.addIssue({ code: "custom", message: `${ref.name} cannot run by ${ref.by} (it suits: ${(a.units ?? ["page"]).join(", ")})` });
+      }
       const r = z.strictObject(a.shape).safeParse({ ...a.defaults, ...ref.params });
       if (!r.success) ctx.addIssue({ code: "custom", message: `${ref.name}: ${z.prettifyError(r.error)}` });
     });
-export type AnimRef = { name: string; params: Record<string, number> };
+export type AnimRef = { name: string; params: Record<string, number>; by?: By };
 
 const resolved = new WeakMap<AnimRef, { a: Animation; p: Record<string, number> }>();
 

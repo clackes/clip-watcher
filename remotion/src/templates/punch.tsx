@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { chain, IDENTITY, pose, type Affine } from "../core/affine";
-import { animate, animLength, animRef, type AnimOut, type AnimRef } from "../core/animations";
+import { animate, animLength, animRef, type AnimOut, type AnimRef, type By } from "../core/animations";
 import { mix } from "../core/color";
 import { clamp } from "../core/ease";
 import { paramsSchema } from "../core/schema";
@@ -13,18 +13,15 @@ import { defineTemplate, em } from "../core/template";
  * word punches up and takes the highlight colour, shouted words shake, and the phrase shrinks away
  * before a pause. Every one of those motions is a named animation (src/core/animations.ts) chosen here
  * by name, so each can be swapped from the settings, with its own parameters, per page, word or letter:
- *   render.rm.templates.punch.fx.enter: {name: drop, params: {height: 1.2}}
- *   render.rm.templates.punch.fx.enterBy: letter
+ *   render.rm.templates.punch.fx.enter: {name: drop, by: letter, params: {height: 1.2}}
  */
-const by = z.enum(["page", "word", "letter"]);
-type By = z.infer<typeof by>;
 const schema = paramsSchema({
   halo: z.number().min(0.02).max(0.3), // outline reach, em
   shadowY: z.number().min(0).max(0.3), // hard shadow drop, em
-  enter: animRef("enter"), // how the phrase arrives
-  enterBy: by, // as one block, word after word, or letter after letter (timing.staggerS apart)
-  exit: animRef("exit"), // how it leaves before a pause
-  exitBy: by,
+  // how the phrase arrives: {name, params, by}. by: as one block (page), word after word or letter after
+  // letter, timing.staggerS apart; an animation only takes the units it suits
+  enter: animRef("enter"),
+  exit: animRef("exit"), // how it leaves before a pause, same shape
   active: animRef("active"), // what the spoken word does
   emph: animRef("emph"), // what a shouted word does on top
   emphBoost: z.number().min(1).max(2), // a shouted word's spoken motion is this much stronger
@@ -57,12 +54,14 @@ function draw(c: C, fillOf: (w: WordState) => string, label: boolean): Scene {
   const lines = c.layout.lines;
   const last = lines[lines.length - 1];
   const block = pivots(c.cx, c.cy + last.y, last.y - lines[0].y + c.layout.capH);
-  const letters = fx.enterBy === "letter" || fx.exitBy === "letter";
+  const enterBy: By = fx.enter.by ?? "page";
+  const exitBy: By = fx.exit.by ?? "page";
+  const letters = enterBy === "letter" || exitBy === "letter";
   const nWords = c.words.length;
   const nLetters = c.words.reduce((s, w) => s + w.box.glyphs.length, 0);
   // while anything is arriving or leaving it is drawn through the caption box: a drop or a slide starts
   // outside it, and what is outside is simply not there
-  const steps = fx.enterBy === "page" ? 0 : fx.enterBy === "word" ? nWords : nLetters;
+  const steps = enterBy === "page" ? 0 : enterBy === "word" ? nWords : nLetters;
   const arriving = c.t < animLength(fx.enter, c.P.timing.enterS) + c.P.timing.staggerS * steps;
   const clip = arriving || c.out > 0 ? { x: c.region.x0, y: c.region.y0, w: c.region.x1 - c.region.x0, h: c.region.y1 - c.region.y0 } : undefined;
   const units: Unit[] = [];
@@ -84,8 +83,8 @@ function draw(c: C, fillOf: (w: WordState) => string, label: boolean): Scene {
     const pick = (mode: By, letter: number, lp: Piv): [number, number, Piv] =>
       mode === "page" ? [0, 1, block] : mode === "word" ? [w.index, nWords, wp] : [letter, nLetters, lp];
     if (!letters) {
-      const [ei, , ep] = pick(fx.enterBy, 0, wp);
-      const [xi, xn, xp] = pick(fx.exitBy, 0, wp);
+      const [ei, , ep] = pick(enterBy, 0, wp);
+      const [xi, xn, xp] = pick(exitBy, 0, wp);
       const m = chain(own, arrive(c, fx.enter, ei, ep), leave(c, fx.exit, xi, xn, xp));
       units.push(wordUnit(c, w, { m, z, fg: [fill], layers, clip, active }));
     } else {
@@ -93,8 +92,8 @@ function draw(c: C, fillOf: (w: WordState) => string, label: boolean): Scene {
       units.push(
         ...letterUnits(c, w, (_g, k, _n, gx) => {
           const lp = pivots(gx, c.cy + w.box.y, wp.base[1] - wp.top[1]);
-          const [ei, , ep] = pick(fx.enterBy, first + k, lp);
-          const [xi, xn, xp] = pick(fx.exitBy, first + k, lp);
+          const [ei, , ep] = pick(enterBy, first + k, lp);
+          const [xi, xn, xp] = pick(exitBy, first + k, lp);
           const m = chain(own, arrive(c, fx.enter, ei, ep), leave(c, fx.exit, xi, xn, xp));
           return { m, z, fg: [fill], layers, clip, active };
         }),

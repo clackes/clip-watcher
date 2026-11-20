@@ -71,6 +71,8 @@ function check(a) {
   const schema = z.strictObject(a.shape);
   ok(schema.safeParse(a.defaults).success, "defaults do not satisfy the parameter bounds");
   ok(typeof a.about === "string" && a.about.length > 20, "no description");
+  const turns = a.slot === "enter" || a.slot === "exit";
+  ok(turns ? Array.isArray(a.units) && a.units.includes("page") : a.units === undefined, "units: enter and exit name the units they suit, the others none");
   const p = a.defaults;
   const tl = timeline(a, p);
   const len = a.length(p, tl.T);
@@ -115,12 +117,15 @@ function check(a) {
     for (let i = 1; i + 2 < s.length; i++) {
       for (const c of CH) {
         const [d1, d2, d3] = [s[i][c] - s[i - 1][c], s[i + 1][c] - s[i][c], s[i + 2][c] - s[i + 1][c]];
+        const d4 = i + 3 < s.length ? s[i + 3][c] - s[i + 2][c] : 0;
         const back = s[i + 2][c] - s[i][c];
+        const e = EPS_FLASH[c];
         ok(Math.abs(d2) <= 5 * Math.max(Math.abs(d1), Math.abs(d3)) + EPS_JUMP[c], `${c} jumps ${d2.toFixed(3)} in one frame at 30 fps (phase ${phase})`);
-        ok(
-          !(Math.abs(d2) > EPS_FLASH[c] && Math.abs(d3) > EPS_FLASH[c] && Math.abs(back) < 0.25 * Math.abs(d2) && d2 * d3 < 0),
-          `${c} flickers at 30 fps: out ${d2.toFixed(3)} and back ${d3.toFixed(3)} within two frames (phase ${phase})`,
-        );
+        // a blip (sits, leaves for one frame, is back) or a buzz (reverses on two frames running); the
+        // turning point of a bounce is neither
+        const blip = Math.abs(d2) > e && Math.abs(d3) > e && d2 * d3 < 0 && Math.abs(back) < 0.25 * Math.abs(d2) && Math.abs(d1) < 0.34 * Math.abs(d2) && Math.abs(d4) < 0.34 * Math.abs(d3);
+        const buzz = Math.min(Math.abs(d1), Math.abs(d2), Math.abs(d3)) > e && d1 * d2 < 0 && d2 * d3 < 0;
+        ok(!blip && !buzz, `${c} flickers at 30 fps around ${d1.toFixed(3)}, ${d2.toFixed(3)}, ${d3.toFixed(3)} (phase ${phase})`);
       }
     }
   }
@@ -190,6 +195,7 @@ console.log(
     ok: failures === 0,
     animations: results.length,
     bySlot: Object.fromEntries(["enter", "exit", "active", "emph", "idle"].map((s) => [s, results.filter((r) => r.slot === s).map((r) => r.name)])),
+    units: Object.fromEntries(Object.values(animations).filter((a) => a.units).map((a) => [a.name, a.units])),
     checks: results.reduce((s, r) => s + r.checks, 0) + pairs.length,
     failures,
     failed: results.filter((r) => r.fails.length).map((r) => ({ name: r.name, fails: r.fails.slice(0, 8) })),
