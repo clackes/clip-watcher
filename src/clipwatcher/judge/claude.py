@@ -238,6 +238,9 @@ def judge_clip(
 
     login = cand.stream
     plat = platform or config.streamer(login).get("platform", "twitch")
+    # without a client handed in and without a key no call can be made: the fallback is not a failed call
+    # (with the SDK installed a client is still built, and only its first request says there is no key)
+    asked = client is not None or bool(os.environ.get("ANTHROPIC_API_KEY"))
     try:
         client = client or _client()
         payload = compact.build_payload(
@@ -280,7 +283,7 @@ def judge_clip(
         )
     except Exception as e:  # noqa: BLE001
         log.warning("judge failed (%s); using heuristic", e)
-        if client is not None or os.environ.get("ANTHROPIC_API_KEY"):  # a call was attempted: keep its error
+        if asked:  # a call was attempted: keep its error
             tried = model or _jcfg().get("screen_model" if task == "screen" else "judge_model", "")
             ledger.record(task=task, model=tried, streamer=cand.stream, start_s=cand.start_s, error=str(e))
         return heuristic_judge(cand, words, game=game or None)

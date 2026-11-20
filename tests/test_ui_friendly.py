@@ -57,6 +57,7 @@ def test_errors_are_said_in_plain_words_with_what_to_do():
         "HTTPError: HTTP Error 429: Too Many Requests": "slow down",
         "anthropic.AuthenticationError: Error code: 401 - invalid x-api-key": "key was not accepted",
         "RuntimeError: clix-live-1 is APPROVED, not READY": "already decided",
+        "Could not resolve authentication method. Expected one of api_key": "no key for the judge",
     }
     for raw, part in cases.items():
         p = friendly.problem(raw)

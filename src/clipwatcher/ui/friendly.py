@@ -98,6 +98,11 @@ _PROBLEMS: tuple[tuple[str, str, str], ...] = (
         "",
     ),
     (
+        r"Could not resolve authentication method|no API key|api_key.*(not set|missing)",
+        "There is no key for the judge yet, so the built-in rules wrote the title.",
+        "Add one in Connect.",
+    ),
+    (
         r"AuthenticationError|invalid x-api-key|authentication_error|\b401\b",
         "The judge's key was not accepted.",
         "Check the key in Connect.",
