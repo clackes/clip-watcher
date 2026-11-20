@@ -17,7 +17,7 @@ from typing import Any
 from clipwatcher import config
 from clipwatcher.judge import ledger
 from clipwatcher.queue.staging import staging_root
-from clipwatcher.render.captions import CAPTION_STYLES
+from clipwatcher.ui import captions as library
 
 CLIP_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,180}")
 FILES = ("short_9x16.mp4", "clean_16x9.mp4")
@@ -46,12 +46,6 @@ STEP_NAMES = {
     "render_short": "Render the 9:16 Short",
     "render_clean": "Render the clean 16:9",
     "stage": "Stage for approval",
-}
-CAPTIONS = {
-    "word": ("Word", "One word at a time on the seam. Shouted words turn yellow."),
-    "pop": ("Pop", "Three words a line. The spoken word turns yellow and pops."),
-    "classic": ("Classic", "A full line in the lower third, the current word highlighted."),
-    "bounce": ("Bounce", "Words bounce in, each in its own colour."),
 }
 
 
@@ -105,6 +99,10 @@ def _clip(d: Path, row: dict[str, Any] | None) -> dict[str, Any] | None:
         "chat_rank": meta.get("chat_rank"),
         "chat_pct": meta.get("chat_pct"),
         "captions": meta.get("captions") or "",
+        # an animated template: the colour mode and settings this video was rendered with (D19)
+        "caption_colors": meta.get("caption_colors") or "",
+        "caption_settings": meta.get("caption_settings") or {},
+        "captions_error": meta.get("captions_error") or "",
         "layout": meta.get("layout") or "",
         "layout_doubts": [str(d) for d in meta.get("layout_doubts") or []],
         "credit": meta.get("credit") or "",
@@ -184,6 +182,7 @@ def overview() -> dict[str, Any]:
         }
         for k, v in own_streamers().items()
     ]
+    lib = library.library()
     return {
         "dry_run": config.dry_run(),
         "judge_key": bool(os.environ.get("ANTHROPIC_API_KEY")),
@@ -195,12 +194,10 @@ def overview() -> dict[str, Any]:
         "tools": {"twitch_vod": _tool(config.twitch_downloader_bin()), "face_detector": _face_detector()},
         "streamers": streamers,
         "language": config.channel_language(),
-        "captions": [
-            {"id": s, "name": name, "about": about}
-            for s, (name, about) in CAPTIONS.items()
-            if s in CAPTION_STYLES
-        ],
-        "caption_default": str(g.get("render", {}).get("captions", "word")),
+        "captions": lib["styles"],
+        "caption_default": lib["default"],
+        # the animated templates: whether they can be rendered here, and what to run when not
+        "caption_library": {k: lib[k] for k in ("ready", "missing", "setup", "colors", "emoji")},
         "judge": {
             "mode": j.get("mode", "single"),
             "judge_model": j.get("judge_model"),

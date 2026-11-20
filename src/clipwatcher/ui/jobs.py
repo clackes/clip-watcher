@@ -1,7 +1,8 @@
 """Work the companion app does on a clip that is already staged. One job so far: render its Short again
 from its own clean cut, with another caption style or layout.
 
-    python -m clipwatcher.ui.jobs render <clip id> [--captions word|pop|classic|bounce] [--layout split|stack]
+    python -m clipwatcher.ui.jobs render <clip id> [--captions word|rm:punch|...] [--layout split|stack]
+        [--colors auto|fixed] [--settings '{"size": 80}']    (the last two: animated templates)
 
 Only a clip nobody has decided on yet (READY) is rendered again, as with staging the same id twice (D7): a
 claimed, approved, rejected or published clip keeps the video the operator saw.
@@ -21,7 +22,8 @@ from typing import Any
 from clipwatcher import config, events
 from clipwatcher.queue.staging import atomic_write_json, staging_root
 from clipwatcher.render import recipe
-from clipwatcher.render.captions import CAPTION_STYLES, caption_style
+from clipwatcher.render import remotion as rm
+from clipwatcher.render.captions import caption_style
 from clipwatcher.ui import data
 
 LAYOUTS = ("split", "stack")
@@ -56,12 +58,19 @@ def _ready(clip_id: str, root: Path) -> dict[str, Any]:
 
 
 def rerender(
-    clip_id: str, captions: str | None = None, layout: str | None = None, root: Path | None = None
-) -> Path:
+    clip_id: str, captions: str | None = None, layout: str | None = None, root: Path | None = None, *,
+    colors: str | None = None, settings: dict | None = None,
+) -> Path:  # fmt: skip
     """Render the Short of a staged clip again and put it in the place of the old one. Returns the new file.
-    ValueError says, in words for the page, why a clip cannot be rendered again."""
-    if captions is not None and captions not in CAPTION_STYLES:
-        raise ValueError(f"Caption style: one of {', '.join(CAPTION_STYLES)}.")
+    For an animated template (rm:<name>): colors auto | fixed, and settings as the page sends them
+    ({"size": 80, "paging.maxWords": 2}), for this video only. ValueError says, in words for the page, why
+    a clip cannot be rendered again; the clip then keeps the video it had."""
+    from clipwatcher.ui import captions as library
+
+    if captions is not None and not library.is_style(captions):
+        raise ValueError(f"Caption style: one of {', '.join(library.styles())}.")
+    if colors is not None and colors not in library.COLOUR_MODES:
+        raise ValueError(f"Caption colours: one of {', '.join(library.COLOUR_MODES)}.")
     if layout is not None and layout not in LAYOUTS:
         raise ValueError(f"Layout: one of {', '.join(LAYOUTS)}.")
     root = Path(root) if root else staging_root()
@@ -74,6 +83,18 @@ def rerender(
     streamer = str(meta.get("streamer") or "")
     dur = _duration(clean)
     style = captions or meta.get("captions") or caption_style(clip_id)
+    animated = rm.is_rm(style)
+    if (colors or settings) and not animated:
+        raise ValueError("Colours and settings are for the animated templates.")
+    for_now: dict = {}  # render.rm for this render: the video's own colour mode and template settings
+    if animated:
+        why = rm.missing()
+        if why:
+            raise ValueError(
+                f"The animated templates need their one-time setup here ({library.SETUP}): {why}."
+            )
+        over = library.check(style, settings)
+        for_now = {"colors": colors or rm.color_mode(), "templates": {rm.template_name(style): over}}
     render_cfg = config.global_config().get("render", {})
     layout = layout or meta.get("render_layout") or render_cfg.get("layout") or "split"
 
@@ -92,7 +113,11 @@ def rerender(
 
     new = folder / "short_9x16.new.mp4"
     try:
-        with events.step("render_short", clip_id=clip_id, captions=style, layout=layout):
+        shown: dict = {}
+        with (
+            events.step("render_short", clip_id=clip_id, captions=style, layout=layout),
+            rm.overriding(for_now),
+        ):
             render_short(
                 clean,
                 0.0,
@@ -103,12 +128,20 @@ def rerender(
                 captions=style,
                 layout=layout,
                 profile=str(render_cfg.get("profile") or "cpu_batch"),
+                report=shown,
                 **kept,
             )
+            if animated and kept["words"] and shown.get("captions", style) != style:
+                # asked for by name: the built-in style in its place is not what was asked
+                raise ValueError(f"The template could not be rendered: {shown.get('captions_error') or '?'}")
         with events.step("stage", clip_id=clip_id):
             _ready(clip_id, root)  # an operator may have claimed it while it rendered
             os.replace(new, short)
             meta.update(captions=style, render_layout=layout, rendered_again=round(time.time(), 1))
+            for key in ("caption_colors", "caption_settings", "captions_error"):
+                meta.pop(key, None)
+            if animated:  # what this video was given, so the page can start from it next time
+                meta.update(caption_colors=for_now["colors"], caption_settings=settings or {})
             if not kept["words"]:
                 meta["captions"] = ""  # nothing was said, or no speech model: there are no captions on it
             atomic_write_json(folder / "meta.json", meta)
@@ -140,11 +173,14 @@ def main(argv: list[str] | None = None) -> int:
     sub = ap.add_subparsers(dest="job", required=True)
     r = sub.add_parser("render", help="render a staged clip's Short again")
     r.add_argument("clip_id")
-    r.add_argument("--captions", choices=CAPTION_STYLES)
+    r.add_argument("--captions")
     r.add_argument("--layout", choices=LAYOUTS)
+    r.add_argument("--colors", choices=("auto", "fixed"))
+    r.add_argument("--settings", help="JSON: settings of the animated template, for this video")
     args = ap.parse_args(argv)
     try:
-        out = rerender(args.clip_id, args.captions, args.layout)
+        chosen = json.loads(args.settings) if args.settings else None
+        out = rerender(args.clip_id, args.captions, args.layout, colors=args.colors, settings=chosen)
     except ValueError as e:
         print(f"not rendered: {e}")
         return 1

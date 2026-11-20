@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import sys
+import threading
 import webbrowser
 
 from clipwatcher import config
+from clipwatcher.ui import captions
 from clipwatcher.ui.server import make_server
 
 
@@ -33,6 +35,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     if a.open:
         webbrowser.open(url)
+    # the caption library plays at once when its previews are there: the missing ones are made now
+    threading.Thread(target=captions.warm, name="caption-previews", daemon=True).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

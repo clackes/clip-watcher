@@ -58,20 +58,29 @@ def command(kind: str, params: dict[str, Any]) -> list[str]:
         cmd = [py, "-m", "pytest", "-v", "--color=no", "-p", "no:cacheprovider"]
         return [*cmd, "-m", "not ffmpeg"] if params.get("quick") else cmd
     if kind == "render":  # a staged clip's Short again, with another caption style or layout
-        from clipwatcher.render.captions import CAPTION_STYLES
+        from clipwatcher.ui import captions as library
         from clipwatcher.ui.data import CLIP_ID
 
         clip_id = str(params.get("clip") or "")
         if not CLIP_ID.fullmatch(clip_id):
             raise ValueError("Pick a clip.")
         cmd = [py, "-m", "clipwatcher.ui.jobs", "render", clip_id]
-        for flag, allowed in (("captions", CAPTION_STYLES), ("layout", ("split", "stack"))):
+        choices = (
+            ("captions", library.styles()),
+            ("layout", ("split", "stack")),
+            ("colors", library.COLOUR_MODES),
+        )
+        for flag, allowed in choices:
             value = params.get(flag)
             if value is None or value == "":
                 continue
             if value not in allowed:
                 raise ValueError(f"{flag}: one of {', '.join(allowed)}.")
             cmd += [f"--{flag}", str(value)]
+        chosen = params.get("settings")
+        if chosen:  # an animated template's settings for this video: checked here, and again by the job
+            library.check(str(params.get("captions") or ""), chosen)
+            cmd += ["--settings", json.dumps(chosen, sort_keys=True)]
         return cmd
     login = str(params.get("streamer") or "").lower()
     if not LOGIN.fullmatch(login):

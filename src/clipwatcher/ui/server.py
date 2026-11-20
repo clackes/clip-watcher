@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from clipwatcher import config
-from clipwatcher.ui import data, settings
+from clipwatcher.ui import captions, data, settings
 from clipwatcher.ui.profiles import Profiles
 from clipwatcher.ui.runs import RunManager
 
@@ -204,6 +204,10 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                 path = data.media_path(parts[1], parts[2])
                 if path is not None:
                     return self._file(path, "video/mp4")
+            elif head == "captions" and len(parts) == 3 and parts[1] == "clip":
+                path = captions.clip_path(parts[2])  # a preview, named by what it shows
+                if path is not None:
+                    return self._file(path, "video/mp4", cache="private, max-age=31536000, immutable")
             elif head == "profile" and len(parts) == 3 and parts[1] == "image":
                 found = app.profiles.image(parts[2])  # a picture kept from Twitch or Kick, named by its hash
                 if found is not None:
@@ -223,6 +227,13 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                 who = [w.partition(":") for w in (query.get("who") or [""])[0].split(",") if w][:60]
                 try:
                     return self._json(app.profiles.many([(a, b) for a, _, b in who]))
+                except ValueError as e:
+                    return self._error(400, str(e))
+            if parts == ["captions"]:
+                return self._json(captions.library())
+            if parts == ["captions", "fields"]:  # ?style=rm:punch
+                try:
+                    return self._json(captions.fields((query.get("style") or [""])[0]))
                 except ValueError as e:
                     return self._error(400, str(e))
             if parts == ["clips"]:
@@ -303,6 +314,18 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
             if len(parts) == 4 and parts[:2] == ["api", "runs"] and parts[3] == "force":
                 m.force(parts[2], float(body.get("seconds") or 45))
                 return self._json({"forced": True})
+            if parts == ["api", "captions", "preview"]:  # made once per style and settings, then kept
+                made = captions.preview(str(body.get("style") or ""), body.get("settings") or None)
+                return self._json(
+                    {"url": f"/captions/clip/{made['file'].name}", "warnings": made["warnings"]}
+                )
+            if parts == ["api", "captions", "defaults"]:  # this machine's own version of a template
+                style = str(body.get("style") or "")
+                over = captions.check(style, body.get("settings") or {})
+                if not captions.rm.is_rm(style) or not captions.is_style(style):
+                    raise ValueError("Only the animated templates have settings of their own.")
+                settings.save_template(captions.rm.template_name(style), over)
+                return self._json({"saved": True, **captions.fields(style)})
             if parts == ["api", "settings"]:
                 values = body.get("values")
                 if not isinstance(values, dict):

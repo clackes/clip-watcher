@@ -3,6 +3,7 @@ range. Changes are written to config/local.yaml (this machine only), never to gl
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from clipwatcher import config
@@ -101,7 +102,34 @@ GROUPS: list[dict[str, Any]] = [
                 "split: webcam over gameplay.",
                 options=["split", "stack"],
             ),
-            _f("render.captions", "Caption template", "select", options=["word", "pop", "classic", "bounce"]),
+            _f(
+                "render.captions",
+                "Caption template",
+                "select",
+                "Pick it with its preview under Run.",
+                options=[],
+            ),
+            _f(
+                "render.rm.colors",
+                "Colours of animated captions",
+                "select",
+                "auto: picked for the video under each phrase. fixed: the template's own.",
+                options=["auto", "fixed"],
+            ),
+            _f(
+                "render.rm.max_fps",
+                "Animated captions, frames a second",
+                "select",
+                "They move at the clip's own rate, up to this. 30 renders in half the time.",
+                options=[30, 60],
+            ),
+            _f(
+                "render.rm.fallback",
+                "If a template cannot be rendered",
+                "select",
+                "The built-in style the clip gets instead.",
+                options=["word", "pop", "classic", "bounce"],
+            ),
             _f(
                 "render.jump_cuts",
                 "Cut pauses without speech",
@@ -178,8 +206,9 @@ def _clean(field: dict[str, Any], value: Any) -> Any:
             raise ValueError(f"{field['key']}: on or off")
         return value
     if kind == "select":
-        if value not in field["options"]:
-            raise ValueError(f"{field['key']}: one of {', '.join(field['options'])}")
+        options = _options(field)
+        if value not in options:
+            raise ValueError(f"{field['key']}: one of {', '.join(str(o) for o in options)}")
         return value
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{field['key']}: a number")
@@ -187,6 +216,15 @@ def _clean(field: dict[str, Any], value: Any) -> Any:
         raise ValueError(f"{field['key']}: between {field['min']} and {field['max']}")
     whole = float(field["step"]).is_integer() and float(field["min"]).is_integer()
     return int(round(value)) if whole else round(float(value), 4)
+
+
+def _options(field: dict[str, Any]) -> list[Any]:
+    """What a select may hold. The caption templates are whatever the library has now."""
+    if field["key"] == "render.captions":
+        from clipwatcher.ui import captions
+
+        return list(captions.styles())
+    return field["options"]
 
 
 def schema() -> list[dict[str, Any]]:
@@ -197,6 +235,8 @@ def schema() -> list[dict[str, Any]]:
         fields = []
         for f in g["fields"]:
             default, value = _get(base, f["key"]), _get(now, f["key"])
+            if f["type"] == "select":
+                f = {**f, "options": _options(f)}
             fields.append({**f, "default": default, "value": default if value is None else value})
         out.append({"title": g["title"], "about": g["about"], "fields": fields})
     return out
@@ -226,6 +266,26 @@ def save(values: dict[str, Any], merge: bool = False) -> dict[str, Any]:
             _put(tree, key, value)
     config.save_local(tree)
     return kept
+
+
+def save_template(name: str, overrides: dict[str, Any]) -> None:
+    """Keep ``overrides`` as this machine's own version of an animated caption template
+    (render.rm.templates.<name> in config/local.yaml); none puts the template back as it came. The values
+    are the caller's to check (ui/captions.check)."""
+    tree = copy.deepcopy(config.local_overrides())
+    rm = tree.setdefault("render", {}).setdefault("rm", {})
+    templates = rm.setdefault("templates", {})
+    if overrides:
+        templates[name] = overrides
+    else:
+        templates.pop(name, None)
+    if not templates:
+        del rm["templates"]
+    if not rm:
+        del tree["render"]["rm"]
+    if not tree["render"]:
+        del tree["render"]
+    config.save_local(tree)
 
 
 def _flat(tree: dict[str, Any], prefix: str = "") -> dict[str, Any]:
