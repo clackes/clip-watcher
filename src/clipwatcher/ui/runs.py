@@ -360,13 +360,15 @@ class RunManager:
 
     def history(self, limit: int = 50) -> list[dict[str, Any]]:
         """Runs of this session and earlier ones (their run.json), newest first."""
-        seen = {r.id: r.summary() for r in self.runs.values()}
+        seen = {r.id: {**r.summary(), "replayable": True} for r in self.runs.values()}
         if self.root.is_dir():
             for d in self.root.iterdir():
                 if d.name in seen or not (d / "run.json").is_file():
                     continue
                 try:
-                    seen[d.name] = json.loads((d / "run.json").read_text(encoding="utf-8"))
+                    row = json.loads((d / "run.json").read_text(encoding="utf-8"))
                 except (OSError, ValueError):
                     continue
+                # runs of before the events were kept can be listed, not watched again
+                seen[d.name] = {**row, "replayable": (d / "replay.jsonl").is_file()}
         return sorted(seen.values(), key=lambda r: -float(r.get("started") or 0))[:limit]

@@ -254,6 +254,7 @@ def insights(root: Path | None = None, runs: list[dict[str, Any]] | None = None)
                 "when": r.get("started"),
                 "seconds": r.get("seconds"),
                 "clips": len(r.get("staged") or []),
+                "replay": bool(r.get("replayable")),
                 "what": str(
                     (r.get("params") or {}).get("streamer") or (r.get("params") or {}).get("clip") or ""
                 ),

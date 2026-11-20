@@ -253,6 +253,7 @@ async function replay(id) {
   let run; try { run = await api.get('/api/runs/' + encodeURIComponent(id)); } catch (err) { return toast(err.message); }
   const evs = run.events || []; if (!evs.length) return toast('This run was not kept event by event. Runs from now on are.');
   if (run.state === 'running') return follow(run);
+  if (location.hash !== '#run') location.hash = 'run';
   R.replay = true; R.id = run.id; resetRunView(run.kind, run.params || {});
   W.step = 4; paintWiz(); $$('.stepbox').forEach(b => { b.hidden = b.id !== 's4'; }); $('#runCtl').hidden = true; scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' });
   const t0 = evs[0].t, span = Math.max(1, evs[evs.length - 1].t - t0), play = reduce ? 0 : Math.min(14000, Math.max(5000, evs.length * 120)), speed = Math.max(1, Math.round(span * 1000 / (play || 1)));
@@ -379,7 +380,7 @@ function slides(tab) {
   if (tab === 'speed') return [
     work.length ? { title: 'What each step costs', sub: `Average seconds over ${plural(sp.clips, 'clip')}`, cfg: bar(work.map(s => s.name), work.map(s => s.avg_s), work.map(s => s.step.startsWith('render') ? C.c1 : C.c0), { h: 1, tip: 's', label: 'Seconds' }) } : { title: 'What each step costs', sub: '', ...empty('No timings yet', 'Clips made from now on keep the seconds of every step. Run a lane and they show up here.') },
     sp.per_clip.length ? { title: 'Work against length, clip by clip', sub: 'Seconds of work to make each clip, next to how long the clip is', cfg: { type: 'bar', data: { labels: sp.per_clip.map(p => p.streamer + ' ' + p.id.slice(-6)), datasets: [{ label: 'Work', data: sp.per_clip.map(p => p.work_s), backgroundColor: C.c1, borderRadius: { topLeft: 4, topRight: 4 }, maxBarThickness: 24 }, { label: 'Clip length', data: sp.per_clip.map(p => p.clip_s), backgroundColor: C.c0, borderRadius: { topLeft: 4, topRight: 4 }, maxBarThickness: 24 }] }, options: { layout: { padding: { top: 18 } }, scales: { x: { grid: { display: false } }, y: { beginAtZero: true } } } } } : null,
-    sp.runs && sp.runs.length ? { title: 'Every run started from here', sub: 'Newest first', html: `<div class="tbl-wrap"><table><thead><tr><th>When</th><th>Run</th><th>What</th><th>How it went</th><th class="r">Took</th><th class="r">Clips</th><th></th></tr></thead><tbody>${sp.runs.map(r => `<tr><td>${when(r.when)}</td><td>${{ live: 'Live lane', vod: 'VOD lane', tests: 'Test suite', render: 'Render again' }[r.kind] || esc(r.kind)}</td><td class="wrapc">${esc(r.what)}</td><td>${{ done: 'finished', stopped: 'stopped', failed: 'error', running: 'running' }[r.state] || esc(r.state)}</td><td class="r">${fmtS(r.seconds)}</td><td class="r">${r.clips}</td><td class="r"><button type="button" class="btn btn-glass btn-sm" data-watch="${esc(r.id)}">Watch</button></td></tr>`).join('')}</tbody></table></div>` } : null,
+    sp.runs && sp.runs.length ? { title: 'Every run started from here', sub: 'Newest first', html: `<div class="tbl-wrap"><table><thead><tr><th>When</th><th>Run</th><th>What</th><th>How it went</th><th class="r">Took</th><th class="r">Clips</th><th></th></tr></thead><tbody>${sp.runs.map(r => `<tr><td>${when(r.when)}</td><td>${{ live: 'Live lane', vod: 'VOD lane', tests: 'Test suite', render: 'Render again' }[r.kind] || esc(r.kind)}</td><td class="wrapc">${esc(r.what)}</td><td>${{ done: 'finished', stopped: 'stopped', failed: 'error', running: 'running' }[r.state] || esc(r.state)}</td><td class="r">${fmtS(r.seconds)}</td><td class="r">${r.clips}</td><td class="r">${r.replay && r.state !== 'running' ? `<button type="button" class="btn btn-glass btn-sm" data-watch="${esc(r.id)}">Watch</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` } : null,
     sp.tests.length ? { title: 'The test suite, run by run', sub: 'Seconds for the whole suite', cfg: bar(sp.tests.map(t => when(t.when)), sp.tests.map(t => t.seconds), sp.tests.map(t => t.failed ? C.c2 : C.c4), { tip: 's', label: 'Seconds' }) } : null,
   ].filter(Boolean);
   if (tab === 'cost') return [
@@ -431,7 +432,7 @@ function initInsights() {
   $('#slNext').onclick = () => { ins.i = (ins.i + 1) % slides(ins.tab).length; ins.table = false; renderIns(true); };
   $('#slPrev').onclick = () => { if (ins.i > 0) { ins.i--; ins.table = false; renderIns(true); } };
   $('#slTable').onclick = () => { ins.table = !ins.table; renderIns(true); };
-  $('#slHtml').addEventListener('click', e => { const b = e.target.closest('[data-watch]'); if (!b) return; if (S.ov && S.ov.active) return toast('A run is going. Watch this one when it has ended.'); location.hash = 'run'; replay(b.dataset.watch); });
+  $('#slHtml').addEventListener('click', e => { const b = e.target.closest('[data-watch]'); if (!b) return; if (!R.ended && R.id && !R.replay) return toast('A run is going. Watch this one when it has ended.'); replay(b.dataset.watch); });
 }
 
 /* ---------- settings ---------- */

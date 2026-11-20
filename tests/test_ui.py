@@ -184,6 +184,10 @@ def test_a_run_gathers_what_the_command_says_and_what_the_lane_reports(tmp_path)
     )
     later = RunManager(tmp_path)  # another session: the run is still there, and can be watched again
     assert m.history()[0]["id"] == run.id and later.history()[0]["state"] == "done"
+    assert m.history()[0]["replayable"] and later.history()[0]["replayable"]
+    (run.dir / "replay.jsonl").unlink()  # a run of before the events were kept
+    assert RunManager(tmp_path).history()[0]["replayable"] is False
+    (run.dir / "replay.jsonl").write_text("".join(json.dumps(e) + chr(10) for e in run.events))
     assert later.events_of(run.id) == m.events_of(run.id) == run.events and later.events_of("../x") is None
 
 
