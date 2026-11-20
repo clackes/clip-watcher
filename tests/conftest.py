@@ -50,8 +50,9 @@ def synth_src(tmp_path_factory):
 
 @pytest.fixture(autouse=True)
 def _no_face_detection_in_pipeline_tests(request, monkeypatch):
-    """Pipeline tests use fake media: skip per-clip layout detection (tested in test_layout.py)."""
-    if request.module.__name__.endswith("test_layout"):
+    """Pipeline tests use fake media: skip per-clip layout detection (tested in test_layout.py and
+    test_webcam_sure.py)."""
+    if request.module.__name__.endswith(("test_layout", "test_webcam_sure")):
         return
     from clipwatcher import layout
 

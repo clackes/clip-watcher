@@ -131,6 +131,51 @@ def test_rect_present_tells_a_stale_confirmed_rect(tmp_path):
     assert not calibrate.rect_present(maps, (0, 300, 250, 140))
 
 
+# --------------------------------------------------------------------------- what is attached to the cam
+def banner_maps(lettering: bool):
+    """A webcam picture (100, 50, 200, 128) with a 28 px strip attached under it that never changes; the
+    line between them is faint, the rectangle's sure sides enclose both."""
+    sd = np.full((300, 400), 30.0, np.float32)
+    pv, ph = np.zeros((300, 401), np.float32), np.zeros((301, 400), np.float32)
+    sd[50:178, 100:300] = 12.0
+    sd[178:206, 100:300] = 0.5
+    pv[50:206, 100] = pv[50:206, 300] = 1.0
+    ph[50, 100:300] = ph[206, 100:300] = 1.0
+    ph[178, 100:300] = 0.35
+    if lettering:
+        pv[182:202, 110:290:3] = 1.0
+    return calibrate.SceneMaps(pv, ph, sd, 12, (0, 0, 400, 300))
+
+
+def test_a_banner_attached_to_the_cam_is_cut_off_and_a_still_wall_is_not():
+    """arrowcs: 32 px of 'use code' under the picture, inside the rectangle's sides: the panel showed
+    it. Without the lettering the same strip is the dark wall behind 40 streamers of 250: it stays."""
+    rect, face = (100, 50, 200, 156), (170, 70, 50, 60)
+    maps = banner_maps(lettering=True)
+    cut = calibrate._trim_still(maps, rect, face)
+    assert near(cut, (100, 50, 200, 128))
+    e = calibrate.cam_evidence(maps, cut, face)
+    assert e["banner"] == ["b"] and e["sides"]["b"] < 0.5
+    assert calibrate._trim_still(banner_maps(lettering=False), rect, face) == rect
+
+
+def test_a_frame_on_two_sides_is_peeled_only_when_both_lines_are_strong(tmp_path):
+    """grandpoobear: a 6 px frame around each cam of a grid; the cam in the frame's corner showed it on
+    two sides only, and one weak line inside a side is a shelf or a door."""
+    cam, face = (100, 60, 300, 170), (220, 100, 60, 66)
+    frames, _ = scene(tmp_path, [cam], heads={0: face})
+    for p in frames:  # the frame's inner edge, 6 px inside the top and the right side
+        im = Image.open(p)
+        d = ImageDraw.Draw(im)
+        d.rectangle([cam[0], cam[1], cam[0] + cam[2] - 1, cam[1] + 5], fill=(110, 40, 160))
+        d.rectangle(
+            [cam[0] + cam[2] - 6, cam[1], cam[0] + cam[2] - 1, cam[1] + cam[3] - 1], fill=(110, 40, 160)
+        )
+        im.save(p)
+    rect, _ = calibrate.cam_rect(calibrate.scene_maps(frames), face)
+    assert near(rect, (100, 66, 294, 164))
+
+
 # --------------------------------------------------------------------------- gameplay crop, scenes
 def test_gameplay_crop_is_full_height_and_beside_the_cam():
     """Every sample before: the gameplay panel showed a 550x490 window of a 1920x1080 game."""
