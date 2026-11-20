@@ -158,6 +158,15 @@ def own_streamers() -> dict[str, Any]:
     return config.streamers() if (config.CONFIG_DIR / "streamers.yaml").is_file() else {}
 
 
+def _face_detector() -> bool:
+    """Whether a clip's webcam can be looked for here (D18): mediapipe with its model, or OpenCV."""
+    from clipwatcher.calibrate import DEFAULT_FACE_MODEL
+
+    model = Path(config.global_config().get("calibrate", {}).get("face_model") or DEFAULT_FACE_MODEL)
+    has = importlib.util.find_spec
+    return (has("mediapipe") is not None and model.exists()) or has("cv2") is not None
+
+
 def _tool(path: str) -> bool:
     return shutil.which(path) is not None or (config.ROOT / path).is_file()
 
@@ -182,7 +191,7 @@ def overview() -> dict[str, Any]:
         "speech": importlib.util.find_spec("faster_whisper") is not None,
         "staging": str(staging_root()),
         # what a lane needs beyond the project itself
-        "tools": {"twitch_vod": _tool(config.twitch_downloader_bin())},
+        "tools": {"twitch_vod": _tool(config.twitch_downloader_bin()), "face_detector": _face_detector()},
         "streamers": streamers,
         "language": config.channel_language(),
         "captions": [

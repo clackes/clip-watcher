@@ -263,9 +263,13 @@ def test_the_example_file_is_not_offered_as_a_list_of_channels(tmp_path, monkeyp
     (tmp_path / "streamers.yaml").write_text("streamers:\n  zack: {platform: kick}\n")
     assert [(s["login"], s["platform"]) for s in data.overview()["streamers"]] == [("zack", "kick")]
     monkeypatch.setenv("CLIPWATCHER_TDL", str(tmp_path / "no-such-tool"))
-    assert data.overview()["tools"] == {"twitch_vod": False}
+    assert data.overview()["tools"]["twitch_vod"] is False
     monkeypatch.setenv("CLIPWATCHER_TDL", sys.executable)
-    assert data.overview()["tools"] == {"twitch_vod": True}
+    assert data.overview()["tools"]["twitch_vod"] is True
+    monkeypatch.setattr(data.importlib.util, "find_spec", lambda name: None)
+    assert data.overview()["tools"]["face_detector"] is False  # neither mediapipe nor OpenCV
+    monkeypatch.setattr(data.importlib.util, "find_spec", lambda name: object() if name == "cv2" else None)
+    assert data.overview()["tools"]["face_detector"] is True
 
 
 @pytest.fixture
