@@ -40,7 +40,8 @@ bundle (`remotion/build/`, git-ignored) is rebuilt automatically, once, whenever
 2. Python picks colours (`render/palette.py`): the template's fixed scheme, or `auto`.
 3. Python writes one props JSON and runs `node scripts/render.mjs`: a transparent PNG per frame of the
    **caption band only** (1080 wide, as tall as the caption box), at the clip's own frame rate. Frames
-   with nothing on them are hard links to one blank frame.
+   with nothing on them are hard links to one blank frame. The last step of every frame, before it is
+   written, closes the gaps of video that the drawing walls in (see "No speck of video").
 4. ffmpeg lays the band over the Short (`remotion.overlay_filter`): blended in 4:4:4 BT.709, the rest
    of the picture untouched, overlay frame k on video frame k.
 
@@ -216,7 +217,9 @@ PNG is lossless, needs no second encode and lets blank frames be links to one fi
 exact and the fastest; the band instead of the full frame saves a third. The error is against an exact
 composite done in RGB and converted the same way, in the video's own 4:2:0, over a moving striped
 background; it is rounding. Compositing adds about 1.2 s to a 30 s x264 `veryfast` encode. The auto colour
-mode costs one more pass over the clip's picture (decode and filters, no encode).
+mode costs one more pass over the clip's picture (decode and filters, no encode). The table is from before
+the gap closing was added ("No speck of video"); with it, on a machine busy with other renders, the same
+render took the same time within the spread between two runs. It has not been timed again on idle cores.
 
 So a 30 s clip costs about 13 s of caption rendering, a 59 s clip about 26 s, on all eight cores. That is too
 slow to add to the live lane's minute per clip on a machine that is also recording and encoding. Options:
@@ -224,19 +227,42 @@ keep an ASS style for the live lane and use `rm:` styles in the VOD and batch la
 30 fps there (`render.rm.max_fps: 30`, half the time, visibly less smooth on a 60 fps clip); or give the
 render its own machine.
 
+## No speck of video
+
+Two outlines that almost meet wall in a gap a few pixels across, with the video showing through: two lines
+whose outlines touch, letters that move on their own, a box beside a word, a counter while its word is
+still small. Counted as the browser draws them (all 25 templates, `mix`, `shouts`, `tall`, `long` and `fast`
+at 30 fps, 17,675 frames): 13 templates have them, in 1,572 frames, up to 220 px in one frame; `punch` in
+42 % of its frames, `creep`, `jelly` and `chrome` in a third. They form between any two shapes in any
+frame of any motion, so they are not corrected shape by shape: the rule is applied where a gap exists.
+
+`scripts/gaps.mjs` is the last step of every frame. A see-through region (alpha under a half) that no
+path of see-through pixels joins to the outside, and that has no room for a 5 x 5 px square, is painted in
+the colour of the ink that walls it in; the soft edge pixels of that ink around it become opaque. No other
+pixel changes, and a frame without a gap is written byte for byte as the browser made it. It runs on
+worker threads beside the browser tabs: about 4 ms a frame, and the render as a whole is not measurably
+slower (518 frames of `punch` at 60 fps: 5.9 to 7.1 s with it, 5.5 to 7.8 s without, on a busy machine).
+The renderer still leaves out of the outline any counter that would be under 7 px (`core/measure.ts`), so
+a counter near the limit is closed for good and does not open and close as its word breathes.
+
+The same rule as an SVG filter inside the page was tried first: it closed every gap as well and took the
+render from 88 to 11 frames a second. `render.mjs --raw` writes the frames as drawn (the tests use it to
+show that the check sees a gap); the result line says how many frames and pixels were closed.
+
 ## Known limits
 
-- Specks: an outline and its shadow can leave a walled-in gap of video a few pixels across. Letter counters
-  and the channels between letters of a word are closed by the renderer; nooks where two outlines almost
-  meet (between a `0` and a `%`), and some gaps between a template's own shapes and its text, are not yet.
-  The frame checks count such frames (`speck_frames` in the report, the worst one in `speck_px_at`)
-  without failing them. Where they are (counted on a real clip): `chrome`, in letters whose counter the
-  outline nearly closes (up to 50 px in a frame); `creep`, between two letters of a word; `glide`, where
-  the rim of the box meets the outline of a neighbouring word (up to 180 px).
-- 30 fps: `bounce` (the flash as the ball lands on a shouted word), `chips` (a chip turned back to its
-  front for the last frame of a page) and `comic` (the punch of the spoken word) can put a whole change
-  into a single frame when a word starts just after a frame, which the check calls a jump. The fixture
-  `shouts` shows all three; at 60 fps it passes on every template.
+- A gap is judged frame by frame: one that is just 5 px across, or joined to the outside by a single
+  pixel, is open in that frame and closed in the next if two shapes drift a fraction of a pixel closer.
+  Measured on `mix` at 60 fps for the four templates with the most gaps (444 frames each, 9,754 gap
+  pixels closed): 4 pixels were closed for one frame only and 11 were open for one frame between two
+  closed ones (`creep`, `jelly`; none in `punch` and `chrome`). Before the rule those pixels showed the
+  video in every frame. No check looks for this.
+- A word is highlighted for at least 0.1 s (three frames at 30 fps): when the transcript gives two words
+  the same timestamp, the second starts 0.1 s after the first, that much behind its timestamp. A word
+  that starts in the last 0.1 s of a clip is not shown.
+- `chips`: a chip turns over only when its dark face will be seen for the rest of the turn before the page
+  goes. The last chip of a page that the next page replaces therefore does not turn when its word is over
+  in less than `flipS` (0.16 s); it bumps and lifts.
 - Emoji are the system's Apple Color Emoji: bitmap text, which the browser moves in whole-pixel steps
   vertically, so an emoji in slow motion is less smooth than the lettering around it; they get the
   caption's halo but not its fill colour, and the contrast floor is not measured on them.
@@ -255,9 +281,29 @@ without the Node setup). The checks are listed at the top of `render/framecheck.
 the plan puts on a frame is drawn; every word is there, highlighted within one frame of its times; ink
 stays inside the caption box (so never in the platform dead zone or within 60 px of the edge) and where
 the renderer says it is; lines and neighbouring words never overlap; nothing jumps, flashes or lives for
-a single frame; 30 and 60 fps show the same motion; all glyphs come from the bundled fonts; two renders
-are byte-identical; ffmpeg's composite matches the exact one within 2 levels on every frame; and every
-fill keeps the contrast floor over white, black, flashing, noise, stripes and its own colours.
+a single frame; no speck of video is walled in by the caption; 30 and 60 fps show the same motion; all
+glyphs come from the bundled fonts; two renders are byte-identical; ffmpeg's composite matches the exact
+one within 2 levels on every frame; and every fill keeps the contrast floor over white, black, flashing,
+noise, stripes and its own colours.
+
+**The phase sweep.** A fixture tests the instants its word times happen to fall on. A change that is spread
+over three frames when a word starts in the middle of a frame can land in a single frame when it starts
+just before one, so a clean run at one phase says nothing about the others: eight templates failed
+somewhere in the first sweep, five of them (`neon`, `ransom`, `reel`, `slam`, `vogue`) only at phases the
+plain run never rendered. `--phases 0,0.25,0.5,0.75` (or a count: `--phases 8`) runs
+the fixtures again (default `shouts`, at 30 fps) with every word, beat and label moved by that fraction of
+a 30 fps frame. `--scene-only` draws nothing: every frame is laid out and the checks that read the scene
+run (plan, highlight, layout, jump, flash, lifetime), in about an eighth of the time, which is what makes
+a fine sweep affordable:
+
+```
+python -m clipwatcher.render.framecheck --templates all --phases 4 --work <dir>     # with pixels
+python -m clipwatcher.render.framecheck --templates all --fixtures full --phases 8 --fps 30,60 --scene-only --work <dir>
+python -m clipwatcher.render.framecheck --templates all --fixtures overlap,shouts --phases 32 --scene-only --work <dir>
+```
+
+The tests run the four phases of `shouts` without pixels on every template
+(`test_every_phase_of_the_template`).
 
 ## Writing a template
 
@@ -287,12 +333,23 @@ Rules the frame checks enforce (they are what "no imperfection" means here):
 4. **Stay in the box.** Ink (outline, shadow, overshoot, tilt included) stays inside `c.region`. Lengths
    in `fx` are in em (`em(c)`), so they shrink with the text; `margin`, `grow` and `tilt` in the JSON
    reserve room for outline, word growth and rotation.
-5. **Smooth at 30 fps too.** Nothing oscillates faster than about 6 Hz; a pop takes at least three frames
+5. **Smooth at 30 fps too, wherever in the frame a word starts.** What counts is how a curve starts, not
+   only how long it lasts. An ease that is most of the way there after a third of its time puts the whole
+   change into one frame when the word begins just before a frame: `outCubic` from a strong colour towards
+   white (most of the sRGB change comes first), a `back` ease with a large overshoot (at full size after
+   `1 / (1 + overshoot)` of its time), a shake that starts at full strength. Give such a change a curve
+   that is slow at both ends or more time, and run the phase sweep.
+   Nothing oscillates faster than about 6 Hz; a pop takes at least three frames
    at 30 fps (0.1 s); colour changes take at least 0.07 s.
 6. **The plan is law.** A word's highlight follows `w.phase`/`w.a`; in `page` mode every word is on
    screen `timing.enterS + i * timing.staggerS` after the page starts, in `build` mode a word appears
    when it is spoken; nothing is drawn before `c.t = 0` or after the exit.
 7. One unit id per thing per frame (`key` when a word is drawn more than once).
+8. **Nothing for a frame or two.** A face, a copy or a shape that would be seen for less than about 0.07 s
+   before its page goes is a flash: decide from the plan (`c.exitT`, `c.dur`, `w.activeEnd`) whether a turn
+   or a swap is worth starting, and leave the unit as it is when it is not (`chips`).
+9. **No hairlines of video.** A see-through gap under 5 px that your shapes wall in is closed by the
+   renderer in the colour of the ink around it. Do not design with one.
 
 Check a template while writing it:
 
