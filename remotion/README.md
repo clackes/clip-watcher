@@ -200,6 +200,45 @@ ago keeps its colour unless it now collides; and when a scheme does change betwe
 follow each other, the new phrase eases in from the old colours (OKLab) if every step of that path keeps
 the floor, else it simply starts in the new ones.
 
+## Output format and speed
+
+Measured on an 8-core Apple M3, nothing else running, 30 s of captions at 60 fps (1800 frames, about 1650
+of them with something on screen), `punch` / `jelly` / `neon`:
+
+| overlay | render | size | error after compositing |
+|---|---|---|---|
+| **PNG sequence of the caption band** (1080x256, what is used) | **12.8 / 13.5 / 13.6 s** | 44-103 MB | 1-2 levels of 255 |
+| PNG sequence of the full 1080x1920 frame | 19.2 / 20.6 / 21.9 s | 122-182 MB | the same |
+| ProRes 4444 with alpha of the band (ffmpeg, from the PNGs) | + 4.3-5.1 s | 113-213 MB | 2-3 levels |
+| VP9 with alpha (4:2:0) | about 108 s in the first test | 4 MB | chroma subsampled before blending |
+
+PNG is lossless, needs no second encode and lets blank frames be links to one file, so it is both the most
+exact and the fastest; the band instead of the full frame saves a third. The error is against an exact
+composite done in RGB and converted the same way, in the video's own 4:2:0, over a moving striped
+background; it is rounding. Compositing adds about 1.2 s to a 30 s x264 `veryfast` encode. The auto colour
+mode costs one more pass over the clip's picture (decode and filters, no encode).
+
+So a 30 s clip costs about 13 s of caption rendering, a 59 s clip about 26 s, on all eight cores. That is too
+slow to add to the live lane's minute per clip on a machine that is also recording and encoding. Options:
+keep an ASS style for the live lane and use `rm:` styles in the VOD and batch lanes; cap the overlay at
+30 fps there (`render.rm.max_fps: 30`, half the time, visibly less smooth on a 60 fps clip); or give the
+render its own machine.
+
+## Known limits
+
+- Specks: an outline and its shadow can leave a walled-in gap of video a few pixels across. Letter counters
+  and the channels between letters of a word are closed by the renderer; nooks where two outlines almost
+  meet (between a `0` and a `%`), and some gaps between a template's own shapes and its text, are not yet.
+  The frame checks count such frames (`speck_frames` in the report) without failing them.
+- Emoji are the system's Apple Color Emoji: bitmap text, which the browser moves in whole-pixel steps
+  vertically, so an emoji in slow motion is less smooth than the lettering around it; they get the
+  caption's halo but not its fill colour, and the contrast floor is not measured on them.
+- Text is laid out with the browser's kerning; ligatures and contextual forms are off, so script faces
+  (Knewave) do not join as they would in a word processor.
+- The caption box positions are this project's (the seam at y 960; nothing below y 1536 or within 60 px
+  of the sides). The platforms publish safe areas for ads only; YouTube's ad diagram keeps the bottom 672 px
+  and the right 192 px clear, more than the project does.
+
 ## Frame checks
 
 `python -m clipwatcher.render.framecheck --templates all --fixtures full --work <dir>` renders every
