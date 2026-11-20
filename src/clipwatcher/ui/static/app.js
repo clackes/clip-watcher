@@ -23,6 +23,7 @@ const money = v => '$' + (v >= 100 ? v.toFixed(0) : v >= 1 || !v ? (+v).toFixed(
 const when = t => { const d = new Date(t * 1000); return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ' ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }); };
 const workOf = t => Object.entries(t || {}).reduce((a, [k, v]) => a + (k === 'wait' || k === 'total' || k === 'post' ? 0 : +v || 0), 0);
 const plural = (n, one, many) => (+n).toLocaleString('en-US') + ' ' + (+n === 1 ? one : many || one + 's');
+const numb = v => `<b class="num${String(v).length > 6 ? ' long' : ''}">${v}</b>`;
 const clockOf = t => new Date(t * 1000).toLocaleTimeString('en-GB');
 const api = {
   async get(path) { const r = await fetch(path); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.statusText); return j; },
@@ -217,13 +218,13 @@ function finish(e) {
     const t = e.tests || {}, bad = (t.failed || 0) + (t.error || 0), ok = e.state === 'done' && !bad;
     $('#runTitle').innerHTML = ok ? `All ${t.passed || R.tests.seen} tests <span class="gt">passed</span>` : `The tests <span class="gt">did not pass</span>`;
     html = `<span class="badge ${ok ? 'live' : 'warn'}"><i class="dot ${ok ? '' : 'warn'}"></i>${ok ? 'All green' : e.state === 'stopped' ? 'Stopped before the end' : bad + ' failed'}</span><h2>${ok ? 'Every part of the bot still works' : 'Something needs a look'}</h2>
-      <div class="grid statrow"><div class="card"><div class="tile"><b class="num">${t.passed || 0}</b><span>passed</span></div></div><div class="card"><div class="tile"><b class="num">${bad}</b><span>failed</span></div></div><div class="card"><div class="tile"><b class="num">${fmtS(t.seconds || e.seconds)}</b><span>in total</span></div></div></div>
+      <div class="grid statrow"><div class="card"><div class="tile"><b class="num">${t.passed || 0}</b><span>passed</span></div></div><div class="card"><div class="tile"><b class="num">${bad}</b><span>failed</span></div></div><div class="card"><div class="tile">${numb(fmtS(t.seconds || e.seconds))}<span>in total</span></div></div></div>
       ${R.tests.failed.length ? `<div class="tbl-wrap"><table><tbody>${R.tests.failed.slice(0, 30).map(f => `<tr><td>${esc(f)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
   } else if (R.clips.length) {
     const c = R.clips[R.clips.length - 1], n = R.clips.length;
     $('#runTitle').innerHTML = R.kind === 'render' ? 'Rendered <span class="gt">again</span>' : n === 1 ? 'Clip <span class="gt">staged</span>' : `${n} clips <span class="gt">staged</span>`;
     html = `<span class="badge warn"><i class="dot warn"></i>Waiting for approval</span><h2>${esc(c.title)}</h2><p class="lead">${esc(c.hook || '')}</p>
-      <div class="grid statrow"><div class="card"><div class="tile"><b class="num">${c.final_score}</b><span>final score</span></div></div><div class="card"><div class="tile"><b class="num">${c.seconds} s</b><span>long</span></div></div><div class="card"><div class="tile"><b class="num"${R.kind === 'render' ? ' style="font-size:1.5rem;text-transform:capitalize"' : ''}>${R.kind === 'render' ? esc(c.captions || 'none') : fmtS(workOf(c.timings))}</b><span>${R.kind === 'render' ? 'captions' : 'of work'}</span></div></div></div>
+      <div class="grid statrow"><div class="card"><div class="tile"><b class="num">${c.final_score}</b><span>final score</span></div></div><div class="card"><div class="tile"><b class="num">${c.seconds} s</b><span>long</span></div></div><div class="card"><div class="tile">${R.kind === 'render' ? `<b class="num long" style="text-transform:capitalize">${esc(c.captions || 'none')}</b>` : numb(fmtS(workOf(c.timings)))}<span>${R.kind === 'render' ? 'captions' : 'of work'}</span></div></div></div>
       <p class="cap-note">${S.ov && S.ov.dry_run ? 'Nothing was uploaded: this is a dry run, and only clips a person approves go to YouTube.' : 'It is uploaded once a person approves it.'}</p>`;
   } else if (R.kind === 'render') {
     $('#runTitle').innerHTML = 'Not rendered <span class="gt">again</span>';
@@ -242,7 +243,7 @@ function finish(e) {
 }
 const busy = on => $$('.tabs a[data-v="run"]').forEach(a => a.classList.toggle('busy', on));
 function follow(run) {
-  busy(true); R.replay = false; R.id = run.id; resetRunView(run.kind, run.params || {}); R.started = run.started || Date.now() / 1000;
+  busy(true); R.replay = false; R.id = run.id; resetRunView(run.kind, run.params || {}); R.started = run.started || Date.now() / 1000; paintWiz();
   clearInterval(R.tick); R.tick = setInterval(() => { if (R.ended || R.replay) return; const el = Date.now() / 1000 - R.started; $('#runClock').textContent = fmtS(Math.max(0, el)); if (R.kind === 'live' && +R.params.minutes) $('#totalBar').style.width = Math.min(100, 100 * el / (R.params.minutes * 60)) + '%'; }, 1000);
   if (R.es) R.es.close();
   R.es = new EventSource(`/api/runs/${encodeURIComponent(run.id)}/events?after=0`);

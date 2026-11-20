@@ -458,3 +458,4 @@ h1{font-size:clamp(2rem,1.4rem + 2.6vw,3.25rem)}
 .badge.src .bdg img,.badge.src .bdg .vf{width:14px;height:14px}
 .badge.src .bdg{margin-left:0}
 @media (prefers-reduced-motion:reduce){.av.live,.bdg img,.bdg .vf{animation:none}.av img{transition:none}}
+.tile b.long{font-size:1.45rem;line-height:1.25;white-space:nowrap}
