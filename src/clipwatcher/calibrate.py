@@ -382,9 +382,19 @@ EDGE_TAU = 8.0  # luma step that counts as an edge in one frame
 SIDE_MIN = 0.45  # a side of the cam: an edge there in this share of (frames x its length)
 SIDE_SURE = 0.8  # ... a side that needs no other evidence
 SIDE_PART = 0.2  # ... and in every quarter of its length at least this (a line that stops halfway is none)
-CHORD_SURE = 0.93  # a line right across a larger rectangle splits it only when it is this constant ...
+CHORD_SURE = 0.9  # a line right across a larger rectangle splits it only when it is this constant ...
 CHORD_THIN = 0.22  # ... or cuts off no more than this share of it (a bar, a frame), else it is the room's
 CHORD_MIN = 0.7  # ... and even a thin cut needs a line this good
+SEG_MIN = 0.12  # every eighth of a side must be an edge at least this much
+CHORD_CUT, CHORD_DEEP = 0.5, 0.35  # a line across the rectangle, this steady, within this share of a side
+SIDE_JUMP = 0.25  # ... is the cam's border when the sides that meet it change this much there
+STILL_SD = 2.0  # nine tenths of a strip change less than this over the scene: nothing filmed moves there
+STILL_OF_CAM = 0.15  # ... or than this share of how much the rectangle changes (lettering is not noise-free)
+DRAWN_SHARE = 0.2  # ... and this share of it lies on steady edges: lettering, a logo
+STILL_MIN, STILL_MOST = 8, 0.2  # such a strip: at least this many pixels deep, at most this share of the side
+STILL_LINE = 0.3  # the line it ends at: an edge in this share of (frames x its length)
+FRAME_LINE = 0.45  # a decorative frame: lines this steady just inside three sides or more ...
+FRAME_PAIR = 0.7  # ... or this steady inside two (a cam in a corner of the frame has only two to show)
 MOVES_LIKE, MOVES_MIN = 0.4, 5.0  # a part moving this much of what moves around the cam is not the cam
 LIVE_SD = 4.0  # a face that changes less than this over the scene is a picture of a face (HUD portrait)
 GAME_SD = 8.0  # half the picture changes at least this much over the scene: a game, a video, a walk
@@ -472,6 +482,7 @@ class OverlayRect:
     cov: tuple[float, float, float, float]  # left, right, top, bottom: share of the side that is an edge
     sure: int  # sides that are a frame side, a near-constant edge, or have the game beyond them
     still: float  # change over time inside / in a ring around it (a webcam's room is stiller than a game)
+    weak: float = 1.0  # the least supported eighth of any side that is not the frame's
 
     @property
     def score(self) -> float:
@@ -586,8 +597,21 @@ def overlay_rects(maps: SceneMaps) -> list[OverlayRect]:
                     min(fh, bot + ring) - max(0, top - ring)
                 )
                 around = (big * a_big - whole * a_in) / max(1, a_big - a_in)
-                out.append(OverlayRect((left, top, cw, h), cov, sure, whole / max(around, 0.5)))
+                weak = 1.0
+                for k in range(8):
+                    y0, y1 = top + (h * k) // 8, top + (h * (k + 1)) // 8
+                    x0, x1 = left + (cw * k) // 8, left + (cw * (k + 1)) // 8
+                    if left != 0:
+                        weak = min(weak, float(cv[y1, left] - cv[y0, left]) / max(1, y1 - y0))
+                    if right != fw:
+                        weak = min(weak, float(cv[y1, right] - cv[y0, right]) / max(1, y1 - y0))
+                    if top != 0:
+                        weak = min(weak, float(chz[top, x1] - chz[top, x0]) / max(1, x1 - x0))
+                    if bot != fh:
+                        weak = min(weak, float(chz[bot, x1] - chz[bot, x0]) / max(1, x1 - x0))
+                out.append(OverlayRect((left, top, cw, h), cov, sure, whole / max(around, 0.5), weak))
     maps._rects = out  # type: ignore[attr-defined]
+    maps._lines = (cv, chz)  # type: ignore[attr-defined]
     return out
 
 
@@ -614,6 +638,8 @@ def cam_rect(maps: SceneMaps, face: Box) -> tuple[Rect, float] | None:
             continue
         if left < x - 9 * w or right > x + 10 * w or top < y - 6 * h or bot > y + 9 * h:
             continue  # far too large for this face
+        if r.weak < SEG_MIN:
+            continue  # a side with a stretch of no edge at all: the rectangle reaches past the cam there
         around.append(r)
     if not around:
         return None
@@ -629,8 +655,156 @@ def cam_rect(maps: SceneMaps, face: Box) -> tuple[Rect, float] | None:
             if big is not pick and _room_line_inside(maps, pick, big):
                 pick, grown = big, True
                 break
-    rect = _trim_moving(maps, pick.rect, face)
+    rect = _tighten(maps, _trim_still(maps, _trim_moving(maps, pick.rect, face), face), face)
     return rect, (0.5 + 0.5 * pick.score if pick.sure == 4 else 0.5 * pick.score)
+
+
+def _chords(maps: SceneMaps, rect: Rect, face: Box) -> dict[str, tuple[float, int]]:
+    """For each side (l, r, t, b) the steadiest line that runs right across rect between that side and
+    the face: (share of its length that is an edge, where it is: a column or a row of the picture)."""
+    import numpy as np
+
+    cv, chz = maps._lines  # type: ignore[attr-defined]
+    x, y, w, h = rect
+    fx, fy, fwd, fht = face
+    rows = (chz[:, x + w] - chz[:, x]) / w
+    cols = (cv[y + h, :] - cv[y, :]) / h
+
+    def best(cov, lo: float, hi: float) -> tuple[float, int]:
+        lo, hi = max(int(lo), 0), min(int(hi), len(cov))
+        if hi - lo < 1:
+            return 0.0, -1
+        k = lo + int(np.argmax(cov[lo:hi]))
+        return float(cov[k]), k
+
+    edge = 4  # the side's own line is not a chord
+    return {
+        "t": best(rows, y + edge, fy - 0.15 * fht),
+        "b": best(rows, fy + 1.15 * fht, y + h - edge + 1),
+        "l": best(cols, x + edge, fx - 0.15 * fwd),
+        "r": best(cols, fx + 1.15 * fwd, x + w - edge + 1),
+    }
+
+
+def _side_jump(maps: SceneMaps, rect: Rect, side: str, at: int) -> float | None:
+    """How much the two sides that run into `side` change at the line `at`: the largest difference between
+    their edge share beyond the line and before it. None when neither can tell (frame sides, a strip of
+    a few pixels). A bar, a banner or a second camera attached to the webcam has borders of its own; the
+    webcam's border does not change where a shelf of the room meets it."""
+    cv, chz = maps._lines  # type: ignore[attr-defined]
+    fw, fh = maps.size
+    x, y, w, h = rect
+    out: float | None = None
+    if side in "tb":
+        a0, a1, b0, b1 = (y, at, at, y + h) if side == "t" else (at, y + h, y, at)
+        if a1 - a0 < 12 or b1 - b0 < 12:
+            return None
+        for line in (x, x + w):
+            if line in (0, fw):
+                continue
+            d = abs(
+                float(cv[a1, line] - cv[a0, line]) / (a1 - a0)
+                - float(cv[b1, line] - cv[b0, line]) / (b1 - b0)
+            )
+            out = d if out is None else max(out, d)
+    else:
+        a0, a1, b0, b1 = (x, at, at, x + w) if side == "l" else (at, x + w, x, at)
+        if a1 - a0 < 12 or b1 - b0 < 12:
+            return None
+        for line in (y, y + h):
+            if line in (0, fh):
+                continue
+            d = abs(
+                float(chz[line, a1] - chz[line, a0]) / (a1 - a0)
+                - float(chz[line, b1] - chz[line, b0]) / (b1 - b0)
+            )
+            out = d if out is None else max(out, d)
+    return out
+
+
+def _cut(rect: Rect, side: str, at: int) -> Rect:
+    x, y, w, h = rect
+    if side == "t":
+        return x, at, w, y + h - at
+    if side == "b":
+        return x, y, w, at - y
+    if side == "l":
+        return at, y, x + w - at, h
+    return x, y, at - x, h
+
+
+def _tighten(maps: SceneMaps, rect: Rect, face: Box) -> Rect:
+    """rect without what does not belong to the webcam picture although steady edges enclose it:
+    - a decorative frame: lines a few pixels inside three sides or more are the picture's edges (inside
+      two when both are strong lines);
+    - a bar, a sponsor block, a second camera attached to the cam: cut at a line right across the rectangle
+      (within CHORD_DEEP of a side) when that line is as constant as drawn graphics, or when the
+      rectangle's own sides change there (a bar has borders of its own).
+    A line of the room (a shelf, the edge of a wall) is neither and stays inside. Tried and dropped on the
+    labelled moments: peeling single lines near a side and cutting at drawn lines however deep (more
+    panels too tight than bars removed). The rectangle only gets smaller here, never smaller than the
+    face needs."""
+    overlay_rects(maps)
+    fwd, fht = face[2], face[3]
+    for _ in range(6):
+        x, y, w, h = rect
+        at_side = {"t": y, "b": y + h, "l": x, "r": x + w}
+        chords = _chords(maps, rect, face)
+        todo: dict[str, int] = {}
+        for side, (cov, at) in chords.items():
+            size = h if side in "tb" else w
+            if at >= 0 and cov >= FRAME_LINE and abs(at - at_side[side]) <= max(14, 0.05 * size):
+                todo[side] = at
+        pair = [k for k, at in todo.items() if chords[k][0] >= FRAME_PAIR]
+        if len(todo) < 3 and len(pair) >= 2:
+            todo = {k: todo[k] for k in pair}
+        elif len(todo) < 3:
+            todo = {}
+            for side, (cov, at) in sorted(chords.items(), key=lambda kv: -kv[1][0]):
+                size = h if side in "tb" else w
+                if at < 0 or cov < CHORD_CUT or abs(at - at_side[side]) > CHORD_DEEP * size:
+                    continue
+                jump = _side_jump(maps, rect, side, at)
+                if cov >= CHORD_SURE or (jump is not None and jump >= SIDE_JUMP):
+                    todo = {side: at}
+                    break
+        new = rect
+        for side, at in todo.items():
+            cut = _cut(new, side, at)
+            if cut[2] >= 1.2 * fwd and cut[3] >= 1.2 * fht:
+                new = cut
+        if new == rect:
+            break
+        rect = new
+    return rect
+
+
+def rect_in_frames(frames: list[Path], rect: Rect, tau: float = EDGE_TAU) -> list[float]:
+    """For each frame the share of rect's border (its sides that are not the frame's) that is an edge in
+    that one frame. Over a stretch in which the streamer switches layout the numbers fall to what any
+    line of the picture gets by chance: the webcam is not there in those frames."""
+    try:
+        import numpy as np
+        from PIL import Image
+    except ImportError:
+        return []
+    x, y, w, h = rect
+    out = []
+    for p in frames:
+        with Image.open(p) as im:
+            a = np.asarray(im.convert("L"), dtype=np.float32)
+        fh, fw = a.shape
+        parts = []
+        for b in (x, x + w):
+            if 2 <= b <= fw - 2:
+                parts.append(np.abs(a[y : y + h, b] - a[y : y + h, b - 1]) > tau)
+                parts[-1] |= np.abs(a[y : y + h, min(b + 1, fw - 1)] - a[y : y + h, b - 2]) > 2 * tau
+        for b in (y, y + h):
+            if 2 <= b <= fh - 2:
+                parts.append(np.abs(a[b, x : x + w] - a[b - 1, x : x + w]) > tau)
+                parts[-1] |= np.abs(a[min(b + 1, fh - 1), x : x + w] - a[b - 2, x : x + w]) > 2 * tau
+        out.append(float(np.concatenate(parts).mean()) if parts else 1.0)
+    return out
 
 
 def _around(maps: SceneMaps, rect: Rect) -> float:
@@ -714,6 +888,162 @@ def _trim_moving(maps: SceneMaps, rect: Rect, face: Box, most: float = 0.3) -> R
     return x + left, y + top, w - left - right, h - top - bot
 
 
+def _trim_still(maps: SceneMaps, rect: Rect, face: Box) -> Rect:
+    """rect without a banner attached to the webcam: a strip along a side in which nothing ever moves,
+    that is full of steady edges (lettering, a logo) and ends at a steady line right across the
+    rectangle (arrowcs: 32 px of 'use code' under the picture, inside the rectangle's sides). Stillness
+    alone does not say it: the dark wall behind a streamer is as still, and tried without the lettering
+    this cut into 40 real cams of 250. Never past the face, never more than STILL_MOST of a side."""
+    import numpy as np
+
+    overlay_rects(maps)
+    cv, chz = maps._lines  # type: ignore[attr-defined]
+    x, y, w, h = rect
+    fx, fy, fwd, fht = (int(v) for v in face)
+    sd = maps.sd[y : y + h, x : x + w]  # type: ignore[index]
+    if sd.shape[0] < 16 or sd.shape[1] < 16:
+        return rect
+    drawn = (maps.pv[y : y + h, x : x + w] >= 0.8) | (maps.ph[y : y + h, x : x + w] >= 0.8)  # type: ignore[index]
+    floor = max(STILL_SD, STILL_OF_CAM * float(np.median(sd)))
+    rows = np.percentile(sd, 90, axis=1) <= floor
+    cols = np.percentile(sd, 90, axis=0) <= floor
+    row_line = (chz[y : y + h + 1, x + w] - chz[y : y + h + 1, x]) / w  # boundary i: above row y + i
+    col_line = (cv[y + h, x : x + w + 1] - cv[y, x : x + w + 1]) / h
+
+    def depth(still, line, lettering, size: int, room: float) -> int:
+        skip = 0
+        while skip < 4 and skip < len(still) and not still[skip]:
+            skip += 1
+        n = skip
+        while n < len(still) and still[n]:
+            n += 1
+        lo, hi = max(1, n - 2), min(len(line) - 1, n + 4)
+        if n - skip < STILL_MIN or hi <= lo:
+            return 0
+        k = lo + int(np.argmax(line[lo:hi]))
+        if line[k] < STILL_LINE or k > min(STILL_MOST * size, room):
+            return 0
+        return k if float(lettering[:k].mean()) >= DRAWN_SHARE else 0
+
+    top = depth(rows, row_line, drawn, h, fy - y)
+    bot = depth(rows[::-1], row_line[::-1], drawn[::-1], h, y + h - fy - fht)
+    left = depth(cols, col_line, drawn.T, w, fx - x)
+    right = depth(cols[::-1], col_line[::-1], drawn.T[::-1], w, x + w - fx - fwd)
+    new = (x + left, y + top, w - left - right, h - top - bot)
+    if new[2] < 1.2 * fwd or new[3] < 1.2 * fht:
+        return rect
+    cut = {("l", x + left): left, ("r", x + w - right): right, ("t", y + top): top, ("b", y + h - bot): bot}
+    banners = getattr(maps, "_banners", None) or set()
+    maps._banners = banners | {k for k, v in cut.items() if v}  # type: ignore[attr-defined]
+    return new
+
+
+def banner_sides(maps: SceneMaps, rect: Rect) -> list[str]:
+    """Sides of rect (l, r, t, b) that _trim_still put where a banner begins. Such a side is often a
+    faint line (a dark shirt against a dark banner), but what lies behind it says where the picture ends."""
+    x, y, w, h = rect
+    at = {"l": x, "r": x + w, "t": y, "b": y + h}
+    return [k for k in "lrtb" if (k, at[k]) in (getattr(maps, "_banners", None) or set())]
+
+
+def cam_evidence(maps: SceneMaps, rect: Rect, face: Box) -> dict:
+    """What can be measured about a webcam rectangle found around a face. No verdict here: layout decides
+    from these whether the rectangle is surely the webcam and nothing else.
+
+    sides: share of each side (l, r, t, b) that is a steady edge (1.0 = a side of the frame);
+    beyond: how the picture just outside each side changes over time against just inside it (None at the
+    frame's sides); chords: for each side the steadiest line that runs right across the rectangle between
+    that side and the face, as (share of its length that is an edge, its distance from the side as a
+    share of the rectangle, how much the rectangle's sides change there): a bar, a banner or a second
+    camera attached to the cam ends at such a line, and so does a shelf in the room; strips: how much
+    the strip behind that line changes over time against the rest of the rectangle (hands on a desk and
+    a second camera move far more than the room); banner: sides put where a banner begins; outer /
+    inner: other rectangles of the scene that hold this one, or lie in it around the face, as area
+    ratios (a cam inside a player window, a frame around the cam)."""
+    import numpy as np
+
+    overlay_rects(maps)
+    cv, chz = maps._lines  # type: ignore[attr-defined]
+    sd = maps.sd
+    fw, fh = maps.size
+    x, y, w, h = rect
+    fx, fy, fwd, fht = face
+
+    def strip(x0: float, y0: float, x1: float, y1: float) -> float | None:
+        part = sd[max(0, int(y0)) : max(0, int(y1)), max(0, int(x0)) : max(0, int(x1))]  # type: ignore[index]
+        return float(np.median(part)) if part.size else None
+
+    sides = {
+        "l": 1.0 if x == 0 else float(cv[y + h, x] - cv[y, x]) / h,
+        "r": 1.0 if x + w == fw else float(cv[y + h, x + w] - cv[y, x + w]) / h,
+        "t": 1.0 if y == 0 else float(chz[y, x + w] - chz[y, x]) / w,
+        "b": 1.0 if y + h == fh else float(chz[y + h, x + w] - chz[y + h, x]) / w,
+    }
+    d, pad = max(8, int(0.08 * min(w, h))), 5
+    pairs = {
+        "l": ((x + pad, y, x + pad + d, y + h), (x - pad - d, y, x - pad, y + h), x == 0),
+        "r": (
+            (x + w - pad - d, y, x + w - pad, y + h),
+            (x + w + pad, y, x + w + pad + d, y + h),
+            x + w == fw,
+        ),
+        "t": ((x, y + pad, x + w, y + pad + d), (x, y - pad - d, x + w, y - pad), y == 0),
+        "b": (
+            (x, y + h - pad - d, x + w, y + h - pad),
+            (x, y + h + pad, x + w, y + h + pad + d),
+            y + h == fh,
+        ),
+    }
+    beyond = {}
+    for k, (inside, outside, at_frame) in pairs.items():
+        i, o = strip(*inside), strip(*outside)
+        beyond[k] = None if at_frame or i is None or o is None else (round(i, 2), round(o, 2))
+
+    chords, strips = {}, {}
+    for side, (c, at) in _chords(maps, rect, face).items():
+        size = h if side in "tb" else w
+        depth = abs(at - {"t": y, "b": y + h, "l": x, "r": x + w}[side]) if at >= 0 else 0
+        jump = _side_jump(maps, rect, side, at) if at >= 0 else None
+        chords[side] = (round(c, 3), round(depth / size, 3), None if jump is None else round(jump, 2))
+        if at < 0:
+            continue
+        rx, ry, rw, rh = _cut(rect, side, at)  # the rectangle without the strip behind this line
+        part = {
+            "t": sd[y:at, x : x + w], "b": sd[at : y + h, x : x + w],
+            "l": sd[y : y + h, x:at], "r": sd[y : y + h, at : x + w],
+        }[side]  # type: ignore[index]  # fmt: skip
+        rest = sd[ry : ry + rh, rx : rx + rw]  # type: ignore[index]
+        if part.size and rest.size:
+            strips[side] = round(float(np.median(part)) / max(float(np.median(rest)), 0.5), 2)
+    banner = [  # only where the picture moves right up to the dead strip (k4sen: a minimap's label)
+        k for k in banner_sides(maps, rect) if beyond.get(k) and beyond[k][0] >= 1.8 * beyond[k][1] + 3.0
+    ]
+    area = w * h
+    outer, inner = [], []
+    for r in overlay_rects(maps):
+        if r.sure < 3 or r.rect == rect:
+            continue
+        rx, ry, rw, rh = r.rect
+        a = rw * rh / area
+        if rx <= x + 3 and ry <= y + 3 and rx + rw >= x + w - 3 and ry + rh >= y + h - 3 and a > 1.04:
+            if rw * rh <= CAM_MAX_AREA * fw * fh:
+                outer.append((round(a, 2), r.sure, round(r.score, 2)))
+        elif rx >= x - 3 and ry >= y - 3 and rx + rw <= x + w + 3 and ry + rh <= y + h + 3 and a < 0.96:
+            holds_face = rx <= fx + 0.1 * fwd and rx + rw >= fx + 0.9 * fwd and ry <= fy + 0.1 * fht
+            if holds_face and ry + rh >= fy + 0.9 * fht and rw >= 1.2 * fwd and rh >= 1.2 * fht:
+                inner.append((round(a, 2), r.sure, round(r.score, 2)))
+    inside_all = float(np.median(sd[y : y + h, x : x + w]))  # type: ignore[index]
+    return {
+        "rect": list(rect), "sides": {k: round(v, 3) for k, v in sides.items()}, "beyond": beyond,
+        "chords": chords, "strips": strips, "banner": banner,
+        "outer": sorted(outer)[:4], "inner": sorted(inner, reverse=True)[:4],
+        "aspect": round(w / h, 3), "face_h": round(fht / h, 3),
+        "face_at": [round((fx + fwd / 2 - x) / w, 3), round((fy + fht / 2 - y) / h, 3)],
+        "live": round(inside_all / max(_around(maps, rect), 0.5), 3), "inside_sd": round(inside_all, 2),
+        "scene_sd": round(float(np.median(sd)), 2),  # type: ignore[call-overload]
+    }  # fmt: skip
+
+
 def face_alive(maps: SceneMaps, face: Box) -> bool:
     """The face moves over the scene (a webcam, a video), unlike a portrait in a HUD or a drawing."""
     x, y, w, h = (int(v) for v in face)
@@ -741,6 +1071,21 @@ def room_rectangle(maps: SceneMaps, rect: Rect) -> bool:
     fw, fh = maps.size
     at_frame = (x == 0, x + w == fw, y == 0, y + h == fh)
     return known is None or any(c < ROOM_SIDE for c, e in zip(known.cov, at_frame, strict=True) if not e)
+
+
+def scene_spread(maps: SceneMaps) -> float:
+    """How much the middle pixel of the picture changes over the scene (median of the temporal spread)."""
+    import numpy as np
+
+    return float(np.median(maps.sd))  # type: ignore[call-overload]
+
+
+def steady_share(maps: SceneMaps) -> float:
+    """Share of the picture's pixels that lie on an edge in nearly every frame: drawn things (HUD, bars,
+    a webcam's border) and whatever a camera that does not move shows."""
+
+    pv, ph = maps.pv, maps.ph
+    return float(((pv[:, :-1] >= 0.8) | (ph[:-1, :] >= 0.8)).mean())  # type: ignore[index]
 
 
 def scene_still(maps: SceneMaps) -> bool:
