@@ -139,9 +139,10 @@ function sprites(c: Ctx<P> | LabelCtx<P>, lines: Line[]): Scene {
         const g = first + k;
         const born = g * lag;
         if (t < born) return null;
-        let y = -fx.dropH * e * dropped(t - born, fx.dropS, fx.bounce, fx.bounces);
         const x = prog(l.since - k * hopLag, 0, fx.hopS);
-        y -= l.hop * e * 4 * x * (1 - x);
+        // a letter still in the air from its drop does not hop on top of that: the higher of the two, so a
+        // word spoken as it lands never rises above the room a hop alone needs
+        let y = -e * Math.max(fx.dropH * dropped(t - born, fx.dropS, fx.bounce, fx.bounces), l.hop * 4 * x * (1 - x));
         y -= l.wave * fx.waveH * e * (0.5 - 0.5 * Math.cos(2 * Math.PI * Math.max(0, (t - rest) / fx.waveS - g * fx.waveLag)));
         // it grows from dropFrom to full size while it falls, and shrinks to nothing as it falls off
         let size = lerp(fx.dropFrom, 1, prog(t, born, fx.dropS) ** 2);
