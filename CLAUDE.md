@@ -303,7 +303,18 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   Remotion is free for individuals and for companies of up to three people; a fourth person makes it a
   paid company licence (remotion/README.md has the links). Known limits: specks of video a few pixels
   across where two outlines almost meet (counted by the frame checks, not failed), emoji move in whole
-  pixels, script faces do not join.
+  pixels, script faces do not join. Checked again after the build, 20 Nov: the seven fixtures on all 25
+  templates at 30 and 60 fps, 50,850 frames and 4.59 M checks, no failure. Every frame of five staged
+  Shorts under made-up fast talk (auto colours, 60 fps) then found one fault: arcade added a hop to a
+  landing bounce (letters 2 px above the box for six frames; a letter now takes the higher of the two).
+  Three reports were the checker's own faults, fixed: the speck count never left out what the outside
+  reaches (Pillow's flood fill does nothing to an image made from an array, without a word; chips showed
+  740 px on frames with none), a 2 px remnant of a letter under glide's box was read as its background,
+  a unit scaled to nothing as a stutter. The talk of that clip is fixture `shouts` (full set): 22
+  templates pass it at both rates. Open: at 30 fps bounce (the landing flash), chips (a chip face) and
+  comic (the punch) each put a whole change into one frame when a word starts just after a frame; and
+  the real specks, counted right now: chrome (small counters, up to 50 px a frame), creep (between
+  letters), glide (where the box's rim meets a neighbour, up to 180 px).
 - D9 .ts seek bug: never `-ss` exact on MPEG-TS. Coarse input seek to max(0, START-6), then
   trim/atrim=start=TRIM in the graph, then setpts=PTS-STARTPTS. Regression test required. Commands that decode
   only the picture or only the sound (judge frames, transcript, loudness, reframe) go through

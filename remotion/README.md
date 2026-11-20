@@ -229,7 +229,14 @@ render its own machine.
 - Specks: an outline and its shadow can leave a walled-in gap of video a few pixels across. Letter counters
   and the channels between letters of a word are closed by the renderer; nooks where two outlines almost
   meet (between a `0` and a `%`), and some gaps between a template's own shapes and its text, are not yet.
-  The frame checks count such frames (`speck_frames` in the report) without failing them.
+  The frame checks count such frames (`speck_frames` in the report, the worst one in `speck_px_at`)
+  without failing them. Where they are (counted on a real clip): `chrome`, in letters whose counter the
+  outline nearly closes (up to 50 px in a frame); `creep`, between two letters of a word; `glide`, where
+  the rim of the box meets the outline of a neighbouring word (up to 180 px).
+- 30 fps: `bounce` (the flash as the ball lands on a shouted word), `chips` (a chip turned back to its
+  front for the last frame of a page) and `comic` (the punch of the spoken word) can put a whole change
+  into a single frame when a word starts just after a frame, which the check calls a jump. The fixture
+  `shouts` shows all three; at 60 fps it passes on every template.
 - Emoji are the system's Apple Color Emoji: bitmap text, which the browser moves in whole-pixel steps
   vertically, so an emoji in slow motion is less smooth than the lettering around it; they get the
   caption's halo but not its fill colour, and the contrast floor is not measured on them.
