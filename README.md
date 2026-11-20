@@ -28,13 +28,29 @@ gets the layout its streamer has in `streamers.yaml`, or the whole frame.
 
 One page to run the bot and see what it does: pick the live lane, a finished broadcast or the test suite,
 watch each step as it happens (join, read the chat, spike, cut, judge, render, stage), then watch the clip.
-Clips lists everything staged, with how each scored and settings for that one video (caption style, layout,
-render again). Insights answers one question at a time: what each step costs in seconds, what the judge
+Clips lists everything staged, with how each scored and settings for that one video (caption template with
+its colours and settings, layout, render again). The caption library plays every style on a stand-in Short and
+opens each animated template's own settings. Insights answers one question at a time: what each step costs in seconds, what the judge
 costs in dollars, what the judge decided, what the detector found. Settings changes a chosen few values for
 this machine (`config/local.yaml`, laid over `config/global.yaml`). Streamers appear with their Twitch or
 Kick picture, name and badges, fetched once a day and kept in `work/ui/profiles/`; a finished run can be
 watched again. It needs nothing installed beyond the project, starts the same commands you would type,
 and never approves or uploads: that stays in Telegram.
+
+## Animated captions
+
+Besides the four built-in caption styles there are 25 animated templates (`render.captions: rm:punch`, or
+pick one in the companion app). They are rendered with Remotion and need a one-time setup with Node 20+:
+
+```bash
+cd remotion && npm ci && npm run setup    # pinned packages, a headless browser, the bundle
+```
+
+Without it, or when a render fails, a clip gets the built-in style named in `render.rm.fallback`: captions
+never cost a clip. Colours are picked for the video under each phrase (`render.rm.colors: auto`) or stay the
+template's own (`fixed`). A template adds about half a clip's length to its render, so keep a built-in style
+for live runs on a machine that is also recording. Remotion's licence is free for teams of up to three
+people; see `remotion/README.md` for that, the templates, every setting and how they are tested.
 
 ## Approve and publish
 

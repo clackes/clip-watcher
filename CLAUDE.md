@@ -20,6 +20,8 @@ renders a branded 9:16 Short + clean 16:9 clip, stages them in a Telegram approv
 ```
 python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q            # -m "not ffmpeg" to skip render tests; 2 tests skip without numpy / streamlink
+                               # -m "not remotion" leaves out the caption frame tests (they run only where
+                               # remotion/ is set up, and take minutes)
 .venv/bin/ruff check . && .venv/bin/ruff format --check .
 ```
 
@@ -199,7 +201,18 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   in work/ui/profiles/ and the pictures by the hash of their address, and the page loads them from the app
   only (https on static-cdn.jtvnw.net and files.kick.com, PNG/JPEG/GIF/WebP by their first bytes, 2 MB at
   most; a failed lookup keeps the last profile and is tried again after ten minutes). Kick has no picture
-  for "verified": the page draws that tick. Checked 20 Nov through the page on real streams: two live runs (kaicenat, clix) with a
+  for "verified": the page draws that tick. The caption library (D19): the Captions step and a clip's
+  own settings share one picker; the chosen style plays on a stand-in Short, the shelf holds all 29
+  (four built in, 25 animated) and Fine-tune opens every parameter of the template (text, phrases,
+  timing, colours, motion, effects), each change played back. `ui/captions.py` reads what can be set
+  and within what limits from the template's own schema in remotion/src (which stays the authority),
+  refuses a value outside them or colours under the contrast floor, and makes each preview once
+  (work/ui/captions/, named by what it shows; a padded render says when the words leave their room).
+  "Use for new clips" writes `render.captions`, `render.rm.colors` and this machine's own version of
+  the template (`render.rm.templates.<name>`) to config/local.yaml; a clip rendered again keeps its
+  template, colour mode and settings in meta (caption_colors, caption_settings), and a template that
+  cannot be rendered leaves the clip as it was. Without the Node setup the animated ones say what to
+  run. Checked 20 Nov through the page on real streams: two live runs (kaicenat, clix) with a
   forced clip each, staged and played in the page; a Short rendered again with another caption style; a
   render stopped midway (the clip kept its video).
 - D18 The webcam is read from the picture (owner, 19 Nov: verify adversarially, on many streams and frame
@@ -238,6 +251,38 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   too tight inside a drawn frame (2). Detection needs a face detector: mediapipe with
   models/blaze_face_short_range.tflite (README), else OpenCV; without one the configured default scene is
   used and the companion app says so on the step.
+- D19 Animated caption templates (owner, 19-20 Nov: brand-new, highly styled, animated templates rendered
+  with Remotion, tested frame by frame with no imperfection, an auto colour mode with high-attention
+  colours and perfect contrast on the clip under them; and, said to the build directly: up to 25
+  templates, every parameter set and open to settings, all totally different from each other, very smooth
+  at the video's frame rate, brand-new animations tested like the templates, the only emoji Apple's).
+  `render.captions: rm:<template>` picks one of 25 (the table is in remotion/README.md); every parameter
+  of a template is in remotion/templates/<name>.json and `render.rm.templates.<name>` overrides any of
+  them. The built-in styles stay the default (`word`) and the fallback (`render.rm.fallback`) whenever
+  Node, the setup or a render is missing or fails: captions never cost a clip, and meta.captions is what
+  went on the video (meta.captions_error says why after a fallback). How: Python plans phrases and timing
+  (`render/rm_plan.py`) and picks colours (`render/palette.py`), Node renders transparent PNGs of the
+  caption band only, at the clip's own frame rate (`render.rm.max_fps` 60), and ffmpeg blends the band
+  in 4:4:4 (`render/remotion.py`). Text is the font's own outlines (browser text snaps to pixels, which
+  shows as judder); nothing fades, text is always opaque and enters and leaves by moving; a library of 25
+  named animations in five slots (enter, exit, active, emph, idle), of which `punch` is built, so each can
+  be swapped by name. Colours: WCAG contrast, a floor of 4.5:1 on every frame and 7:1 for every pair a
+  template ships with; `render.rm.colors: auto` samples the Short's own picture under each phrase and
+  takes, role by role, the first candidate that keeps the floor, is not a hue the picture is already full
+  of and is told apart from its neighbours; `fixed` keeps the template's own. Emoji: Apple Color Emoji
+  where the system has it (macOS), never bundled (not redistributable); anywhere else emoji are taken out
+  of the caption text. Checked by `render/framecheck.py` (tests marked `remotion`, skipped without the
+  setup): every frame at 30 and 60 fps against the plan (what is shown and when, ink inside the caption
+  box, no overlap, no jump, flash or single-frame element, the same motion at both rates, bundled fonts
+  only, identical renders, the ffmpeg composite within 2 levels, the contrast floor over white, black,
+  flashing, noise and stripes). Speed: about 13 s of caption rendering for 30 s of clip at 60 fps on eight
+  idle cores, so too slow for the live lane's minute on a machine that is recording: built-in styles
+  there, templates for VODs, or `max_fps: 30`. Setup once per machine: `cd remotion && npm ci && npm run
+  setup` (pinned packages, a headless browser, the bundle); nothing is fetched at render time. Licence:
+  Remotion is free for individuals and for companies of up to three people; a fourth person makes it a
+  paid company licence (remotion/README.md has the links). Known limits: specks of video a few pixels
+  across where two outlines almost meet (counted by the frame checks, not failed), emoji move in whole
+  pixels, script faces do not join.
 - D9 .ts seek bug: never `-ss` exact on MPEG-TS. Coarse input seek to max(0, START-6), then
   trim/atrim=start=TRIM in the graph, then setpts=PTS-STARTPTS. Regression test required. Commands that decode
   only the picture or only the sound (judge frames, transcript, loudness, reframe) go through
@@ -254,8 +299,15 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   `detect/baseline.py` `x_normal_series(messages, bucket_s) / x_normal_top(...)`.
 - `render/template.py` `render_short(src, start_s, dur_s, out, *, clip_id, streamer, words, hook,
   platform="youtube", style=None, accent=None, cam=None, game=None, has_webcam=True, profile="cpu_batch") -> Path`
+  (`captions=` a built-in style or `rm:<template>`, `report=` a dict filled with the style the Short got)
   and `render_clean(src, start_s, dur_s, out, *, profile="cpu_batch") -> Path`. `render/captions.py` ASS writer.
   CLI `python -m clipwatcher.render`.
+- `render/remotion.py` (D19) `templates()`, `load_template(name, overrides=None)`, `missing() -> str | None`,
+  `available()`, `render_overlay(words, dur_s, template, out_dir, *, box, fps, ...) -> Overlay | None`,
+  `overriding(values)` (render.rm for the renders inside the block), `RemotionError`. `render/rm_plan.py`
+  `plan(words, dur_s, params, *, box_w, box_h, ...) -> Plan`; `render/palette.py` `contrast(a, b)`,
+  `auto_colors(...)`, `PALETTE`; `render/framecheck.py` the frame-by-frame checks
+  (`python -m clipwatcher.render.framecheck`).
 - `judge/transcribe.py` `transcribe(media, start_s, dur_s, language) -> list[Word]` (faster-whisper optional).
   `judge/frames.py` `keyframes(media, start_s, dur_s, n=6, height=480) -> list[Path]`.
   `judge/claude.py` `screen(...)` (legacy), `judge_candidate(cand, words, chat_lines, frames, *, title, game,
@@ -293,6 +345,8 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   `runs.command(kind, params) -> list[str]` (tests | live | vod | render), `runs.RunManager(root=None)`
   `.start(kind, params) -> Run`, `.stop(id)`, `.force(id, seconds)`, `.history()`; `data.clips() / clip(id) /
   media_path(id, name) / overview() / insights()`; `settings.schema()`, `settings.save(values, merge=False)`;
-  `jobs.rerender(clip_id, captions=None, layout=None, root=None) -> Path`.
+  `jobs.rerender(clip_id, captions=None, layout=None, root=None, *, colors=None, settings=None) -> Path`.
+  `captions.library()`, `styles()`, `fields(style)`, `check(style, values) -> overrides`,
+  `preview(style, values=None, root=None) -> {"file", "warnings"}`, `warm()`.
   `profiles.Profiles(root=None)` `.get(platform, login) -> dict`, `.many([(platform, login)])`,
   `.image(image_id) -> (Path, content type) | None`.

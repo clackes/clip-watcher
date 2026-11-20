@@ -53,8 +53,13 @@ Status (17 Nov 2026, night). Handoff and next steps: docs/HANDOFF.md.
 - Companion app (20 Nov, D17): `python -m clipwatcher.ui --open`. Runs the live lane, the VOD lane and the
   tests from one page with live progress; staged clips with their score make-up and per-video caption
   settings (render again); speed, judge cost, judge decisions and detector charts; settings saved for this
-  machine in config/local.yaml. To come with it: the new Remotion caption templates in its library once
-  that branch is merged, and real judge numbers once an API key is set (the cost page estimates until then).
+  machine in config/local.yaml. To come with it: real judge numbers once an API key is set (the cost page
+  estimates until then).
+- Animated captions (20 Nov, D19): 25 Remotion templates as `rm:<template>` caption styles, the built-in
+  styles as default and fallback; in the companion app's library with live previews, every parameter of a
+  template to fine-tune, and per-video template, colours and settings. Needs `npm ci && npm run setup` in
+  remotion/ once per machine. To decide: templates in the live lane (about half a clip's length of extra
+  render) and the Remotion company licence if the team grows past three.
 - Next: ANTHROPIC_API_KEY -> `scripts/judge_cost_benchmark.py BENCH --exact` and real judge calls on staged
   clips (until then the hook is the heuristic), publishing (YouTube/IG creds; DRY_RUN=1), viewer-clip
   confirmation with Twitch credentials, minik's language.
