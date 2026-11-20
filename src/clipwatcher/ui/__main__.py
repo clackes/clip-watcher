@@ -7,9 +7,16 @@ import sys
 import threading
 import webbrowser
 
-from clipwatcher import config
-from clipwatcher.ui import captions
-from clipwatcher.ui.server import make_server
+from clipwatcher.ui import keys
+
+if __name__ == "__main__":
+    # the project's credential file (.env), read before anything looks at the environment: what the
+    # environment already sets wins, and the runs started from the app inherit the rest
+    keys.load_env()
+
+from clipwatcher import config  # noqa: E402
+from clipwatcher.ui import captions, connect  # noqa: E402
+from clipwatcher.ui.server import make_server  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -42,6 +49,7 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         pass
     finally:
+        connect.shutdown(app)  # a Chrome window opened for a sign-in is closed with the app
         active = app.manager.active()
         if active is not None:
             app.manager.stop(active.id)
