@@ -1,1 +1,93 @@
 /* The Library place. Tokens and shared components are in app.css. */
+
+/* marks on the tiles of every shelf: yours, edited here, in use for new clips */
+.capvid{display:contents}
+.capmarks{position:absolute;z-index:1;inset:5px 5px auto 5px;display:flex;gap:4px;pointer-events:none}
+.capmark{display:inline-flex;align-items:center;gap:3px;padding:1px 7px;border-radius:999px;font:600 .66rem/1.5 var(--font);letter-spacing:0;color:var(--strong);background:rgb(8 8 15 / .8);box-shadow:inset 0 0 0 1px var(--border-strong);white-space:nowrap}
+.capmark.own{background:var(--grad);box-shadow:0 2px 8px rgb(0 0 0 / .35);text-shadow:0 1px 4px rgb(17 17 28 / .45)}
+.capmark.use{margin-left:auto;background:var(--live);color:#06210f;box-shadow:0 2px 8px rgb(0 0 0 / .35)}
+.capmark .ic{font-size:.8rem}
+.capnone{grid-column:1 / -1;flex:1 0 100%;padding-block:clamp(20px,4vw,40px);border-radius:var(--r-lg);background:var(--glass-weak);box-shadow:inset 0 0 0 1px var(--border)}
+.capnone span{max-width:46ch}
+
+.capinfo .field .seg{justify-self:start}
+
+/* a template's settings, one group at a time */
+.capgroups{gap:8px}
+.capgroups .chip i{font-style:normal;font-size:.68rem;font-weight:700;min-width:18px;height:18px;padding:0 5px;border-radius:9px;display:inline-grid;place-items:center;background:var(--pink);color:#11111c}
+.capgroups .chip i:empty{display:none}
+.capgroup{display:grid;gap:18px;padding:clamp(16px,2vw,24px);border-radius:var(--r-lg);background:linear-gradient(180deg,rgb(28 28 40 / .92),rgb(17 17 28 / .92));box-shadow:inset 0 0 0 1px var(--border-strong),var(--shadow-card);animation:rise .45s var(--ease) both}
+.capgroup .tunehead small{display:block;margin-top:2px}
+.capgroup .actions{margin-top:4px}
+
+/* the Library's own screens: laid out like the steps of a run (.stepbox), under a name of their own
+   because the Run view shows and hides every .stepbox on the page */
+.libbox{display:grid;grid-template-columns:minmax(0,1fr);gap:clamp(18px,2.4vw,30px)}
+.libbox.out{animation:leave .2s var(--inout) both}
+
+/* home: the stage across the page, the shelf under it */
+.caplib.page .capstage{grid-template-columns:auto minmax(0,1fr);grid-template-areas:"phone info" "bar bar" "shelf shelf";align-items:center;row-gap:clamp(18px,2.4vw,28px)}
+.caplib.page .capside{display:contents}
+.caplib.page .capphone{grid-area:phone;z-index:1;scroll-margin-top:110px;width:clamp(210px,24vw,290px);transform:perspective(1100px) rotateX(var(--rx,3deg)) rotateY(var(--ry,-9deg));transition:transform .6s var(--ease)}
+.caplib.page .capstage::before{content:"";grid-area:phone;place-self:center;width:86%;aspect-ratio:1;border-radius:50%;background:var(--grad);filter:blur(64px);opacity:.34;pointer-events:none}
+.caplib.page .capinfo{grid-area:info;gap:14px}
+.caplib.page .capinfo h2{font-size:clamp(2rem,4vw,3.4rem)}
+.caplib.page .capinfo p{font-size:1.05rem}
+.caplib.page .captune{display:none}
+.caplib.page .capbar{grid-area:bar}
+.caplib.page .capshelf{grid-area:shelf;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.caplib.page .btn{--h:54px}
+#libNeeds{padding:14px 18px;border-radius:var(--r-lg);background:var(--glass-weak);box-shadow:inset 0 0 0 1px rgb(246 179 86 / .4)}
+.libhow{margin-top:8px}.libhow summary{cursor:pointer;color:var(--soft);font-weight:500;width:fit-content}
+#libLead .btn{margin-left:8px;vertical-align:middle}
+
+/* make it yours: the phone beside the settings */
+.libed{display:grid;grid-template-columns:auto minmax(0,1fr);gap:clamp(18px,3vw,44px);align-items:start}
+.libslot{display:contents}
+.libed .capphone{position:sticky;top:96px;width:clamp(200px,23vw,280px)}
+.libside{display:grid;gap:16px;min-width:0}
+.libstate{gap:10px}
+.libstate .badge{margin-right:auto}
+#lmRows{scroll-margin-top:100px}
+#lmHead{display:grid;gap:6px;min-width:0;justify-items:start}
+#lmHeadActs{flex-basis:100%}#lmHeadActs:empty{display:none}
+.librename{display:flex;flex-wrap:wrap;gap:10px;align-items:center;width:min(100%,640px)}
+.librename input{flex:1 1 240px;height:58px;font-size:1.5rem;font-weight:600;letter-spacing:-.03em}
+.libbar{gap:12px 18px;padding:14px 18px}
+.libbar .row{margin-left:auto}
+.libbar.asking{box-shadow:inset 0 0 0 1px rgb(246 179 86 / .55),var(--shadow-panel)}
+.libask{flex:1 1 320px;font-weight:500;color:var(--strong)}
+#lmBar.actions{margin-top:4px}
+
+/* name it, saved */
+.libname{display:grid;grid-template-columns:auto minmax(0,1fr);gap:clamp(18px,3vw,44px);align-items:center}
+.libname .capphone{width:clamp(170px,18vw,220px)}
+.libnamebox{display:grid;gap:16px}
+#lmDone .badge{justify-self:start}
+.libnamebox input{height:68px;font-size:clamp(1.3rem,1rem + 1.4vw,1.9rem);font-weight:600;letter-spacing:-.03em;padding:0 18px;border-radius:var(--r-md)}
+.libnamebox .lead{font-size:1rem}
+#lmDone h2{font-size:clamp(1.6rem,1.2rem + 1.8vw,2.6rem)}
+
+@media (max-width:760px){
+  .caplib.page .capstage{grid-template-columns:minmax(0,1fr);grid-template-areas:"bar" "shelf" "phone" "info";align-items:start}
+  .caplib.page .capphone{justify-self:center;width:min(230px,62vw);transform:none}
+  .caplib.page .capshelf{display:flex}
+  .caplib.page .captile{flex:0 0 150px}
+  .libed{grid-template-columns:minmax(0,1fr)}
+  .libed .capphone{top:68px;z-index:6;width:100%;aspect-ratio:18/6;border-radius:18px}
+  .libed .capphone video{object-position:50% 46%}
+  #lmRows{scroll-margin-top:220px}
+  .libstate{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+  .libstate .badge{grid-column:1 / -1;justify-self:start}
+  .libstate .btn{padding-inline:8px}
+  .libname{grid-template-columns:minmax(0,1fr)}
+  .libname .capphone{justify-self:center;width:min(170px,46vw)}
+  .libname>.libnamebox,.libname>.result{order:-1}
+  /* on a phone the bar waits under the settings: stuck to the screen it would hide them */
+  .libbar:not(.asking){position:static;background:var(--glass-weak);box-shadow:inset 0 0 0 1px var(--border);backdrop-filter:none}
+  .libbar .row{margin-left:0;width:100%}
+  .libbar .btn{flex:1 1 auto}
+  .libbar:not(.asking) .btn-primary{flex-basis:100%}
+  .vhead #libNew{width:100%}
+}
+@media (prefers-reduced-motion:reduce){.caplib.page .capphone{transform:none}.capgroup{animation:none}}

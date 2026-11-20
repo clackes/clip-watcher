@@ -135,31 +135,114 @@ function paintSource() {
   }
 }
 /* ---------- the caption library ----------
-   Every style a Short can get: four built in, the rest animated templates. One is on the stage, playing
-   on a stand-in Short; the shelf holds them all; "Fine-tune" opens the template's own settings and each
-   change plays on the stage. The clips are made by the server, once each, then kept. */
+   Every style a Short can get: four built in, the animated templates that ship and the ones made in the
+   Library (library.js). One is on the stage, playing on a stand-in Short; the shelf holds them all, each
+   marked when it is yours, edited here or in use for new clips. A clip's own settings open the template's
+   parameters ("Fine-tune") and each change plays on the stage; the Library edits and keeps templates
+   with the same pieces. The clips are made by the server, once per look, then kept. */
 const PREV = {}, prevQueue = []; let prevBusy = 0;
-function previewOf(style, settings) {
-  const tuned = settings && Object.keys(settings).length, key = style + (tuned ? JSON.stringify(settings) : '');
-  if (!PREV[key]) PREV[key] = new Promise((res, rej) => { prevQueue[tuned ? 'unshift' : 'push']({ style, settings: tuned ? settings : null, res, rej, key }); pumpPrev(); });
+/* whole: the settings are everything that differs from the template as it shipped (how the Library holds
+   a template), not a change to what is in force on this machine */
+function previewOf(style, settings, whole) {
+  const tuned = settings && Object.keys(settings).length, key = style + (whole ? '|whole' : '') + (tuned ? JSON.stringify(settings) : '');
+  if (!PREV[key]) PREV[key] = new Promise((res, rej) => { prevQueue[tuned || whole ? 'unshift' : 'push']({ style, settings: tuned ? settings : null, whole: !!whole, res, rej, key }); pumpPrev(); });
   return PREV[key];
 }
 function pumpPrev() {
   while (prevBusy < 2 && prevQueue.length) {
     const q = prevQueue.shift(); prevBusy++;
-    api.post('/api/captions/preview', { style: q.style, settings: q.settings }).then(q.res, err => { delete PREV[q.key]; q.rej(err); }).finally(() => { prevBusy--; pumpPrev(); });
+    api.post(q.whole ? '/api/library/preview' : '/api/captions/preview', { style: q.style, settings: q.settings, whole: q.whole }).then(q.res, err => { delete PREV[q.key]; q.rej(err); }).finally(() => { prevBusy--; pumpPrev(); });
   }
 }
+const capForget = () => { for (const k in PREV) delete PREV[k]; };  // a template changed: its clips are asked for again
 const sameV = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const capOf = id => (S.ov ? S.ov.captions : []).find(x => x.id === id);
 const capName = id => { const c = capOf(id); return c ? c.name : id || 'none'; };
 const decimals = step => step >= 1 ? 0 : step >= .1 ? 1 : 2;
+const GROUP_ABOUT = { text: 'How big the words are and how they sit.', paging: 'How many words show at once, and for how long.', timing: 'How fast things arrive, light up and leave.', colors: 'The colours of the words, their outline and the highlights.', motion: 'How a phrase arrives, leaves and reacts to the voice.', fx: 'What makes this template look like itself.', label: 'The labels that pop up between lines, like *FAIL*.', room: 'How much space the words keep around them.' };
+
+/* A template's settings as rows, every change handed on. All groups folded under each other (a clip's own
+   settings), or one group at a time with the others a tap away (o.one: the Library). o.settings holds
+   what differs from the value in force; whole() gives what differs from the template as it came. */
+function capFields(box, o) {
+  const F = o.fields, set = { ...(o.settings || {}) }; let gid = F.groups.some(g => g.id === o.group) ? o.group : (F.groups[0] || {}).id;
+  const fieldOf = path => { for (const g of F.groups) for (const f of g.fields) if (f.path === path) return f; };
+  const valOf = f => f.path in set ? set[f.path] : f.value;
+  const offOf = g => g.fields.filter(f => !sameV(valOf(f), f.own)).length;
+  const me = {
+    settings: () => ({ ...set }), count: () => Object.keys(set).length, group: () => gid,
+    whole() { const out = {}; F.groups.forEach(g => g.fields.forEach(f => { const v = valOf(f); if (!sameV(v, f.own)) out[f.path] = v; })); return out; },
+    undo() { for (const k in set) delete set[k]; paint(); tell(); },
+    asCame() { for (const k in set) delete set[k]; F.groups.forEach(g => g.fields.forEach(f => { if (!sameV(f.value, f.own)) set[f.path] = f.own; })); paint(); tell(); },
+  };
+  const tell = () => { if (o.onChange) o.onChange(me); };
+  function setVal(f, v) { if (sameV(v, f.value)) delete set[f.path]; else set[f.path] = v; const row = $(`[data-p="${CSS.escape(f.path)}"]`, box); if (row) row.classList.toggle('changed', !sameV(v, f.own)); marks(); tell(); }
+  const numRow = (id, label, f, v, help) => { const max = f.max != null ? f.max : f.soft_max, d = decimals(f.step || .01); return `<div class="cfg-row${sameV(v, f.own) ? '' : ' changed'}" data-p="${esc(id)}"><label>${esc(label)}</label><input type="range" min="${f.min != null ? f.min : 0}" max="${Math.max(max, v)}" step="${f.step || .01}" value="${v}" aria-label="${esc(label)}"><output>${(+v).toFixed(d)}</output>${help ? `<small>${esc(help)}</small>` : ''}</div>`; };
+  function rowHTML(f) {
+    const v = valOf(f), ch = sameV(v, f.own) ? '' : ' changed';
+    if (f.kind === 'number') return numRow(f.path, f.label, f, v, f.help);
+    if (f.kind === 'select') return `<div class="cfg-row${ch}" data-p="${esc(f.path)}"><label>${esc(f.label)}</label><select aria-label="${esc(f.label)}">${f.options.map(x => `<option value="${esc(x.id)}"${x.id === v ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select><output></output>${f.help ? `<small>${esc(f.help)}</small>` : ''}</div>`;
+    if (f.kind === 'color') return `<div class="cfg-row${ch}" data-p="${esc(f.path)}"><label>${esc(f.label)}</label><input type="color" value="${esc(String(v).toLowerCase())}" aria-label="${esc(f.label)}"><output>${esc(String(v).toUpperCase())}</output>${f.help ? `<small>${esc(f.help)}</small>` : ''}</div>`;
+    if (f.kind === 'colors') return `<div class="cfg-row wide${ch}" data-p="${esc(f.path)}"><label>${esc(f.label)}</label><div class="swatches">${v.map((x, i) => `<input type="color" value="${esc(String(x).toLowerCase())}" data-i="${i}" aria-label="${esc(f.label)} ${i + 1}">`).join('')}${v.length < (f.max || 8) ? '<button type="button" class="chip" data-sw="add">Add</button>' : ''}${v.length > 1 ? '<button type="button" class="chip" data-sw="less">Remove</button>' : ''}</div>${f.help ? `<small>${esc(f.help)}</small>` : ''}</div>`;
+    const a = v && f.choices.find(x => x.id === v.name), units = a && a.units.length > 1 ? a.units : [];
+    return `<div class="motion${ch}" data-p="${esc(f.path)}"><div class="cfg-row"><label>${esc(f.label)}</label><select data-m="name" aria-label="${esc(f.label)}">${f.optional ? `<option value=""${v ? '' : ' selected'}>Holds still</option>` : ''}${f.choices.map(x => `<option value="${esc(x.id)}"${v && x.id === v.name ? ' selected' : ''}>${esc(x.id[0].toUpperCase() + x.id.slice(1))}</option>`).join('')}</select><output></output><small>${esc(a ? a.about : 'Nothing moves while it waits.')}</small></div>
+      ${units.length ? `<div class="cfg-row"><label>Takes its turn</label><select data-m="by" aria-label="${esc(f.label)}: takes its turn">${units.map(u => `<option value="${u}"${u === (v.by || 'page') ? ' selected' : ''}>${esc(F.units[u] || u)}</option>`).join('')}</select><output></output></div>` : ''}
+      ${a ? Object.entries(a.params).map(([k, p]) => { const pv = v.params && v.params[k] != null ? v.params[k] : p.default, span = p.max - p.min; return numRow(f.path + '#' + k, p.label || k, { ...p, step: span > 100 ? 1 : span > 30 ? .5 : span > 6 ? .1 : .01, own: p.default }, pv, ''); }).join('') : ''}</div>`;
+  }
+  const count = g => `${g.fields.length} ${g.fields.length === 1 ? 'setting' : 'settings'}`;
+  function paint() {
+    if (!o.one) {
+      box.innerHTML = `<div class="accs">${F.groups.map((g, i) => `<details class="acc slim"${i === 0 ? ' open' : ''}><summary><span><b>${esc(g.title)}</b><small>${count(g)}</small></span></summary><div class="cfg">${g.fields.map(rowHTML).join('')}</div></details>`).join('')}</div>`;
+      $$('.acc', box).forEach(d => d.addEventListener('toggle', () => { if (d.open) $$('.acc', box).forEach(x => { if (x !== d) x.open = false; }); }));
+      return;
+    }
+    const i = Math.max(0, F.groups.findIndex(g => g.id === gid)), g = F.groups[i], prev = F.groups[i - 1], next = F.groups[i + 1];
+    box.innerHTML = `<div class="row capgroups">${F.groups.map(x => `<button type="button" class="chip" data-g="${esc(x.id)}" aria-pressed="${x.id === g.id}">${esc(x.title)}<i></i></button>`).join('')}</div>
+      <div class="capgroup"><div class="tunehead"><div><b>${esc(g.title)}</b><small class="cap-note">${esc(GROUP_ABOUT[g.id] || count(g))}</small></div><span class="cap-note num">${i + 1} of ${F.groups.length}</span></div>
+        <div class="cfg">${g.fields.map(rowHTML).join('')}</div>
+        <div class="actions">${prev ? `<button type="button" class="btn btn-glass btn-sm" data-g="${esc(prev.id)}">Back to ${esc(prev.title)}</button>` : '<span></span>'}${next ? `<button type="button" class="btn btn-glass btn-sm" data-g="${esc(next.id)}">Next: ${esc(next.title)}</button>` : ''}</div></div>`;
+    marks();
+  }
+  /* on each group's chip: how many of its settings are not as the template came */
+  function marks() { if (o.one) $$('.capgroups .chip', box).forEach(b => { const g = F.groups.find(x => x.id === b.dataset.g), n = g ? offOf(g) : 0; b.lastElementChild.textContent = n || ''; b.title = n ? `${n} ${n === 1 ? 'setting is' : 'settings are'} not as the template came` : ''; }); }
+  function redraw(f) { const el = $(`[data-p="${CSS.escape(f.path)}"]`, box); if (el) el.outerHTML = rowHTML(f); }
+  box.addEventListener('input', e => {
+    const t = e.target, row = t.closest('[data-p]'); if (!row) return; const path = row.dataset.p, [fp, sub] = path.split('#'), f = fieldOf(fp); if (!f) return;
+    if (sub) { const v = JSON.parse(JSON.stringify(valOf(f))); v.params = { ...(v.params || {}), [sub]: +t.value }; row.querySelector('output').textContent = (+t.value).toFixed(decimals(+t.step)); row.classList.add('changed'); return setVal(f, v); }
+    if (f.kind === 'number') { row.querySelector('output').textContent = (+t.value).toFixed(decimals(f.step)); return setVal(f, f.whole ? Math.round(+t.value) : +t.value); }
+    if (f.kind === 'color') { row.querySelector('output').textContent = t.value.toUpperCase(); return setVal(f, t.value.toUpperCase()); }
+    if (f.kind === 'colors' && t.dataset.i != null) { const v = [...valOf(f)]; v[+t.dataset.i] = t.value.toUpperCase(); return setVal(f, v); }
+  });
+  box.addEventListener('change', e => {
+    const t = e.target, row = t.closest('[data-p]'); if (!row || t.tagName !== 'SELECT') return; const f = fieldOf(row.dataset.p.split('#')[0]); if (!f) return;
+    if (f.kind === 'select') return setVal(f, t.value);
+    if (f.kind !== 'motion') return;
+    const old = valOf(f); let v = null;
+    if (t.dataset.m === 'by') v = { ...old, by: t.value };
+    else if (t.value) { const a = f.choices.find(x => x.id === t.value), by = a.units.length ? (a.units.includes(old && old.by) ? old.by : a.units[0]) : null; v = { name: a.id, params: Object.fromEntries(Object.entries(a.params).map(([k, p]) => [k, p.default])) }; if (by) v.by = by; }
+    setVal(f, v); redraw(f);
+  });
+  box.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.g) { gid = b.dataset.g; paint(); if (!b.classList.contains('chip')) box.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' }); if (o.onGroup) o.onGroup(gid); return; }
+    if (b.dataset.sw) { const row = b.closest('[data-p]'), f = fieldOf(row.dataset.p), v = [...valOf(f)]; if (b.dataset.sw === 'add') v.push(v[v.length - 1]); else v.pop(); setVal(f, v); redraw(f); }
+  });
+  paint();
+  return me;
+}
+
+const CAPS = [];  // the pickers on the page: each is told when the style of new clips changes
+/* o: style, colors, settings (what the picker starts on); primary { label(s), disabled(s), run(s, c) };
+   more(s, c) -> other buttons [{ label, run, kind }]; note(s, c); tune: false leaves "Fine-tune" out;
+   compact (a drawer), page (the stage across the page, the shelf under it); only(c) narrows the shelf;
+   filters and always (filters shown even when nothing is in them); colours: false hides the colour mode;
+   follow: the picker moves to the style of new clips when that changes; empty(filter) -> html. */
 function capLib(root, o) {
-  const st = { style: o.style, colors: o.colors || 'auto', settings: { ...(o.settings || {}) }, filter: 'all', fields: null, tune: false, seq: 0, err: '' };
-  const lib = () => (S.ov ? S.ov.captions : []), info = () => (S.ov && S.ov.caption_library) || {};
-  const cur = () => capOf(st.style) || lib()[0] || { id: 'word', name: 'Word', about: '', kind: 'built-in' };
+  const st = { style: o.style, colors: o.colors || 'auto', settings: { ...(o.settings || {}) }, filter: 'all', fields: null, tune: false, seq: 0, err: '', more: [] };
+  const lib = () => (S.ov ? S.ov.captions : []).filter(c => !o.only || o.only(c)), info = () => (S.ov && S.ov.caption_library) || {};
+  const cur = () => { const all = lib(); return all.find(c => c.id === st.style) || all.find(c => c.id === S.ov.caption_default) || all[0] || { id: 'word', name: 'Word', about: '', kind: 'built-in' }; };
   const animated = () => cur().kind === 'animated', blocked = c => c.kind === 'animated' && !info().ready;
-  root.className = 'caplib' + (o.compact ? ' compact' : '');
+  root.className = 'caplib' + (o.compact ? ' compact' : '') + (o.page ? ' page' : '');
   root.innerHTML = `<div class="capstage">
       <div class="capphone"><video muted loop playsinline preload="auto" aria-label="How the captions move"></video><div class="capwait" hidden><i></i><span></span></div></div>
       <div class="capside"><div class="capinfo"><span class="eyebrow" data-r="meta"></span><h2 data-r="name"></h2><p data-r="about"></p>
@@ -185,119 +268,104 @@ function capLib(root, o) {
   }
   function paintWarn(list) { const el = R$('warn'), all = [...(st.err ? [st.err] : []), ...list]; el.hidden = !all.length; el.textContent = all.join(' '); }
   function paintStage() {
-    const c = cur(), lb = info();
-    R$('meta').textContent = c.kind === 'animated' ? `Animated · ${c.font}${c.words ? ' · ' + (c.words === 1 ? 'one word' : 'up to ' + c.words + ' words') + ' at a time' : ''}${c.tuned ? ' · with your settings' : ''}` : 'Built in · Anton';
+    const c = cur(), lb = info(), how = c.words ? (c.words === 1 ? 'one word' : 'up to ' + c.words + ' words') + ' at a time' : '';
+    R$('meta').textContent = c.kind === 'animated' ? [c.own ? 'Yours · made from ' + c.base_name : 'Animated', c.font, how, c.tuned ? 'with your changes' : ''].filter(Boolean).join(' · ') : 'Built in · Anton';
     R$('name').textContent = c.name; R$('about').textContent = c.about;
-    R$('colbox').hidden = c.kind !== 'animated' || blocked(c);
+    R$('colbox').hidden = o.colours === false || c.kind !== 'animated' || blocked(c);
     seg(R$('colors'), [['auto', 'Picked for each video'], ['fixed', 'The template\'s own']], st.colors, v => { st.colors = v; paintCol(); changed(); }); paintCol();
-    if (blocked(c)) { R$('about').innerHTML = `${esc(c.about)}<br><br><span class="cap-note">The animated templates are rendered with Node. Run this once on this machine, then reload the page:</span><br><code class="cmd">${esc(lb.setup || '')}</code><br><span class="cap-note">${esc(lb.missing || '')}</span>`; }
+    if (blocked(c) && o.page) R$('about').innerHTML = `${esc(c.about)}<br><br><span class="cap-note">It plays here once the animated templates are set up on this machine: the note at the top of the page says how.</span>`;
+    else if (blocked(c)) { R$('about').innerHTML = `${esc(c.about)}<br><br><span class="cap-note">The animated templates are rendered with Node. Run this once on this machine, then reload the page:</span><br><code class="cmd">${esc(lb.setup || '')}</code><br><span class="cap-note">${esc(lb.missing || '')}</span>`; }
     paintActs();
   }
   function paintCol() { R$('colnote').textContent = st.colors === 'auto' ? 'For every phrase the video under it is looked at: a highlight that is not already in the picture, always readable (at least 4.5 to 1). The preview shows the template\'s own colours.' : 'The colours you see here, on every video.'; }
   function paintActs() {
-    const c = cur(), s = state(), p = o.primary, off = blocked(c) || !!st.err || (p.disabled && p.disabled(s));
-    R$('acts').innerHTML = `<button type="button" class="btn btn-primary" data-a="go"${off ? ' disabled' : ''}>${esc(p.label(s))}</button>` + (c.kind === 'animated' && !blocked(c) ? `<button type="button" class="btn btn-glass" data-a="tune" aria-expanded="${st.tune}">${st.tune ? 'Close the settings' : 'Fine-tune'}</button>` : '') + (o.note ? `<small class="cap-note">${esc(o.note(s))}</small>` : '');
+    const c = cur(), s = state(), p = o.primary, off = blocked(c) || !!st.err, note = o.note ? o.note(s, c) : '';
+    st.more = o.more ? o.more(s, c) : [];
+    R$('acts').innerHTML = (p ? `<button type="button" class="btn btn-primary" data-a="go"${off || (p.disabled && p.disabled(s)) ? ' disabled' : ''}>${esc(p.label(s))}</button>` : '')
+      + (o.tune !== false && c.kind === 'animated' && !blocked(c) ? `<button type="button" class="btn btn-glass" data-a="tune" aria-expanded="${st.tune}">${st.tune ? 'Close the settings' : 'Fine-tune'}</button>` : '')
+      + st.more.map((m, i) => `<button type="button" class="btn ${m.kind === 'ghost' ? 'btn-ghost' : 'btn-glass'}" data-a="m${i}">${esc(m.label)}</button>`).join('')
+      + (note ? `<small class="cap-note">${esc(note)}</small>` : '');
   }
-  R$('acts').onclick = async e => { const b = e.target.closest('button'); if (!b) return;
-    if (b.dataset.a === 'tune') return tune(!st.tune);
-    b.disabled = true; try { await o.primary.run(state()); } catch (err) { toast(err.message); } paintActs(); };
+  R$('acts').onclick = async e => { const b = e.target.closest('button'); if (!b) return; const a = b.dataset.a;
+    if (a === 'tune') return tune(!st.tune);
+    const run = a === 'go' ? o.primary.run : st.more[+a.slice(1)].run;
+    b.disabled = true; try { await run(state(), cur()); } catch (err) { toast(err.message); } paintActs(); };
 
   /* the shelf */
-  function tileHTML(c) { return `<button type="button" class="captile${blocked(c) ? ' off' : ''}" data-id="${esc(c.id)}" aria-pressed="${c.id === st.style}" title="${esc(c.about)}"><span class="capband">${c.preview ? `<video muted loop playsinline preload="metadata" data-src="${esc(c.preview)}"></video>` : `<i>${esc(c.name)}</i>`}</span><b>${esc(c.name)}</b><small>${c.kind === 'animated' ? esc(c.font) : 'Built in'}</small></button>`; }
-  function paintTile(c) { const el = $(`.captile[data-id="${CSS.escape(c.id)}"]`, root); if (!el || !c.preview || $('video', el)) return; $('.capband', el).innerHTML = `<video muted loop playsinline preload="metadata" data-src="${esc(c.preview)}"></video>`; watch(el); }
+  const FILTERS = { all: () => true, own: c => c.own, tuned: c => c.tuned, animated: c => c.kind === 'animated', 'built-in': c => c.kind === 'built-in' }, FNAME = { all: 'All', own: 'Yours', tuned: 'Edited', animated: 'Animated', 'built-in': 'Built in' };
+  const marksHTML = c => (c.own ? '<span class="capmark own">Yours</span>' : c.tuned ? '<span class="capmark">Edited</span>' : '') + (S.ov && c.id === S.ov.caption_default ? `<span class="capmark use" title="In use for new clips">${ic('check')}In use</span>` : '');
+  const vidHTML = c => `<video muted loop playsinline preload="metadata" data-src="${esc(c.preview)}"></video>`;
+  function tileHTML(c) { return `<button type="button" class="captile${blocked(c) ? ' off' : ''}" data-id="${esc(c.id)}" aria-pressed="${c.id === cur().id}" title="${esc(c.about)}"><span class="capband"><span class="capvid">${c.preview ? vidHTML(c) : `<i>${esc(c.name)}</i>`}</span><span class="capmarks">${marksHTML(c)}</span></span><b>${esc(c.name)}</b><small>${c.kind === 'animated' ? esc(c.own ? 'From ' + c.base_name : c.font) : 'Built in'}</small></button>`; }
+  function paintTile(c) { const el = $(`.captile[data-id="${CSS.escape(c.id)}"]`, root); if (!el || !c.preview || $('video', el)) return; $('.capvid', el).innerHTML = vidHTML(c); watch(el); }
+  function paintMarks() { $$('.captile', root).forEach(el => { const c = capOf(el.dataset.id); if (c) $('.capmarks', el).innerHTML = marksHTML(c); el.setAttribute('aria-pressed', el.dataset.id === cur().id); }); }
   const seen = new IntersectionObserver(es => es.forEach(en => { if (!en.isIntersecting) return; const v = $('video', en.target), c = capOf(en.target.dataset.id); seen.unobserve(en.target);
     if (v && !v.src) { v.src = v.dataset.src; v.addEventListener('loadedmetadata', () => { v.currentTime = 1.62; }, { once: true }); }
     else if (!v && c && !blocked(c)) previewOf(c.id).then(r => { c.preview = r.url; paintTile(c); }, () => {}); }), { rootMargin: '120px' });
   function watch(el) { seen.observe(el); }
   function paintShelf() {
-    const all = lib(), rows = all.filter(c => st.filter === 'all' || c.kind === st.filter), n = k => all.filter(c => c.kind === k).length;
-    seg(R$('filter'), [['all', `All ${all.length}`], ['animated', `Animated ${n('animated')}`], ['built-in', `Built in ${n('built-in')}`]], st.filter, v => { st.filter = v; paintShelf(); });
+    const all = lib(), n = k => all.filter(FILTERS[k]).length, always = o.always || [];
+    const keys = (o.filters || ['all', 'own', 'animated', 'built-in']).filter(k => k === 'all' || always.includes(k) || n(k) > 0);
+    if (!keys.includes(st.filter)) st.filter = 'all';
+    seg(R$('filter'), keys.map(k => [k, `${FNAME[k]} ${n(k)}`]), st.filter, v => { st.filter = v; paintShelf(); }); R$('filter').hidden = keys.length < 2;
+    const rows = all.filter(FILTERS[st.filter]);
     R$('count').textContent = info().ready === false && n('animated') ? 'The animated ones need their one-time setup on this machine.' : '';
-    R$('shelf').innerHTML = rows.map(tileHTML).join(''); $$('.captile', root).forEach(watch);
+    const shelf = R$('shelf'); shelf.innerHTML = rows.length ? rows.map(tileHTML).join('') : `<div class="empty capnone">${(o.empty && o.empty(st.filter)) || '<b>Nothing here yet</b>'}</div>`; $$('.captile', root).forEach(watch);
+    const on = $('.captile[aria-pressed="true"]', shelf); if (on && shelf.scrollWidth > shelf.clientWidth) shelf.scrollLeft += on.getBoundingClientRect().left - shelf.getBoundingClientRect().left - 16;  // a shelf that scrolls sideways opens on the one picked
   }
   const hover = (e, on) => { const t = e.target.closest && e.target.closest('.captile'), v = t && $('video', t); if (!v || !v.src || reduce || t.contains(e.relatedTarget)) return; if (on) v.play().catch(() => {}); else { v.pause(); v.currentTime = 1.62; } };
   R$('shelf').addEventListener('pointerover', e => hover(e, true)); R$('shelf').addEventListener('pointerout', e => hover(e, false));
-  R$('shelf').onclick = e => { const b = e.target.closest('.captile'); if (!b || b.dataset.id === st.style) return; pick(b.dataset.id); };
-  function pick(id) { st.style = id; st.settings = {}; st.fields = null; $$('.captile', root).forEach(x => x.setAttribute('aria-pressed', x.dataset.id === id)); paintStage(); play(); if (st.tune) { if (animated() && !blocked(cur())) loadFields(); else tune(false); } changed(); }
+  R$('shelf').onclick = e => { const b = e.target.closest('.captile'); if (!b || b.dataset.id === st.style) return; pick(b.dataset.id);
+    if (o.page && matchMedia('(min-width:761px)').matches) video.parentElement.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'nearest' }); };  // the stage is above the shelf there
+  /* a template whose colours were set by hand is shown, and used, with those colours */
+  function pick(id) { const c = capOf(id); st.style = id; st.settings = {}; st.fields = null; if (c && c.colored) st.colors = 'fixed'; $$('.captile', root).forEach(x => x.setAttribute('aria-pressed', x.dataset.id === id)); paintStage(); play(); if (st.tune) { if (animated() && !blocked(cur())) loadFields(); else tune(false); } changed(); }
 
-  /* the template's own settings */
-  const fieldOf = path => { for (const g of st.fields.groups) for (const f of g.fields) if (f.path === path) return f; };
-  const valOf = f => f.path in st.settings ? st.settings[f.path] : f.value;
-  let later = 0;
-  function setVal(f, v) { if (sameV(v, f.value)) delete st.settings[f.path]; else st.settings[f.path] = v; const row = $(`[data-p="${CSS.escape(f.path)}"]`, root); if (row) row.classList.toggle('changed', !sameV(v, f.own)); clearTimeout(later); later = setTimeout(play, 450); paintTuneHead(); changed(); }
-  const numRow = (id, label, f, v, help) => { const max = f.max != null ? f.max : f.soft_max, d = decimals(f.step || .01); return `<div class="cfg-row${sameV(v, f.own) ? '' : ' changed'}" data-p="${esc(id)}"><label>${esc(label)}</label><input type="range" min="${f.min != null ? f.min : 0}" max="${Math.max(max, v)}" step="${f.step || .01}" value="${v}" aria-label="${esc(label)}"><output>${(+v).toFixed(d)}</output>${help ? `<small>${esc(help)}</small>` : ''}</div>`; };
-  function rowHTML(f) {
-    const v = valOf(f), ch = sameV(v, f.own) ? '' : ' changed';
-    if (f.kind === 'number') return numRow(f.path, f.label, f, v, f.help);
-    if (f.kind === 'select') return `<div class="cfg-row${ch}" data-p="${esc(f.path)}"><label>${esc(f.label)}</label><select aria-label="${esc(f.label)}">${f.options.map(x => `<option value="${esc(x.id)}"${x.id === v ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select><output></output>${f.help ? `<small>${esc(f.help)}</small>` : ''}</div>`;
-    if (f.kind === 'color') return `<div class="cfg-row${ch}" data-p="${esc(f.path)}"><label>${esc(f.label)}</label><input type="color" value="${esc(String(v).toLowerCase())}" aria-label="${esc(f.label)}"><output>${esc(String(v).toUpperCase())}</output>${f.help ? `<small>${esc(f.help)}</small>` : ''}</div>`;
-    if (f.kind === 'colors') return `<div class="cfg-row wide${ch}" data-p="${esc(f.path)}"><label>${esc(f.label)}</label><div class="swatches">${v.map((x, i) => `<input type="color" value="${esc(String(x).toLowerCase())}" data-i="${i}" aria-label="${esc(f.label)} ${i + 1}">`).join('')}${v.length < (f.max || 8) ? '<button type="button" class="chip" data-sw="add">Add</button>' : ''}${v.length > 1 ? '<button type="button" class="chip" data-sw="less">Remove</button>' : ''}</div>${f.help ? `<small>${esc(f.help)}</small>` : ''}</div>`;
-    const a = v && f.choices.find(x => x.id === v.name), units = a && a.units.length > 1 ? a.units : [];
-    return `<div class="motion${ch}" data-p="${esc(f.path)}"><div class="cfg-row"><label>${esc(f.label)}</label><select data-m="name" aria-label="${esc(f.label)}">${f.optional ? `<option value=""${v ? '' : ' selected'}>Holds still</option>` : ''}${f.choices.map(x => `<option value="${esc(x.id)}"${v && x.id === v.name ? ' selected' : ''}>${esc(x.id[0].toUpperCase() + x.id.slice(1))}</option>`).join('')}</select><output></output><small>${esc(a ? a.about : 'Nothing moves while it waits.')}</small></div>
-      ${units.length ? `<div class="cfg-row"><label>Takes its turn</label><select data-m="by" aria-label="${esc(f.label)}: takes its turn">${units.map(u => `<option value="${u}"${u === (v.by || 'page') ? ' selected' : ''}>${esc(st.fields.units[u] || u)}</option>`).join('')}</select><output></output></div>` : ''}
-      ${a ? Object.entries(a.params).map(([k, p]) => { const pv = v.params && v.params[k] != null ? v.params[k] : p.default, span = p.max - p.min; return numRow(f.path + '#' + k, p.label || k, { ...p, step: span > 100 ? 1 : span > 30 ? .5 : span > 6 ? .1 : .01, own: p.default }, pv, ''); }).join('') : ''}</div>`;
-  }
+  /* the template's own settings, for this video */
+  let ed = null, later = 0;
   function paintTuneHead() { const n = Object.keys(st.settings).length, h = $('.tunehead small', root); if (h) h.textContent = n ? `${n} ${n === 1 ? 'change' : 'changes'}, playing on the preview` : 'Move a setting and watch the preview.'; }
   function paintTune() {
-    const box = R$('tune'), f = st.fields; if (!f) { box.innerHTML = '<p class="cap-note">Loading the settings…</p>'; return; }
-    box.innerHTML = `<div class="tunehead"><div><b>Settings of ${esc(f.name)}</b><small class="cap-note"></small></div><div class="row"><button type="button" class="btn btn-glass btn-sm" data-t="undo">Undo my changes</button><button type="button" class="btn btn-glass btn-sm" data-t="own">As the template came</button></div></div>
-      <div class="accs">${f.groups.map((g, i) => `<details class="acc slim"${i === 0 ? ' open' : ''}><summary><span><b>${esc(g.title)}</b><small>${g.fields.length} ${g.fields.length === 1 ? 'setting' : 'settings'}</small></span></summary><div class="cfg">${g.fields.map(rowHTML).join('')}</div></details>`).join('')}</div>`;
+    const box = R$('tune'), f = st.fields; ed = null; if (!f) { box.innerHTML = '<p class="cap-note">Loading the settings…</p>'; return; }
+    box.innerHTML = `<div class="tunehead"><div><b>Settings of ${esc(f.name)}</b><small class="cap-note"></small></div><div class="row"><button type="button" class="btn btn-glass btn-sm" data-t="undo">Undo my changes</button><button type="button" class="btn btn-glass btn-sm" data-t="own">As the template came</button></div></div><div data-r="rows"></div>`;
+    ed = capFields(R$('rows'), { fields: f, settings: st.settings, onChange: x => { st.settings = x.settings(); clearTimeout(later); later = setTimeout(play, 450); paintTuneHead(); changed(); } });
     paintTuneHead();
-    $$('.acc', box).forEach(d => d.addEventListener('toggle', () => { if (d.open) $$('.acc', box).forEach(x => { if (x !== d) x.open = false; }); }));
   }
-  function redraw(f) { const el = $(`[data-p="${CSS.escape(f.path)}"]`, root); if (el) el.outerHTML = rowHTML(f); }
-  R$('tune').addEventListener('input', e => {
-    const t = e.target, row = t.closest('[data-p]'); if (!row) return; const path = row.dataset.p, [fp, sub] = path.split('#'), f = fieldOf(fp); if (!f) return;
-    if (sub) { const v = JSON.parse(JSON.stringify(valOf(f))); v.params = { ...(v.params || {}), [sub]: +t.value }; row.querySelector('output').textContent = (+t.value).toFixed(decimals(+t.step)); row.classList.add('changed'); return setVal(f, v); }
-    if (f.kind === 'number') { row.querySelector('output').textContent = (+t.value).toFixed(decimals(f.step)); return setVal(f, f.whole ? Math.round(+t.value) : +t.value); }
-    if (f.kind === 'color') { row.querySelector('output').textContent = t.value.toUpperCase(); return setVal(f, t.value.toUpperCase()); }
-    if (f.kind === 'colors' && t.dataset.i != null) { const v = [...valOf(f)]; v[+t.dataset.i] = t.value.toUpperCase(); return setVal(f, v); }
-  });
-  R$('tune').addEventListener('change', e => {
-    const t = e.target, row = t.closest('[data-p]'); if (!row || t.tagName !== 'SELECT') return; const f = fieldOf(row.dataset.p.split('#')[0]); if (!f) return;
-    if (f.kind === 'select') return setVal(f, t.value);
-    if (f.kind !== 'motion') return;
-    const old = valOf(f); let v = null;
-    if (t.dataset.m === 'by') v = { ...old, by: t.value };
-    else if (t.value) { const a = f.choices.find(x => x.id === t.value), by = a.units.length ? (a.units.includes(old && old.by) ? old.by : a.units[0]) : null; v = { name: a.id, params: Object.fromEntries(Object.entries(a.params).map(([k, p]) => [k, p.default])) }; if (by) v.by = by; }
-    setVal(f, v); redraw(f);
-  });
-  R$('tune').addEventListener('click', e => {
-    const b = e.target.closest('button'); if (!b) return;
-    if (b.dataset.sw) { const row = b.closest('[data-p]'), f = fieldOf(row.dataset.p), v = [...valOf(f)]; if (b.dataset.sw === 'add') v.push(v[v.length - 1]); else v.pop(); setVal(f, v); return redraw(f); }
-    if (b.dataset.t === 'undo') { st.settings = {}; paintTune(); play(); return changed(); }
-    if (b.dataset.t === 'own') { st.settings = {}; st.fields.groups.forEach(g => g.fields.forEach(f => { if (!sameV(f.value, f.own)) st.settings[f.path] = f.own; })); paintTune(); play(); changed(); }
-  });
+  R$('tune').addEventListener('click', e => { const b = e.target.closest('button[data-t]'); if (!b || !ed) return; if (b.dataset.t === 'undo') ed.undo(); else ed.asCame(); });
   async function loadFields() { paintTune(); const id = st.style; try { const f = await api.get('/api/captions/fields?style=' + encodeURIComponent(id)); if (id !== st.style) return; st.fields = f; paintTune(); } catch (err) { R$('tune').innerHTML = `<p class="capwarn">${esc(err.message)}</p>`; } }
   function tune(on) { st.tune = on; R$('tune').hidden = !on; root.classList.toggle('tuning', on); paintActs(); if (on) { if (!st.fields) loadFields(); R$('tune').scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'nearest' }); } }
+  /* the library changed under the picker: a style that is gone gives way to the one new clips get */
+  function settle() { if (!lib().some(c => c.id === st.style)) { st.style = cur().id; st.settings = {}; st.fields = null; if (st.tune) tune(false); return true; } return false; }
 
   paintStage(); paintShelf(); play();
-  return {
-    state,
-    /* the template's settings as its own version would hold them: everything that is not as it came */
-    ownVersion() { const out = {}; if (st.fields) st.fields.groups.forEach(g => g.fields.forEach(f => { const v = valOf(f); if (!sameV(v, f.own)) out[f.path] = v; })); return out; },
-    loaded: () => !!st.fields,
-    saved(fields) { st.fields = fields || null; st.settings = {}; const c = cur(); c.tuned = !!(fields && fields.tuned); c.preview = null; delete PREV[c.id]; paintStage(); if (st.tune) paintTune(); play(); },
-    paint() { paintStage(); },
-    refresh() { paintStage(); paintShelf(); if (!video.dataset.url) play(); },
+  const me = {
+    root, state, cur,
+    paint() { paintStage(); paintMarks(); },
+    refresh(again) { const moved = settle(); paintStage(); paintShelf(); if (again || moved || !video.dataset.url) play(); },
+    pick(id) { if (lib().some(c => c.id === id) && id !== st.style) pick(id); },
+    used() { const now = S.ov.caption_default; if (o.follow && now !== st.style && lib().some(c => c.id === now)) { st.style = now; st.colors = info().colors || st.colors; st.settings = {}; st.fields = null; paintStage(); play(); } else paintStage(); paintMarks(); },
   };
+  CAPS.push(me);
+  return me;
 }
 let capW = null;
-const capSaved = s => S.ov && s.style === S.ov.caption_default && (!s.animated || (s.colors === S.ov.caption_library.colors && !s.tuned));
-async function useCaptions(quiet) {
-  if (!capW) return; const s = capW.state(); if (capSaved(s)) return;
-  if (s.animated && s.tuned && capW.loaded()) { const r = await api.post('/api/captions/defaults', { style: s.style, settings: capW.ownVersion() }); capW.saved(r); }
-  await api.post('/api/settings', { values: { 'render.captions': s.style, ...(s.animated ? { 'render.rm.colors': s.colors } : {}) }, merge: true });
-  S.ov.caption_default = s.style; if (s.animated) S.ov.caption_library.colors = s.colors; S.cfg = null; capW.paint(); if (!quiet) toast(capName(s.style) + ' is the caption style of new clips');
+const capSaved = s => !!S.ov && s.style === S.ov.caption_default && (!s.animated || s.colors === S.ov.caption_library.colors);
+/* make a style (the one picked in the Run walk, unless another is given) the style of new clips */
+async function useCaptions(quiet, s) {
+  s = s || (capW && capW.state()); if (!s || capSaved(s)) return;
+  const r = await api.post('/api/library/use', { style: s.style, ...(s.animated ? { colors: s.colors } : {}) });
+  S.ov.caption_default = r.default; S.ov.caption_library.colors = r.colors; S.cfg = null;
+  for (let i = CAPS.length; i--;) { if (CAPS[i].root.isConnected) CAPS[i].used(); else CAPS.splice(i, 1); }
+  if (!quiet) toast(capName(s.style) + ' is the caption style of new clips');
 }
 function paintTpls() {
   const ov = S.ov; if (!ov) return;
   if (capW) capW.refresh();
-  else capW = capLib($('#capLib'), { style: capOf(ov.caption_default) ? ov.caption_default : 'word', colors: ov.caption_library.colors,
-    primary: { label: s => capSaved(s) ? 'In use for new clips' : s.tuned ? 'Save and use for new clips' : 'Use for new clips', disabled: capSaved, run: () => useCaptions() },
+  else capW = capLib($('#capLib'), { style: capOf(ov.caption_default) ? ov.caption_default : 'word', colors: ov.caption_library.colors, tune: false, follow: true,
+    primary: { label: s => capSaved(s) ? 'In use for new clips' : 'Use for new clips', disabled: capSaved, run: s => useCaptions(false, s) },
+    more: (s, c) => [{ label: s.animated && ov.caption_library.ready ? (c.own ? 'Change it in the Library' : 'Make it yours in the Library') : 'Open the Library', run: () => CW.views.library.open(s.style, s.animated) }],
     note: s => s.animated ? 'An animated template adds about half a clip\'s length to its render. Too slow for a live run on a busy machine: there the built-in ones are the safe pick.' : '' });
-  $('#capLead').textContent = 'What the renderer puts on every new Short. ' + (ov.speech ? 'Pick one, watch it, make it yours.' : 'This machine has no speech model installed (faster-whisper), so new clips come out without captions until it is.');
+  $('#capLead').textContent = 'What the renderer puts on every new Short. ' + (ov.speech ? 'Pick one and watch it. The Library is where you change one or make your own.' : 'This machine has no speech model installed (faster-whisper), so new clips come out without captions until it is.');
 }
+/* what library.js builds on, beside the helpers of window.CW */
+window.CWcaps = { capFields, previewOf, capForget, useCaptions, capSaved, sameV };
 
 /* ---------- a run, as the server reports it ---------- */
 const R = { id: null, kind: null, es: null, params: {}, started: 0, clips: [], clip: 0, tick: 0, tests: { seen: 0, failed: [] }, ended: false, replay: false, timers: [], problem: '' };

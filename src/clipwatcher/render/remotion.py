@@ -18,6 +18,9 @@ Config (config/global.yaml, all optional, defaults in code):
   render.rm.timeout_s: 300           give up on a render after this long
   render.rm.templates: {name: {...}} parameter overrides per template, merged into
                                      remotion/templates/<name>.json
+  render.rm.presets: {id: {name, base, settings, created}}
+                                     this machine's own templates: rm:<id> is the template `base` as it
+                                     shipped with `settings` laid over it (the companion app's Library)
   tools.node: /path/to/node          (or CLIPWATCHER_NODE)
 """
 
@@ -127,15 +130,65 @@ def _merge(base: dict, over: dict) -> dict:
     return out
 
 
+PRESET_ID = re.compile(r"[a-z0-9_]{1,40}")
+
+
+def presets() -> dict[str, dict]:
+    """This machine's own templates (render.rm.presets): id -> {"name", "base", "settings", "created"}. Each
+    is a shipped template under a name of its own, with its own settings laid over the template as it
+    shipped; its caption style is rm:<id>. An entry that cannot be one (an id that is a shipped template's
+    name, a base that is not there) is left out."""
+    raw = settings().get("presets")
+    if not isinstance(raw, dict):
+        return {}
+    shipped = set(templates())
+    out: dict[str, dict] = {}
+    for pid, p in raw.items():
+        ok = isinstance(pid, str) and PRESET_ID.fullmatch(pid) and pid not in shipped and isinstance(p, dict)
+        if not ok or p.get("base") not in shipped:
+            continue
+        own = p.get("settings")
+        try:
+            created = float(p.get("created") or 0)
+        except (TypeError, ValueError):
+            created = 0.0
+        out[pid] = {
+            "name": str(p.get("name") or pid),
+            "base": p["base"],
+            "settings": copy.deepcopy(own) if isinstance(own, dict) else {},
+            "created": created,
+        }
+    return out
+
+
+def base_name(name: str) -> str:
+    """The shipped template a name is drawn by: the name itself, or the base of one of this machine's own
+    templates. This, never an own template's id, is what the renderer is asked for."""
+    if name in templates():
+        return name
+    own = presets().get(name)
+    return own["base"] if own else name
+
+
 def load_template(name: str, overrides: dict | None = None) -> dict:
-    """A template's parameters: its JSON, then render.rm.templates.<name> from the config, then overrides."""
+    """A template's parameters: its JSON, then render.rm.templates.<name> from the config, then overrides.
+    For one of this machine's own templates (`presets`): the JSON of its base as it shipped, its own
+    settings, then render.rm.templates.<its id> (what `overriding` sets for one render), then overrides."""
+    own = None
     p = TEMPLATES_DIR / f"{name}.json"
+    if name and not p.is_file():
+        own = presets().get(name)
+        if own:
+            p = TEMPLATES_DIR / f"{own['base']}.json"
     if not name or not p.is_file():
-        raise RemotionError(f"unknown caption template {name!r} (have: {', '.join(templates()) or 'none'})")
+        have = [*templates(), *presets()]
+        raise RemotionError(f"unknown caption template {name!r} (have: {', '.join(have) or 'none'})")
     try:
         params = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
         raise RemotionError(f"template {name}: {e}") from e
+    if own:
+        params = _merge(params, own["settings"])
     params = _merge(params, (settings().get("templates") or {}).get(name) or {})
     return _merge(params, overrides or {})
 
@@ -435,6 +488,7 @@ def build_props(
     pad: int = 0, debug: bool = False,
 ) -> tuple[dict, rm_plan.Plan]:  # fmt: skip
     """Props for one overlay, and the plan they were made from. colors: "fixed" | "auto" (None = config).
+    template: a shipped template's name, or the id of one of this machine's own (`presets`).
     A fractional frame rate is fine (59.94): frame k shows the instant (k + 0.5) / fps.
     pad: extra transparent rows above and below the box (the frame checks use it to catch overflow)."""
     P = params if params is not None else load_template(template)
@@ -484,7 +538,7 @@ def build_props(
         scheme = palette.auto_colors(fixed, P["auto"], st, palette.AutoState()) if auto else fixed
         labels.append({**asdict(lb), "colors": _label_colors(scheme, lb.kind, auto, st)})
     props = {
-        "template": template,
+        "template": base_name(template),  # the component that draws it: an own template's base
         "params": P,
         "fps": fps,
         "width": FRAME_W,

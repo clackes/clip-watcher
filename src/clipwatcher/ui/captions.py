@@ -126,8 +126,13 @@ def previews_root() -> Path:
 
 
 def styles() -> tuple[str, ...]:
-    """Every caption style a Short can be asked for: the built-in ones, then rm:<template>."""
-    return (*[s for s in BUILT_IN if s in CAPTION_STYLES], *[rm.PREFIX + t for t in rm.templates()])
+    """Every caption style a Short can be asked for: the built-in ones, rm:<template> for the templates
+    that ship, then rm:<id> for this machine's own (the Library's)."""
+    return (
+        *[s for s in BUILT_IN if s in CAPTION_STYLES],
+        *[rm.PREFIX + t for t in rm.templates()],
+        *[rm.PREFIX + p for p in rm.presets()],
+    )
 
 
 def is_style(style: Any) -> bool:
@@ -142,20 +147,47 @@ def _own(name: str) -> dict:
         raise ValueError(f"No caption template {name!r}.") from e
 
 
+def resolve(style: Any) -> tuple[str, str, dict | None]:
+    """An animated style as (its name, the shipped template that draws it, the own template or None).
+    ValueError, in words for the page, for anything that is not an animated template of this machine."""
+    name = rm.template_name(style) if isinstance(style, str) and rm.is_rm(style) else ""
+    if name in rm.templates():
+        return name, name, None
+    own = rm.presets().get(name) if name else None
+    if own is None:
+        raise ValueError("Only the animated templates have settings of their own.")
+    return name, own["base"], own
+
+
 def library() -> dict:
-    """What the page shows as the caption library."""
-    out = [
-        {"id": s, "name": name, "about": about, "kind": "built-in", "font": "Anton", "words": None}
+    """What the page shows as the caption library. Every row says whether the template is one of this
+    machine's own (`own`, with `base`, the style it was made from), for a shipped one whether it was
+    edited here (`tuned`), and whether its colours were set by hand (`colored`)."""
+    out: list[dict[str, Any]] = [
+        {
+            "id": s,
+            "name": name,
+            "about": about,
+            "kind": "built-in",
+            "font": "Anton",
+            "words": None,
+            "own": False,
+            "base": None,
+            "tuned": False,
+            "colored": False,
+        }
         for s, (name, about) in BUILT_IN.items()
         if s in CAPTION_STYLES
     ]
     tuned = rm.settings().get("templates") or {}
     names = rm.templates()
+    shipped: dict[str, dict] = {}
     for t in names:
         try:
             p = _own(t)
         except ValueError:
             continue
+        shipped[t] = p
         out.append(
             {
                 "id": rm.PREFIX + t,
@@ -163,8 +195,32 @@ def library() -> dict:
                 "about": str(p.get("description") or ""),
                 "kind": "animated",
                 "font": str((p.get("font") or {}).get("family") or ""),
-                "words": int(p["paging"]["maxWords"]),
+                "words": int(rm.load_template(t)["paging"]["maxWords"]),
+                "own": False,
+                "base": None,
                 "tuned": bool(tuned.get(t)),
+                "colored": bool((tuned.get(t) or {}).get("colors")),
+            }
+        )
+    for pid, own in sorted(rm.presets().items(), key=lambda kv: (kv[1]["created"], kv[0])):
+        p = shipped.get(own["base"])
+        if p is None:
+            continue
+        title = str(p.get("title") or own["base"].title())
+        out.append(
+            {
+                "id": rm.PREFIX + pid,
+                "name": own["name"],
+                "about": f"Your own template, made from {title}, with the settings you gave it.",
+                "kind": "animated",
+                "font": str((p.get("font") or {}).get("family") or ""),
+                "words": int(rm.load_template(pid)["paging"]["maxWords"]),
+                "own": True,
+                "base": rm.PREFIX + own["base"],
+                "base_name": title,
+                "tuned": False,
+                "colored": bool(own["settings"].get("colors")),
+                "created": own["created"],
             }
         )
     root, stamp = previews_root(), rm.source_stamp() if names else ""
@@ -381,12 +437,11 @@ def _get(params: dict, path: str) -> Any:
 
 def fields(style: str) -> dict:
     """The parameters of an animated template for the page: groups of fields with the value in force
-    (the template's own, the config's laid over it), the template's own value, and the limits."""
-    if not rm.is_rm(style) or rm.template_name(style) not in rm.templates():
-        raise ValueError("Only the animated templates have settings of their own.")
-    name = rm.template_name(style)
-    own, now = _own(name), rm.load_template(name)
-    specs = _specs(name)
+    (the template's own, the config's laid over it), the template's own value, and the limits. For one
+    of this machine's own templates `value` is what it holds now and `own` the base as it shipped."""
+    name, base, preset = resolve(style)
+    own, now = _own(base), rm.load_template(name)
+    specs = _specs(base)
     lib = animations()
     groups = []
     for gid, title, keys in GROUPS:
@@ -409,12 +464,16 @@ def fields(style: str) -> dict:
             rows.append(f)
         if rows:
             groups.append({"id": gid, "title": title, "fields": rows})
+    title = str(own.get("title") or base)
     return {
         "style": style,
-        "name": str(own.get("title") or name),
+        "name": preset["name"] if preset else title,
         "about": str(own.get("description") or ""),
         "font": str((own.get("font") or {}).get("family") or ""),
-        "tuned": bool((rm.settings().get("templates") or {}).get(name)),
+        "tuned": not preset and bool((rm.settings().get("templates") or {}).get(name)),
+        "own": bool(preset),
+        "base": rm.PREFIX + base,
+        "base_name": title,
         "units": UNITS,
         "groups": groups,
     }
@@ -457,23 +516,23 @@ def _motion(path: str, spec: dict, v: Any) -> dict | None:
     return out
 
 
-def check(style: str, values: dict | None) -> dict:
+def check(style: str, values: dict | None, *, whole: bool = False) -> dict:
     """Settings from the page ({"size": 80, "paging.maxWords": 2, "fx.enter": {...}}) as overrides for the
     template ({"size": 80, "paging": {"maxWords": 2}, ...}), every value inside the template's own limits
-    and the colours still readable on each other. ValueError says, in words for the page, what is wrong."""
+    and the colours still readable on each other. ValueError says, in words for the page, what is wrong.
+    whole: the values are everything that differs from the template as it shipped (what the Library
+    keeps), not a change to what is in force here: the colours are then read on the shipped ones."""
     if not values:
         return {}
-    if not rm.is_rm(style) or rm.template_name(style) not in rm.templates():
-        raise ValueError("Only the animated templates have settings of their own.")
+    name, base, _ = resolve(style)
     if not isinstance(values, dict) or len(values) > 200:
         raise ValueError("Settings: a list of values by name.")
-    name = rm.template_name(style)
-    specs = _specs(name)
+    specs = _specs(base)
     out: dict[str, Any] = {}
     for path, v in values.items():
         spec = specs.get(path)
         if spec is None:
-            raise ValueError(f"{style} has no setting {str(path)[:60]!r}.")
+            raise ValueError(f"This template has no setting {str(path)[:60]!r}.")
         kind = spec.get("kind", "number")
         if kind == "number":
             v = _number(path, spec, v)
@@ -497,13 +556,12 @@ def check(style: str, values: dict | None) -> dict:
             cur = cur.setdefault(part, {})
         cur[leaf] = v
     if "colors" in out:
-        _readable(name, out)
+        _readable(rm._merge(_own(base), out) if whole else rm.load_template(name, out))
     return out
 
 
-def _readable(name: str, overrides: dict) -> None:
+def _readable(p: dict) -> None:
     """The contrast floor between the colours that sit next to each other (D19), for colours set by hand."""
-    p = rm.load_template(name, overrides)
     for a, b in p["auto"].get("pairs") or []:
         ones = p["colors"].get(a), p["colors"].get(b)
         if not all(isinstance(c, str) for c in ones):
@@ -553,19 +611,23 @@ def _sample_words() -> list[Word]:
 
 
 def _clip_file(
-    style: str, over: dict | None, root: Path, stamp: str | None = None
+    style: str, over: dict | None, root: Path, stamp: str | None = None, whole: bool = False
 ) -> tuple[Path, dict | None]:
     """Where the preview of a style with these overrides is kept, and the template's parameters with
-    them. The name holds everything the clip depends on: the template as it is now (its sources, the
-    config's version of it), the overrides, the sample."""
+    them. The name holds everything the clip depends on: the shipped template that draws it (its
+    sources), every parameter as it is now (the config's version of it or the own template's settings,
+    the overrides), the sample. Two styles that look the same share a clip: an own template and the
+    settings it was saved from. whole: the overrides are laid over the template as it shipped."""
     if not rm.is_rm(style):
         key = json.dumps([PREVIEW_VERSION, style, SAMPLE])
         return root / f"{style}-{hashlib.sha256(key.encode()).hexdigest()[:20]}.mp4", None
     name = rm.template_name(style)
-    params = rm.load_template(name, over)
-    blob = [PREVIEW_VERSION, style, params, rm.source_stamp() if stamp is None else stamp, SAMPLE]
+    base = rm.base_name(name)
+    params = rm._merge(_own(base), over or {}) if whole else rm.load_template(name, over)
+    drawn = rm.PREFIX + base
+    blob = [PREVIEW_VERSION, drawn, params, rm.source_stamp() if stamp is None else stamp, SAMPLE]
     key = hashlib.sha256(json.dumps(blob, sort_keys=True).encode()).hexdigest()[:20]
-    return root / f"{name.lower()}-{key}.mp4", params
+    return root / f"{base.lower()}-{key}.mp4", params
 
 
 def _leaves_box(ov: rm.Overlay, box: rm.Box, pad: int) -> bool:
@@ -586,15 +648,19 @@ def _leaves_box(ov: rm.Overlay, box: rm.Box, pad: int) -> bool:
     return False
 
 
-def preview(style: str, values: dict | None = None, root: Path | None = None) -> dict:
+def preview(style: str, values: dict | None = None, root: Path | None = None, *, whole: bool = False) -> dict:
     """A short clip of the style over a stand-in Short: {"file", "warnings"}. Made once per style and set
-    of values, then kept. ValueError says, in words for the page, why there is none."""
+    of values, then kept. ValueError says, in words for the page, why there is none. whole: the values
+    are laid over the template as it shipped (see `check`), which is how the Library edits one."""
     if not is_style(style):
         raise ValueError("Pick a caption style.")
-    over = check(style, values) if values else {}
+    over = check(style, values, whole=whole) if values else {}
     root = Path(root) if root else previews_root()
     name = rm.template_name(style) if rm.is_rm(style) else style
-    out, params = _clip_file(style, over, root)
+    try:
+        out, params = _clip_file(style, over, root, whole=whole and rm.is_rm(style))
+    except rm.RemotionError as e:
+        raise ValueError(f"This template cannot be shown: {_reason(e)}") from e
     note = out.with_suffix(".json")
     if out.is_file():
         try:
