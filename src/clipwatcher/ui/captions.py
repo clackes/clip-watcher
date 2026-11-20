@@ -161,8 +161,8 @@ def resolve(style: Any) -> tuple[str, str, dict | None]:
 
 def library() -> dict:
     """What the page shows as the caption library. Every row says whether the template is one of this
-    machine's own (`own`, with `base`, the style it was made from) and, for a shipped one, whether it
-    was edited here (`tuned`)."""
+    machine's own (`own`, with `base`, the style it was made from), for a shipped one whether it was
+    edited here (`tuned`), and whether its colours were set by hand (`colored`)."""
     out: list[dict[str, Any]] = [
         {
             "id": s,
@@ -174,6 +174,7 @@ def library() -> dict:
             "own": False,
             "base": None,
             "tuned": False,
+            "colored": False,
         }
         for s, (name, about) in BUILT_IN.items()
         if s in CAPTION_STYLES
@@ -198,6 +199,7 @@ def library() -> dict:
                 "own": False,
                 "base": None,
                 "tuned": bool(tuned.get(t)),
+                "colored": bool((tuned.get(t) or {}).get("colors")),
             }
         )
     for pid, own in sorted(rm.presets().items(), key=lambda kv: (kv[1]["created"], kv[0])):
@@ -209,7 +211,7 @@ def library() -> dict:
             {
                 "id": rm.PREFIX + pid,
                 "name": own["name"],
-                "about": f"Your own, made from {title}.",
+                "about": f"Your own template, made from {title}, with the settings you gave it.",
                 "kind": "animated",
                 "font": str((p.get("font") or {}).get("family") or ""),
                 "words": int(rm.load_template(pid)["paging"]["maxWords"]),
@@ -217,6 +219,7 @@ def library() -> dict:
                 "base": rm.PREFIX + own["base"],
                 "base_name": title,
                 "tuned": False,
+                "colored": bool(own["settings"].get("colors")),
                 "created": own["created"],
             }
         )
