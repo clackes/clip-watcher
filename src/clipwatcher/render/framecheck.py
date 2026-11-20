@@ -788,13 +788,27 @@ def check_geometry(
     return hashes
 
 
+def _wiped(u: dict) -> bool:
+    """... or shown through a window that lets nothing of it through: not its letters, and not the outline
+    and shadow that reach past them (a word a wipe has passed, still in the scene for a frame)."""
+    if not u.get("clip") or not u.get("box"):
+        return False
+    x, y, w, h = u["box"]
+    cx, cy, cw, ch = u["clip"]
+    m = u.get("m") or [1, 0, 0, 1, 0, 0]
+    grow = u.get("reach", 0.0) * max(math.hypot(m[0], m[1]), math.hypot(m[2], m[3]), 0.2) + 1
+    wide = min(x + w + grow, cx + cw) - max(x - grow, cx)
+    tall = min(y + h + grow, cy + ch) - max(y - grow, cy)
+    return wide <= 0 or tall <= 0
+
+
 def _moved(a: dict | None, b: dict) -> bool:
     """True when some unit visibly differs between two scene records (more than a hundredth of a pixel)."""
     if a is None:
         return False
 
-    def shown(rec: dict) -> list[dict]:  # a unit scaled to nothing draws no pixel: it cannot stutter
-        return [u for u in rec["u"] if not (u["box"] and u["sc"] < 0.02)]
+    def shown(rec: dict) -> list[dict]:  # a unit that draws no pixel cannot stutter: scaled to nothing, ...
+        return [u for u in rec["u"] if not (u["box"] and u["sc"] < 0.02) and not _wiped(u)]
 
     ua = {u["id"]: u for u in shown(a)}
     for u in (ub := shown(b)):

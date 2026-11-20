@@ -242,6 +242,23 @@ def test_a_unit_scaled_to_nothing_that_leaves_is_not_a_stutter():
     assert not fc._moved({"u": [unit]}, {"u": [dict(unit)]})
 
 
+def test_a_unit_its_window_shows_nothing_of_is_not_a_stutter_when_it_leaves():
+    """marker at one phase of the sweep: a word the exit had wiped out was still in the scene for a frame,
+    its window ending 26 px short of its letters, and left in the next. No pixel changed: none was drawn."""
+    stays = {"id": "p0w1", "fg": ["#FFFFFF"], "box": [100.0, 250.0, 200.0, 70.0], "sc": 1.0, "clip": None}
+    wiped = {
+        "id": "p1w0", "fg": ["#FFFFFF"], "box": [421.03, 255.87, 236.35, 70.67], "sc": 1.0,
+        "m": [1, 0, 0, 1, 0, 0], "reach": 12.0, "clip": [60, 110, 335.41, 256],
+    }  # fmt: skip
+    assert not fc._moved({"u": [stays, wiped]}, {"u": [stays]})
+    # the window ends 9 px short of the letters: the outline reaches 12 px, so some of it was on screen
+    assert fc._moved({"u": [stays, {**wiped, "clip": [60, 110, 352.0, 256]}]}, {"u": [stays]})
+    assert fc._moved(
+        {"u": [stays, {**wiped, "clip": [60, 110, 480.0, 256]}]}, {"u": [stays]}
+    )  # half the word
+    assert fc._moved({"u": [stays, {**wiped, "clip": None}]}, {"u": [stays]})  # no window at all
+
+
 def test_a_sliver_of_the_letter_itself_is_not_what_it_is_read_against(monkeypatch):
     """A box sliding over a white E left 2 px of its stem for one frame (glide, on a real clip): shades of
     white, part of the letter. A light area beside the letter is still a contrast failure."""
