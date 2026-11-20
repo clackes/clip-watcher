@@ -1,0 +1,90 @@
+{
+  "title": "Vogue",
+  "description": "Editorial: a cream display serif on a soft dark outline. Lines rise out of a mask one after the other, a thin underline draws itself under the spoken word and glides on, shouted words are italic, larger and in the accent colour.",
+  "font": { "family": "DM Serif Display", "file": "captions/DMSerifDisplay-Regular.ttf", "weight": 400, "style": "normal" },
+  "emphFont": { "family": "DM Serif Display", "file": "captions/DMSerifDisplay-Italic.ttf", "weight": 400, "style": "italic" },
+  "size": 88,
+  "minSize": 54,
+  "lineHeight": 1.12,
+  "letterSpacing": 0.005,
+  "wordGap": 0.27,
+  "case": "keep",
+  "emphScale": 1.14,
+  "grow": 0.02,
+  "tilt": 0,
+  "margin": { "x": 34, "y": 30 },
+  "paging": {
+    "mode": "page",
+    "maxWords": 4,
+    "maxLines": 2,
+    "gapS": 0.6,
+    "holdS": 0.6,
+    "lingerS": 0.3,
+    "minShowS": 0.14,
+    "leadS": 0.03,
+    "overlapS": 0
+  },
+  "timing": { "enterS": 0.5, "exitS": 0.3, "activeInS": 0.12, "activeOutS": 0.22, "colorS": 0.25, "staggerS": 0 },
+  "colors": {
+    "text": "#FFF3D6",
+    "active": "#FFC53D",
+    "emph": "#FF6B5E",
+    "stroke": "#000000",
+    "shadow": "#000000",
+    "plate": "#000000",
+    "plateText": "#FFF3D6",
+    "accent": "#FF6B5E",
+    "accent2": "#FFC53D",
+    "cycle": ["#FFC53D"]
+  },
+  "auto": {
+    "candidates": {
+      "text": ["cream", "white"],
+      "active": ["gold", "yellow", "mint", "sky", "lime", "pink"],
+      "emph": ["red", "pink", "violet", "cyan", "lime", "orange"],
+      "stroke": ["black"],
+      "accent": ["red", "pink", "violet", "cyan", "lime", "orange"]
+    },
+    "pairs": [
+      ["text", "stroke"],
+      ["active", "stroke"],
+      ["emph", "stroke"],
+      ["accent", "stroke"]
+    ],
+    "avoidHue": ["active", "emph", "accent"],
+    "distinct": [
+      ["active", "emph"],
+      ["active", "accent"]
+    ]
+  },
+  "label": { "size": 84, "enterS": 0.45, "exitS": 0.2, "rotate": 0 },
+  "fx": {
+    "halo": 0.075,
+    "weight": 0.01,
+    "hairPx": 0.85,
+    "soft": 0.2,
+    "softAlpha": 0.08,
+    "softSteps": 5,
+    "softY": 0.03,
+    "lineLagS": 0.09,
+    "wordLagS": 0.035,
+    "sinkLag": 0.3,
+    "lineY": 0.1,
+    "lineH": 0.055,
+    "lineRim": 0.075,
+    "lineInset": 0.01,
+    "lineTaper": 0.3,
+    "calmS": 0.3,
+    "paceMin": 0.5,
+    "drawS": 0.3,
+    "glideS": 0.26,
+    "stretch": 0.7,
+    "undrawS": 0.3,
+    "emphLine": 1.3,
+    "emphSwell": 1.06,
+    "swellS": 0.3,
+    "ruleGap": 0.25,
+    "ruleSpan": 1,
+    "ruleDrawS": 0.5
+  }
+}
