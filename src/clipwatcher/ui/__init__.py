@@ -6,3 +6,7 @@ It starts the same commands a person would type (the live lane, the VOD lane, th
 progress events (clipwatcher.events), the staging folder, the judge's ledger and the settings, and never
 uploads or approves anything itself. It listens on this machine only.
 """
+
+
+class NotFound(LookupError):
+    """What the page asked for is not there: the server answers 404 with this sentence."""

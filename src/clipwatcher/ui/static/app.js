@@ -10,6 +10,7 @@ const P = { twitch: 'M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6
   clips: 'M4 5h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zm0 2v10h16V7zm2 3h5v2H6zm7 0h5v2h-5zm-7 3h3v2H6zm5 0h7v2h-7z',
   setup: 'M4 6h8v2H4zm12 0h4v2h-4zm-3-2h2v6h-2zM4 11h3v2H4zm7 0h9v2h-9zM8 9h2v6H8zm-4 7h10v2H4zm14 0h2v2h-2zm-3-2h2v6h-2z',
   insights: 'M4 20V10h3.5v10zm6.25 0V4h3.5v16zm6.25 0v-7H20v7z',
+  library: 'M3 5h18v14H3zm2 2v10h14V7zm2 6h4v2H7zm6 0h4v2h-4z', connect: 'M7 7h4v2H7a3 3 0 0 0 0 6h4v2H7A5 5 0 0 1 7 7zm6 0h4a5 5 0 0 1 0 10h-4v-2h4a3 3 0 0 0 0-6h-4zm-5 4h8v2H8z',
   check: 'M9.55 17.6 4.4 12.45l1.4-1.4 3.75 3.75 8.65-8.65 1.4 1.4z', spin: 'M12 3a9 9 0 1 0 9 9h-2.2A6.8 6.8 0 1 1 12 5.2z', skip: 'M5 5.5 13 12l-8 6.5zM14 5.5 22 12l-8 6.5z',
   dotc: 'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z', cross: 'm6.4 5 5.600 5.600L17.600 5 19 6.400 13.400 12 19 17.600 17.600 19 12 13.400 6.400 19 5 17.600 10.600 12 5 6.400z' };
 const ic = (n, c = '') => `<svg class="ic ${c}" viewBox="0 0 24 24" aria-hidden="true"><path d="${P[n]}"/></svg>`;
@@ -68,8 +69,8 @@ function phoneTilt(wrap, phone) {
   wrap.addEventListener('pointerleave', () => { phone.style.removeProperty('--rx'); phone.style.removeProperty('--ry'); phone.classList.add('float'); });
 }
 
-/* ---------- the four places ---------- */
-const VIEWS = [['run', 'Run', 'run'], ['clips', 'Clips', 'clips'], ['insights', 'Insights', 'insights'], ['setup', 'Settings', 'setup']];
+/* ---------- the six places ---------- */
+const VIEWS = [['run', 'Run', 'run'], ['clips', 'Clips', 'clips'], ['library', 'Library', 'library'], ['insights', 'Insights', 'insights'], ['connect', 'Connect', 'connect'], ['setup', 'Settings', 'setup']];
 $('#nav').innerHTML = $('#navm').innerHTML = VIEWS.map(([k, l, i]) => `<a href="#${k}" data-v="${k}">${ic(i)}<span>${l}</span></a>`).join('');
 let current = null;
 function stagger(root) { $$('[data-a]', root).forEach((el, i) => el.style.setProperty('--i', Math.min(i, 10))); }
@@ -618,6 +619,7 @@ async function loadOverview() {
   const ov = S.ov; $('#dryBadge').innerHTML = ov.dry_run ? '<i class="dot warn"></i>Dry run' : '<i class="dot"></i>Uploads on'; $('#dryBadge').className = 'badge dry ' + (ov.dry_run ? 'warn' : 'live'); $('#dryBadge').title = ov.dry_run ? 'DRY_RUN=1: nothing is uploaded or posted' : 'DRY_RUN=0: approved clips are uploaded';
   $('#footNote').textContent = (ov.dry_run ? 'Dry run: nothing is uploaded. ' : '') + 'Staging folder: ' + ov.staging;
   paintTpls(); if (W.step === 2) paintSource();
+  Object.values(CW.views).forEach(v => { if (v.overview) v.overview(ov); });
   return ov;
 }
 function onShow(name) {
@@ -625,8 +627,16 @@ function onShow(name) {
   if (name === 'clips') loadClips().then(() => stagger($('#v-clips')));
   if (name === 'insights') loadInsights();
   if (name === 'setup') loadSettings();
+  const more = CW.views[name]; if (more && more.show) more.show();
 }
+/* ---------- what the page's other scripts build on ----------
+   library.js and connect.js each fill one place: they register { show(), overview(ov) } under CW.views and
+   use the helpers below, so every place looks and behaves like the rest. They load after this file and
+   before the page starts. */
+window.CW = { $, $$, api, ic, P, pf, PFN, esc, toast, seg, tilt, phoneTilt, stagger, store, reduce, S, when, plural, compact, fmtS, capLib, capOf, capName, loadOverview, views: {} };
+addEventListener('DOMContentLoaded', () => {
 initRun(); initClips(); initInsights(); initSettings();
 show(location.hash.slice(1) || store.get('view', 'run'));
 loadOverview().then(ov => { if (ov && ov.active) { if (['live', 'vod', 'tests'].includes(ov.active.kind)) W.mode = ov.active.kind; W.step = 4; $$('.stepbox').forEach(b => { b.hidden = b.id !== 's4'; }); follow(ov.active); paintWiz(); if (!location.hash) location.hash = 'run'; } });
+});
 })();

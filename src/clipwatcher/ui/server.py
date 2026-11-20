@@ -20,11 +20,15 @@ from pathlib import Path
 from typing import Any
 
 from clipwatcher import config
-from clipwatcher.ui import captions, data, settings
+from clipwatcher.ui import NotFound, captions, connect, data, library, settings
 from clipwatcher.ui.profiles import Profiles
 from clipwatcher.ui.runs import RunManager
 
 STATIC = Path(__file__).parent / "static"
+# places of the page that keep their requests in a module of their own: /api/<place>/... goes to its
+# get(app, parts, query) and post(app, parts, body), which return what is sent as JSON and raise ValueError
+# (a sentence for the page, 400), RuntimeError (not now, 409) or NotFound (404)
+PLACES = {"library": library, "connect": connect}
 FONTS = config.ROOT / "assets" / "fonts"
 CHUNK = 256 * 1024
 
@@ -184,6 +188,10 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                 self._get(parts, query)
             except (BrokenPipeError, ConnectionResetError):
                 pass
+            except NotFound as e:
+                self._error(404, str(e) or "Not found.")
+            except ValueError as e:
+                self._error(400, str(e))
             except Exception as e:  # noqa: BLE001 - the page gets a sentence, the server keeps running
                 self._error(500, f"{type(e).__name__}: {e}")
 
@@ -212,12 +220,18 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                 found = app.profiles.image(parts[2])  # a picture kept from Twitch or Kick, named by its hash
                 if found is not None:
                     return self._file(found[0], found[1], cache="private, max-age=31536000, immutable")
+            elif head == "connect" and len(parts) == 3 and parts[1] == "image":
+                found = connect.image(parts[2])  # the picture of a connected account, kept by the app
+                if found is not None:
+                    return self._file(found[0], found[1], cache="private, max-age=86400")
             elif head == "api":
                 return self._api_get(parts[1:], query)
             self._error(404, "Not found.")
 
         def _api_get(self, parts: list[str], query: dict[str, list[str]]) -> None:
             m = app.manager
+            if parts and parts[0] in PLACES:
+                return self._json(PLACES[parts[0]].get(app, parts[1:], query))
             if parts == ["overview"]:
                 active = m.active()
                 return self._json({**data.overview(), "active": active.summary() if active else None})
@@ -295,6 +309,8 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                 if not isinstance(body, dict):
                     raise ValueError("Send an object.")
                 self._post(parts, body)
+            except NotFound as e:
+                self._error(404, str(e) or "Not found.")
             except ValueError as e:
                 self._error(400, str(e))
             except RuntimeError as e:
@@ -304,6 +320,8 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
 
         def _post(self, parts: list[str], body: dict[str, Any]) -> None:
             m = app.manager
+            if len(parts) >= 2 and parts[0] == "api" and parts[1] in PLACES:
+                return self._json(PLACES[parts[1]].post(app, parts[2:], body))
             if parts == ["api", "runs"]:
                 params = body.get("params") or {}
                 if not isinstance(params, dict):

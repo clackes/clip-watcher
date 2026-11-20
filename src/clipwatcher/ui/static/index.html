@@ -8,6 +8,8 @@
 <title>ClipVision Companion</title>
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/static/library.css">
+<link rel="stylesheet" href="/static/connect.css">
 </head>
 <body>
 
@@ -86,6 +88,8 @@
   <div class="cliplist" id="clipList"></div>
 </section>
 
+<section class="view" id="v-library" hidden></section>
+
 <section class="view" id="v-insights" hidden>
   <div class="vhead"><div><h1 data-a>What the <span class="gt">numbers say</span></h1><p class="lead" data-a>One question at a time, answered from what the bot has kept: its staged clips, its judge calls and its runs.</p></div></div>
   <div class="seg big" id="insSeg" data-a></div>
@@ -99,6 +103,8 @@
     <div class="pager"><button class="btn btn-ghost" id="slPrev">Back</button><span class="cap-note num" id="slCount"></span><button class="btn btn-primary" id="slNext">Next</button></div>
   </div>
 </section>
+
+<section class="view" id="v-connect" hidden></section>
 
 <section class="view" id="v-setup" hidden>
   <div class="vhead"><div><h1 data-a>What the bot is <span class="gt">set to</span></h1><p class="lead" data-a>What you change here is saved for this machine in <code>config/local.yaml</code>, on top of <code>config/global.yaml</code>, and applies from the next run.</p></div></div>
@@ -116,5 +122,7 @@
 
 <script src="/static/vendor/chart.umd.min.js"></script>
 <script src="/static/app.js"></script>
+<script src="/static/library.js"></script>
+<script src="/static/connect.js"></script>
 </body>
 </html>
