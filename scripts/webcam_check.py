@@ -38,6 +38,7 @@ LOOSE_IOU = 0.3  # cut-out / round cams and avatars: overlap of the shown crop w
 PSNR_MIN = 26.0  # panel against the source crop it should show, compared at quarter size
 SHARP_EVERY = 100  # sharpness is measured on every 100th frame of a Short
 REFRAME_JUMP = 24  # source px the full-screen window may move from one frame to the next
+VERBOSE = False  # score: also the per-moment failure kinds of the first check
 OWNER = ("zackrawrr", "ishowspeed", "clix", "tfue", "kaicenat", "ninja", "myth", "harry", "uhsnow", "matteu")
 
 
@@ -86,6 +87,9 @@ def lay_dict(lay) -> dict:
         "face": lay.face,
     }
     d["reframe"] = bool(lay.as_render_kwargs().get("reframe"))
+    for k in ("sure", "doubts", "evidence"):  # how sure the decision is and the numbers behind it
+        if hasattr(lay, k):
+            d[k] = getattr(lay, k)
     return d
 
 
@@ -534,9 +538,13 @@ def frame_times(root: Path, login: str) -> list[float]:
 
 def regime_at(gt: dict, root: Path, login: str, t: float) -> tuple[str, list[dict]]:
     """(kind, cams) the label gives for media time t. A label may hold 'scenes': [{frames:[a,b], kind,
-    cams}] for samples whose scene switches; frames index the 12 labelled frames."""
+    cams}] for samples whose scene switches; frames index the 12 labelled frames, and t goes with the
+    nearest of them unless the scene gives its own seconds ('t': [from, to], read off the recording)."""
     times = frame_times(root, login)
     scenes = gt.get("scenes")
+    for sc in scenes or []:
+        if "t" in sc and sc["t"][0] <= t < sc["t"][1]:
+            return sc["kind"], sc.get("cams", [])
     if scenes and times:
         i = min(range(len(times)), key=lambda j: abs(times[j] - t))
         for sc in scenes:
@@ -630,6 +638,35 @@ def score_moment(m: dict, kind: str, cams: list[dict], head: list[int] | None) -
     return {**out, "fails": fails}
 
 
+def three_way(m: dict, kind: str, cams: list[dict], head: list[int] | None, mode: str | None = None) -> tuple:
+    """(right | safe | wrong, why) for one layout decision. The bar: a Short never shows the wrong thing as
+    the webcam.
+
+    right: the cam panel shows the streamer's cam and nothing else (score_moment's limits), a full-screen
+    camera is followed full screen, a stream without a camera gets no cam panel. safe: the whole 16:9 frame
+    where a webcam or a camera existed. wrong: anything else: another thing in the cam panel, a camera split
+    in two, and a webcam stream reframed to a full-screen window (the cam may not even be in it).
+    mode = how the Short was really rendered (split | frame | reframe) when known: a layout may ask for a
+    reframe that the renderer does not do (no face to follow)."""
+    r = score_moment(m, kind, cams, head)
+    fails = [
+        f for f in r["fails"] if f != "cam-in-game"
+    ]  # a cam also in the gameplay panel: noted, not wrong
+    has = bool(m.get("has_webcam"))
+    reframed = (mode == "reframe") if mode else bool(m.get("reframe"))
+    if kind == "overlay":
+        if has:
+            return ("right", "") if not fails else ("wrong", ",".join(fails))
+        return ("wrong", f"reframed ({m.get('source')})") if reframed else ("safe", str(m.get("source")))
+    if kind == "fullcam":
+        if has:
+            return "wrong", "fullcam-as-overlay"
+        return ("right", "") if reframed else ("safe", str(m.get("source")))
+    if has and not r.get("avatar_as_cam"):
+        return "wrong", "false-cam"
+    return "right", ("reframed" if reframed else "")
+
+
 def _rect(s) -> tuple[int, int, int, int]:
     w, h, x, y = (int(float(v)) for v in str(s).split(":"))
     return x, y, w, h
@@ -653,6 +690,7 @@ def cmd_score(root: Path, logins: list[str], tag: str, backend: str) -> dict:
         for m in det["moments"]:
             kind, cams = regime_at(gt, root, s, m["peak"])
             r = score_moment(m, kind, cams, gt.get("head"))
+            r["verdict"], r["why"] = three_way(m, kind, cams, gt.get("head"))
             r.update(login=s, peak=m["peak"])
             ms.append(r)
             rows.append(r)
@@ -664,8 +702,15 @@ def cmd_score(root: Path, logins: list[str], tag: str, backend: str) -> dict:
         for f in r["fails"]:
             kinds[f] = kinds.get(f, 0) + 1
     chans_bad = sorted({r["login"] for r in bad})
+    three = {v: sum(1 for r in rows if r["verdict"] == v) for v in ("right", "safe", "wrong")}
+    reasons: dict[str, int] = {}
+    for r in rows:
+        if r["verdict"] != "right":
+            key = f"{r['verdict']}: {r['why']}"
+            reasons[key] = reasons.get(key, 0) + 1
     summary = {
-        "set": tag, "backend": backend, "channels": len(per), "moments": n, "moments_right": n - len(bad),
+        "set": tag, "backend": backend, "channels": len(per), "moments": n, **three, "reasons": reasons,
+        "moments_right": n - len(bad),
         "channels_all_right": len(per) - len(chans_bad), "fail_kinds": kinds, "channels_failing": chans_bad,
     }  # fmt: skip
     zs = [r["zoom"] for r in rows if "zoom" in r]
@@ -678,7 +723,12 @@ def cmd_score(root: Path, logins: list[str], tag: str, backend: str) -> dict:
     out.write_text(json.dumps({"summary": summary, "rows": rows}, indent=1))
     print(json.dumps(summary, indent=1))
     for s, ms in per.items():
-        if any(m["fails"] for m in ms):
+        if any(m["verdict"] != "right" for m in ms):
+            print(
+                f"  {s:22s}", " | ".join(f"{m['peak']:.0f}s {m['verdict']} {m['why']}".rstrip() for m in ms)
+            )
+    for s, ms in per.items():
+        if VERBOSE and any(m["fails"] for m in ms):
             print(f"  {s:22s}", " | ".join(
                 f"{m['peak']:.0f}s {m['source']} {','.join(m['fails']) or 'ok'}"
                 + (f" sp{m['spill']} z{m['zoom']}" if "spill" in m else "") for m in ms))  # fmt: skip
@@ -775,6 +825,61 @@ def cmd_frames_score(root: Path, logins: list[str], tag: str) -> dict:
     return summary
 
 
+CROP_FAULTS = ("face-cut", "reframe-jump")  # the right thing is shown, its crop is off in some frames
+
+
+def cmd_shorts(root: Path, logins: list[str], tag: str) -> dict:
+    """Every rendered Short: right, safe or wrong? The layout it was rendered with against the label at
+    the render's moment and at every labelled frame inside the clip, how it was really rendered, and
+    every frame of it (frame_verdict): a panel that does not show the crop the layout names, a black
+    panel, a wrong length are wrong. A face partly outside the panel (the 1080x960 panel shows two
+    thirds of a 16:9 cam) and a jump of the full-screen window are counted beside the verdict as
+    crop faults: the right thing is on screen."""
+    counts = {"right": 0, "safe": 0, "wrong": 0}
+    frames = 0
+    rows, faults = [], {}
+    for s in samples(root, logins):
+        gt = load_label(root, s)
+        mp, fp = root / "render" / tag / f"{s}.json", root / "frames" / tag / f"{s}.json"
+        if not gt or gt.get("ad") or gt.get("exclude") or not mp.exists() or not fp.exists():
+            continue
+        meta, fr = json.loads(mp.read_text()), json.loads(fp.read_text())
+        frames += fr.get("n_frames", 0)
+        kind, cams = regime_at(gt, root, s, CLIP_PEAK)
+        lay = dict(meta.get("layout") or {})
+        if not meta.get("ok") or not fr.get("ok"):
+            verdict, why = "wrong", "render failed"
+        else:
+            # one layout for the whole clip: it is judged at the moment and at every labelled frame that
+            # lies inside the clip (a layout the streamer switches away from is wrong from there on)
+            at = [CLIP_PEAK, *(t for t in frame_times(root, s) if CLIP_T0 <= t <= CLIP_T0 + CLIP_DUR)]
+            seen = [three_way(lay, *regime_at(gt, root, s, t), gt.get("head"), mode=fr["mode"]) for t in at]
+            verdict, why = min(seen, key=lambda v: ("wrong", "safe", "right").index(v[0]))
+            bad = frame_verdict(fr)
+            hard = [b for b in bad if not b.startswith(CROP_FAULTS)]
+            if hard:
+                verdict, why = "wrong", "; ".join([why, *hard]).strip("; ")
+            if len(hard) < len(bad):
+                faults[s] = [b for b in bad if b.startswith(CROP_FAULTS)]
+        counts[verdict] += 1
+        if verdict != "right" or s in faults:
+            rows.append(
+                (s, kind, str(lay.get("source")), verdict, "; ".join([why, *faults.get(s, [])]).strip("; "))
+            )
+    summary = {
+        "set": tag, "shorts": sum(counts.values()), "frames": frames, **counts,
+        "right_with_crop_fault": sum(1 for r in rows if r[3] == "right"),
+        "unsure": {r[0]: r[4] for r in rows if r[2] == "unsure"},
+    }  # fmt: skip
+    (root / "frames" / tag / "shorts.json").write_text(
+        json.dumps({"summary": summary, "rows": rows}, indent=1)
+    )
+    print(json.dumps({k: v for k, v in summary.items() if k != "unsure"}))
+    for login, kind, source, verdict, why in rows:
+        print(f"  {login:18s} {kind:8s} {source:14s} {verdict:6s} {why}")
+    return summary
+
+
 # --------------------------------------------------------------------------- gallery
 def _short_frame(mp4: Path, t: float, out: Path) -> bool:
     from clipwatcher import config
@@ -818,6 +923,10 @@ def _gallery_one(args: tuple[str, str, str]) -> str:
         if lay.get("cam"):  # the rectangle found (thin, yellow) when the shown crop is a part of it
             x, y, w, h = _rect(lay["cam"])
             d.rectangle([x, y, x + w - 1, y + h - 1], outline=(255, 230, 0), width=1)
+    held_back = (lay.get("evidence") or {}).get("rect") if lay.get("source") == "unsure" else None
+    if held_back:  # the rectangle an unsure layout did not show as the webcam: orange
+        x, y, w, h = held_back
+        d.rectangle([x, y, x + w - 1, y + h - 1], outline=(255, 150, 0), width=lw)
     tmp.unlink(missing_ok=True)
     left = src.resize((960, round(960 * src.height / src.width)), Image.LANCZOS)
     sheet = Image.new("RGB", (960 + 8 + 304 + 8 * (216 + 4), 580), (18, 18, 22))
@@ -835,10 +944,12 @@ def _gallery_one(args: tuple[str, str, str]) -> str:
     kind = regime_at(gt, root, login, CLIP_PEAK)[0] if gt else "?"
     text = (
         f"{login}   label: {kind}   layout: {lay.get('source')} ({shown.get('mode')})   "
-        "green = labelled cam, red = cam panel crop, blue = gameplay panel crop   |   "
+        "green = labelled cam, red = cam panel crop, blue = gameplay panel crop, orange = held back   |   "
         "Short at the same moment, then 8 frames across it"
     )
-    ImageDraw.Draw(sheet).text((8, 12), text, fill=(235, 235, 235))
+    ImageDraw.Draw(sheet).text((8, 6), text, fill=(235, 235, 235))
+    if lay.get("doubts"):
+        ImageDraw.Draw(sheet).text((8, 22), "unsure: " + "; ".join(lay["doubts"])[:230], fill=(255, 170, 60))
     sheet.save(out / f"{login}.jpg", quality=88)
     return login
 
@@ -865,9 +976,8 @@ def cmd_gallery(root: Path, logins: list[str], tag: str, jobs: int) -> None:
 # --------------------------------------------------------------------------- main
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument(
-        "step", choices=["detect", "render", "frames", "score", "frames-score", "sharp", "gallery"]
-    )
+    steps = ["detect", "render", "frames", "score", "frames-score", "shorts", "sharp", "gallery"]
+    ap.add_argument("step", choices=steps)
     ap.add_argument("root", type=Path)
     ap.add_argument("logins", nargs="*")
     ap.add_argument("--set", default="base")
@@ -884,6 +994,8 @@ def main() -> int:
         cmd_score(a.root, a.logins, a.set, a.backend)
     elif a.step == "frames-score":
         cmd_frames_score(a.root, a.logins, a.set)
+    elif a.step == "shorts":
+        cmd_shorts(a.root, a.logins, a.set)
     elif a.step == "sharp":
         cmd_sharp(a.root, a.logins, a.set, a.jobs)
     elif a.step == "gallery":
