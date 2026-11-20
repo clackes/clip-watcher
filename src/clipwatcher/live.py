@@ -19,38 +19,13 @@ import signal
 import time
 from pathlib import Path
 
-from clipwatcher import config
+from clipwatcher import config, events
 
 log = logging.getLogger("clipwatcher.live")
 
 
 def data_root() -> Path:
     return Path(os.environ.get("CLIPWATCHER_DATA", config.ROOT / "work"))
-
-
-def _recent_chat(login: str, exclude: str, max_age_s: float = 600) -> list:
-    """Chat logged in the last baseline_min before this run (a restart), oldest first. Nothing when the
-    newest line is older than max_age_s: the stream was off and its old chat says nothing about now."""
-    import json
-
-    from clipwatcher.models import ChatMessage
-
-    base_s = float(config.global_config().get("detector", {}).get("baseline_min", 15)) * 60
-    now_ms = int(time.time() * 1000)
-    files = sorted((data_root() / "chat" / login.lower()).glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
-    out: list = []
-    for f in [f for f in files if f.stem != exclude][-2:]:
-        try:
-            for ln in f.read_text(encoding="utf-8").splitlines():
-                d = json.loads(ln)
-                if d["ts_ms"] >= now_ms - base_s * 1000:
-                    out.append(ChatMessage(**d))
-        except (OSError, ValueError, TypeError, KeyError):
-            continue
-    out.sort(key=lambda m: m.ts_ms)
-    if not out or out[-1].ts_ms < now_ms - max_age_s * 1000:
-        return []
-    return out
 
 
 GAME_POLL_S = 180.0  # while waiting: one streamlink metadata check per streamer every 3 min
@@ -100,12 +75,13 @@ async def left_game(platform: str, login: str, games: list[str], *, look=None, s
             return cat
 
 
-async def run_streamer(login: str, *, db, bot=None, staging_root: Path | None = None) -> None:
-    from clipwatcher.chat.live_log import LiveLog, logged
+async def run_streamer(
+    login: str, *, db, bot=None, staging_root: Path | None = None, ring_id: str | None = None
+) -> None:
     from clipwatcher.chat.twitch_irc import TwitchChat
-    from clipwatcher.detect.live import LiveDetector
     from clipwatcher.fastlane import FastLane, Steps
     from clipwatcher.ingest.recorder import Recorder
+    from clipwatcher.session import StreamSession
 
     scfg = config.streamer(login)
     platform = scfg.get("platform", "twitch")
@@ -114,12 +90,14 @@ async def run_streamer(login: str, *, db, bot=None, staging_root: Path | None = 
         game = await wait_for_game(platform, login, games)
         log.info("%s: live in %s, recording", login, game)
     if platform != "twitch":
-        from clipwatcher.chat.kick import KickHistoryChat
+        from clipwatcher.chat.kick import KickChat
 
-        chat_src = KickHistoryChat(login)
+        chat_src = KickChat(login)  # realtime websocket; reads the history after a reconnect
     else:
         chat_src = TwitchChat(login)
-    stream_id = time.strftime("%Y%m%d-%H%M%S")
+    # The ring folder outlives a lane restart (supervise passes the same id again): clips still being cut
+    # from it keep their pinned video. Only folders of earlier processes are swept below.
+    stream_id = ring_id or time.strftime("%Y%m%d-%H%M%S")
     buf = config.global_config().get("buffer", {})
     rec = Recorder(
         platform,
@@ -135,39 +113,43 @@ async def run_streamer(login: str, *, db, bot=None, staging_root: Path | None = 
     )
     steps = Steps()
     if bot is not None:
-        from clipwatcher.queue.telegram_bot import auto_publish, post_card
+        from clipwatcher.queue.telegram_bot import post_card
 
         steps.post_card = post_card
-        steps.auto_publish = auto_publish
     from clipwatcher.ingest.recorder import sweep_stale
 
     for d in sweep_stale(data_root() / "ring", login, keep=rec.dir):
         log.info("%s: removed stale ring %s", login, d)
     await rec.start()
     log.info("%s: recording to %s", login, rec.dir)
+    events.emit(
+        "recording", streamer=login, ring=str(rec.dir), platform=config.streamer(login).get("platform")
+    )
+    # The chat of a broadcast is kept whole on disk and read back (plus Twitch's replay of what was said
+    # before the bot joined) to build the spike baseline; the video above stays a rolling window.
+    session = StreamSession(login, root=data_root() / "chat", platform=platform)
+    watch = asyncio.create_task(session.watch())
     try:
-        chat = logged(chat_src, LiveLog(login, stream_id, data_root() / "chat"))
-        det = LiveDetector(login)
-        n = det.prime(_recent_chat(login, exclude=stream_id))
-        if n:
-            log.info("%s: chat baseline primed with %d logged messages", login, n)
-        lane = FastLane(login, chat, det, rec.ring, steps=steps, db=db, bot=bot,
-                        staging_root=staging_root)  # fmt: skip
+        lane = FastLane(login, chat_src, session, rec.ring, steps=steps, db=db, bot=bot,
+                        staging_root=staging_root, clips=session)  # fmt: skip
+        session.on_rescue = lane._start  # a spike under the gate that a viewer then clipped
         run = asyncio.create_task(lane.run())
         if not games:
             await run
             return
-        watch = asyncio.create_task(left_game(platform, login, games))
-        done, _ = await asyncio.wait({run, watch}, return_when=asyncio.FIRST_COMPLETED)
-        if watch in done:
+        gone = asyncio.create_task(left_game(platform, login, games))
+        done, _ = await asyncio.wait({run, gone}, return_when=asyncio.FIRST_COMPLETED)
+        if gone in done:
             # Moments already being rendered finish from the ring files on disk.
-            log.info("%s: now %s, recording stopped", login, watch.result())
+            log.info("%s: now %s, recording stopped", login, gone.result())
             run.cancel()
             await asyncio.gather(run, return_exceptions=True)
         else:
-            watch.cancel()
+            gone.cancel()
             run.result()
     finally:
+        watch.cancel()
+        session.close()
         await rec.stop()
 
 
@@ -182,23 +164,13 @@ def _alerter(bot):
     return send
 
 
-async def _publish_schedule(db, bot) -> None:
-    """publish.schedule: post the best waiting clip, at most max_per_day a day (owner, 19 Nov)."""
-    from clipwatcher.queue import schedule
-    from clipwatcher.queue.telegram_bot import scheduled_publish
-
-    async def upload(clip_id: str, n: int, cap: int) -> str | None:
-        return await scheduled_publish(bot, db, clip_id, n, cap)
-
-    await schedule.run(db, upload)
-
-
 async def supervise(login: str, **kw) -> None:
     delay = 5.0
+    ring_id = time.strftime("%Y%m%d-%H%M%S")
     while True:
         t0 = time.time()
         try:
-            await run_streamer(login, **kw)
+            await run_streamer(login, ring_id=ring_id, **kw)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -209,8 +181,9 @@ async def supervise(login: str, **kw) -> None:
 
 async def main_async(logins: list[str], minutes: float) -> None:
     from clipwatcher.queue.db import ClipDB
+    from clipwatcher.queue.staging import staging_root as shared_root
 
-    staging_root = Path(os.environ.get("CLIPWATCHER_STAGING", config.ROOT / "staging"))
+    staging_root = shared_root()  # the same folder the approval bot and the publishers use
     staging_root.mkdir(parents=True, exist_ok=True)
     db = ClipDB(staging_root / "clips.db")
     bot = None
@@ -220,7 +193,6 @@ async def main_async(logins: list[str], minutes: float) -> None:
         bot = build_application(db)
         await bot.initialize()
     tasks = [asyncio.create_task(supervise(lg, db=db, bot=bot, staging_root=staging_root)) for lg in logins]
-    tasks.append(asyncio.create_task(_publish_schedule(db, bot)))
     # SIGTERM (docker stop, launchd, kill) and Ctrl-C cancel the lanes so every recorder's finally-block
     # stops its streamlink/ffmpeg group instead of leaving them recording.
     stop = asyncio.Event()

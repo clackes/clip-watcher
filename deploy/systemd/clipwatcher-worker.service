@@ -1,17 +1,15 @@
 [Unit]
-Description=Clip Watcher render/judge worker
+Description=Clip Watcher batch worker (jobs queued with python -m clipwatcher.worker --enqueue-media)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-NotifyAccess=main
 User=clipbot
 WorkingDirectory=/opt/clip-watcher
 EnvironmentFile=/etc/clipwatcher/env
-LoadCredential=secrets.env:/etc/clipwatcher/secrets.env
-Environment=CLIPWATCHER_CREDENTIALS_FILE=%d/secrets.env
-ExecStart=/opt/clip-watcher/.venv/bin/python -m clipwatcher.queue.worker
+EnvironmentFile=/etc/clipwatcher/secrets.env
+ExecStart=/opt/clip-watcher/.venv/bin/python -m clipwatcher.worker
 Restart=always
 RestartSec=5
 NoNewPrivileges=true

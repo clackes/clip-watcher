@@ -82,16 +82,49 @@ class TwitchPoller:
 
 
 class KickPoller:
-    """UNVERIFIED against the live Kick public API: endpoint shape and field names are assumed."""
+    """Who is live on Kick. Without credentials (the usual case) it asks the public channel page data, one
+    request per channel, checked against the live service on 19 Nov 2026. With KICK_CLIENT_ID /
+    KICK_CLIENT_SECRET it asks Kick's official API in one request; that path could not be checked without
+    an app registered with Kick, its field names are as documented by Kick."""
 
     def __init__(
-        self, client_id: str | None = None, client_secret: str | None = None, http: HttpFn = http_json
+        self,
+        client_id: str | None = None,
+        client_secret: str | None = None,
+        http: HttpFn = http_json,
+        fetch: Callable[[str, dict], Any] | None = None,
     ):
         self.cid = client_id or os.environ.get("KICK_CLIENT_ID", "")
         self.secret = client_secret or os.environ.get("KICK_CLIENT_SECRET", "")
         self.http = http
+        self.fetch = fetch
         self._token: str | None = None
         self._exp = 0.0
+
+    def _poll_public(self, slugs: list[str]) -> Status:
+        from ..chat import kick
+
+        out: Status = {s.lower(): _offline(s) for s in slugs}
+        for slug in slugs:
+            try:
+                d = (self.fetch or kick._http_json)(f"{kick.API}/channels/{slug.lower()}", {})
+            except Exception:  # noqa: BLE001 - one unknown or blocked channel must not hide the others
+                continue
+            ls = d.get("livestream") or {}
+            if not ls or not ls.get("is_live", True):
+                continue
+            start = ls.get("start_time") or ls.get("created_at")
+            out[slug.lower()] = {
+                "live": True,
+                "stream_id": str(ls.get("id") or start or slug),
+                "viewers": ls.get("viewer_count", 0),
+                "title": ls.get("session_title", ""),
+                "game": ((ls.get("categories") or [{}])[0] or {}).get("name", ""),
+                "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(kick.iso_to_ms(start) / 1000))
+                if start
+                else None,
+            }
+        return out
 
     def token(self) -> str:
         if self._token and time.time() < self._exp - 60:
@@ -106,6 +139,8 @@ class KickPoller:
         return self._token
 
     def poll(self, slugs: list[str]) -> Status:
+        if not (self.cid and self.secret):
+            return self._poll_public(slugs)
         out: Status = {s.lower(): _offline(s) for s in slugs}
         q = urllib.parse.urlencode([("slug", s) for s in slugs])
         r = self.http(

@@ -42,6 +42,7 @@ def test_judge_ok_validates_and_clamps():
     assert "twitch.tv/gamer" in r.description  # credit enforced even when the model forgets it
     assert "subscribe" not in r.description.lower()  # generic engagement bait is dropped
     assert "Skill or luck? 👇" in r.description
+    assert len(r.description.split("\n")) == 4  # the begging line is replaced, the description stays whole
     assert c.kwargs["output_config"]["format"]["type"] == "json_schema"
     assert c.kwargs["system"][0]["cache_control"] == {"type": "ephemeral"}
 
@@ -76,6 +77,35 @@ def test_music_flag_is_informational():
     assert r.source == "claude" and r.ok and r.flags["mu"]
 
 
+def test_judge_client_has_a_timeout_and_one_retry(monkeypatch):
+    """The SDK's own defaults are 10 minutes per attempt and 3 attempts: a hung call held a render slot."""
+    import sys
+
+    from clipwatcher import config
+
+    made = []
+
+    class Anthropic:  # stands in for the SDK, which the test environment does not install
+        def __init__(self, **kw):
+            made.append(kw)
+            self.messages = SimpleNamespace(create=self.create)
+
+        def create(self, **kw):
+            raise TimeoutError("Request timed out.")
+
+    monkeypatch.setitem(sys.modules, "anthropic", SimpleNamespace(Anthropic=Anthropic))
+    monkeypatch.setattr(config, "global_config", lambda: {"judge": {"judge_model": "m"}})
+    r = claude.judge_clip(cand(), WORDS, [], [])  # no client passed: the lanes' path
+    assert made == [{"timeout": 60.0, "max_retries": 1}]
+    assert r.source == "heuristic" and r.funny_score == 7.5  # timed out: the fallback still answers
+    monkeypatch.setattr(config, "global_config", lambda: {"judge": {"timeout_s": 25, "max_retries": 0}})
+    claude.screen("t", [], "ti", "g")
+    assert made[-1] == {"timeout": 25.0, "max_retries": 0}
+    monkeypatch.setattr(config, "global_config", lambda: {"judge": {"timeout_s": None, "max_retries": None}})
+    claude._client()
+    assert made[-1] == {"timeout": 60.0, "max_retries": 1}
+
+
 def test_screen():
     p = {"funny_score": 6, "hype_score": 4, "works_without_context": True, "reject_reason": None}
     assert claude.screen("t", [], "ti", "g", client=FakeClient(resp(p)))["funny_score"] == 6
@@ -85,6 +115,10 @@ def test_screen():
 def test_load_wav_returns_float_samples(tmp_path):
     import struct
     import wave
+
+    import pytest
+
+    pytest.importorskip("numpy")  # comes with the judge extra (faster-whisper), not with dev
 
     from clipwatcher.judge.transcribe import load_wav
 

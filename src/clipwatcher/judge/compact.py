@@ -271,22 +271,44 @@ def credit(login: str, platform: str) -> str:
     return f"{'kick.com' if platform == 'kick' else 'twitch.tv'}/{login.lower()}"
 
 
-# Generic engagement begging ("like, comment and subscribe", "follow for more"): viewers skip it and
-# platforms down-rank it, so such lines are dropped from every description.
-_ASK = re.compile(r"\b(likes?|comments?|subscribe|follow|share)\b", re.I)
+# Generic engagement begging ("like, comment and subscribe", "follow for more", "Subscribe!"): viewers skip
+# it and platforms down-rank it, so such lines never reach a description (D10). Bait is an order to the
+# viewer. A line that tells the clip and happens to use the words ("he looked like he'd follow chat
+# anywhere") is not: counting like/comment/follow words dropped those and left three lines of four.
+_ASK = r"(?:like|comment|subscribe|sub|follow|share)"
+_CLAUSE = r"(?:^|[.!?…:;]\s*|[\u2600-\u27bf\U0001f300-\U0001faff]\ufe0f?\s*)"  # start of a line or clause
 _BAIT = re.compile(
-    r"\b(follow|subscribe) (us )?for (more|daily)|smash (that|the) like|drop a like|leave a like"
-    r"|don'?t forget to (like|subscribe|follow|comment)|comment below|like (and|&) subscribe",
+    "|".join(
+        (
+            rf"\b{_ASK}s?\s*(?:,|&|\+|/|\band\b)\s*(?:and\s+)?{_ASK}\b",  # like and subscribe; comment, like
+            r"\b(?:smash|hit|tap|press|mash|spam|click)\s+(?:that\s+|the\s+|a\s+)?"
+            r"(?:like|sub|subscribe|follow|bell|notif)",
+            r"\b(?:drop|leave|give)\s+(?:us\s+|me\s+|it\s+|this\s+)?(?:a|your)\s+(?:like|follow|sub|comment)s?\b",
+            rf"\b(?:don'?t|do\s+not)\s+forget\s+to\s+{_ASK}\b",
+            rf"\b(?:make\s+sure|be\s+sure|remember)\s+(?:to|you)\s+{_ASK}\b",
+            rf"\b(?:please|pls|plz)\s+{_ASK}\b",
+            r"\b(?:follow|subscribe|sub)\b[^.!?…]{0,30}?\bfor\s+(?:more|daily|part)\b(?!\s+than\b)",
+            r"\bcomment\s+(?:down\s+)?below\b",
+            # an order opening the line or a clause of it
+            rf"{_CLAUSE}(?:subscribe|sub\s+to)\b",
+            rf"{_CLAUSE}follow(?:\s+(?:so|to|if|us|me|now|today|and|along|here|(?:the|this|my|our)\s+channel)\b|\W*$)",
+            rf"{_CLAUSE}comment\b(?!\s+(?:sections?|of|on)\b)",
+            rf"{_CLAUSE}share(?:\s+(?:this|it|with|to|if|now)\b|\W*$)",
+            rf"{_CLAUSE}like(?:\s+(?:if|for\s+(?:more|part)|(?:this|the)\s+(?:video|clip|short|reel|post))\b|\W*$)",
+        )
+    ),
     re.I,
 )
 
 
 def is_bait(line: str) -> bool:
-    """True for a generic like/comment/follow request (two or more asks in one line, or a stock phrase)."""
+    """True when the line asks the viewer to like, comment, follow, subscribe or share: an order at the
+    start of the line or of a clause ("Subscribe!", "Like if you laughed"), two asks in a row ("like and
+    subscribe") or a stock phrase ("smash that like", "follow for more", "comment below"). Hashtag lines
+    are never bait."""
     if line.lstrip().startswith("#"):
         return False
-    asks = {m.group(1).lower().rstrip("s") for m in _ASK.finditer(line)}
-    return len(asks) >= 2 or bool(_BAIT.search(line))
+    return bool(_BAIT.search(line.strip()))
 
 
 def _fit_description(lines: list[str], want: str) -> str:
@@ -308,10 +330,28 @@ def _fit_description(lines: list[str], want: str) -> str:
     return ds[: CAPS["ds"]]
 
 
+def _stock_line(place: int, login: str, seed: int) -> str:
+    """The fallback copy's line for one place of the 4-line description (teaser, question, promise, tags)."""
+    n = login[:1].upper() + login[1:]
+    opts = (_FB_TEASERS, _FB_QUESTIONS, _FB_PROMISES, (f"#{n} #Clip #Shorts",))[place]
+    return opts[seed % len(opts)].format(n=n)
+
+
 def build_description(lines: list[str], login: str, platform: str) -> str:
-    """Drop engagement bait, make sure line 1 carries the streamer credit, fit the length cap."""
+    """Drop engagement bait, make sure line 1 carries the streamer credit, fit the length cap.
+
+    A description has four lines (D10). When the judge wrote all four and one of them begs, that line is
+    replaced by the stock line for its place, so the description keeps its shape; in any other shape bait
+    is only removed."""
     want = credit(login, platform)
-    lines = [ln.strip() for ln in lines if ln.strip() and not is_bait(ln)]
+    lines = [ln.strip() for ln in lines if ln.strip()]
+    if len(lines) == 4:
+        lines = [
+            _stock_line(i, login, sum(map(ord, login + ln))) if is_bait(ln) else ln
+            for i, ln in enumerate(lines)
+        ]
+    else:
+        lines = [ln for ln in lines if not is_bait(ln)]
     if not any(want in ln for ln in lines):
         lines = [(lines[0] + " " if lines else "") + f"🎥 {want}", *lines[1:]]
     return _fit_description(lines, want)

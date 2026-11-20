@@ -1,16 +1,14 @@
 [Unit]
-Description=Clip Watcher Telegram approval bot
+Description=Clip Watcher Telegram approval bot (buttons, uploads on Approve, missing cards)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-NotifyAccess=main
 User=clipbot
 WorkingDirectory=/opt/clip-watcher
 EnvironmentFile=/etc/clipwatcher/env
-LoadCredential=secrets.env:/etc/clipwatcher/secrets.env
-Environment=CLIPWATCHER_CREDENTIALS_FILE=%d/secrets.env
+EnvironmentFile=/etc/clipwatcher/secrets.env
 ExecStart=/opt/clip-watcher/.venv/bin/python -m clipwatcher.queue.telegram_bot
 Restart=always
 RestartSec=5

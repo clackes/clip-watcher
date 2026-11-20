@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import subprocess
 import tempfile
@@ -13,10 +14,14 @@ from pathlib import Path
 from clipwatcher import config
 from clipwatcher.config import ffmpeg_bin, ffprobe_bin
 from clipwatcher.models import Word
+from clipwatcher.render import remotion as rm
+from clipwatcher.render import seek
 from clipwatcher.render.branding import ACCENTS, BRANDING_DIR, FONTS_DIR, ensure_branding, hook_pill
 from clipwatcher.render.captions import caption_style, write_ass
 from clipwatcher.render.cold_open import settings as co_settings
 from clipwatcher.render.encoders import video_args
+
+log = logging.getLogger(__name__)
 
 STYLES = ("ambient", "gradient")
 Rect = tuple[int, int, int, int]  # x, y, w, h in source pixels
@@ -75,18 +80,18 @@ def default_game(info: SourceInfo) -> Rect:
 
 
 def esc_filter_path(p: str | Path) -> str:
-    out = []
-    drive = ""
-    if os.name == "nt":  # forward slashes; "C:" -> "C\\:" (option-level + filtergraph-level escaping)
+    r"""A path as a filter option value inside -filter_complex.
+
+    Two parsers read it. The filter's option parser treats \ ' : as special, the graph parser before it
+    \ ' [ ] , ; so a colon needs \\: and an apostrophe \\\' to arrive as themselves. One level only
+    (what this did before) left every ':' and "'" in a temp or fonts folder name breaking the render.
+    Windows: forward slashes, and the drive colon "C:" becomes "C\\:" like any other colon."""
+    if os.name == "nt":
         p = Path(p).as_posix()
-        if len(p) > 1 and p[1] == ":":
-            drive, p = p[0] + "\\\\:", p[2:]
-    out.append(drive)
-    for ch in str(p):
-        if ch in "\\:'[],;":
-            out.append("\\")
-        out.append(ch)
-    return "".join(out)
+    s = str(p)
+    for special in ("\\':", "\\'[],;"):  # option level first, then graph level on top of it
+        s = "".join("\\" + ch if ch in special else ch for ch in s)
+    return s
 
 
 def screen_credit(streamer: str) -> str | None:
@@ -107,22 +112,91 @@ def _run(cmd: list[str]) -> None:
         raise RuntimeError(f"ffmpeg failed ({r.returncode}): {r.stderr[-2000:]}")
 
 
+LENGTH_TOL_S = 0.5  # frame and audio-packet rounding is a few hundredths of a second
+
+
+def _verify(out: Path, want_s: float) -> None:
+    """Raise RuntimeError unless out is the clip that was asked for. ffmpeg exits 0 when the source ends
+    early: 6 s asked for 2 s before the end gave a 2 s file, a start past the end a file without streams,
+    and both were staged as clips.
+
+    The file must hold a picture and a sound stream, each want_s long. One case is let through with a
+    warning: the recording ended before the clip did (the live lane cuts what exists when the buffer never
+    fills, a VOD ends) and what is left still reaches the shortest clip allowed (render.clip_min_s, D14).
+    A rejected file is removed so nothing can stage it."""
+    from clipwatcher.judge.snap import clip_bounds
+
+    try:
+        r = subprocess.run(
+            [ffprobe_bin(), "-v", "error", "-show_entries", "stream=codec_type,duration:format=duration",
+             "-of", "json", str(out)],
+            capture_output=True, text=True, timeout=60,
+        )  # fmt: skip
+        info = json.loads(r.stdout or "{}")
+    except (OSError, subprocess.SubprocessError, ValueError):
+        info = {}
+
+    def seconds(v) -> float:
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0.0
+
+    whole = seconds(info.get("format", {}).get("duration"))
+    got, problem = want_s, None
+    for kind, name in (("video", "picture"), ("audio", "sound")):
+        st = next((x for x in info.get("streams", []) if x.get("codec_type") == kind), None)
+        if st is None:
+            problem = f"no {kind} stream"
+            break
+        got = min(got, seconds(st.get("duration")) or whole)
+        if got < min(want_s, clip_bounds()[0]) - LENGTH_TOL_S:
+            problem = f"{got:.1f} s of {name} for a {want_s:.1f} s clip"
+            break
+    if problem:
+        out.unlink(missing_ok=True)
+        raise RuntimeError(f"render failed, {problem} (does the recording end before the clip?): {out.name}")
+    if got < want_s - LENGTH_TOL_S:
+        log.warning("%s: %.1f s of %.1f s rendered, the recording ends there", out.name, got, want_s)
+
+
 LOUDNORM = "loudnorm=I=-14:TP=-1.5:LRA=11"
+# CFR: zoompan numbers its output frames 0, 1, 2 ... at the rate it is given and forgets their timestamps.
+# Fed a picture with holes (a live recording whose encoder dropped frames) it closes them: after half a
+# second of dropped frames the zoomed webcam ran half a second ahead of the sound and of the gameplay.
+# So every picture that can reach a zoom is first put on the constant output frame grid (fps filter,
+# which fills a hole by repeating the frame before it), where frame number and time are the same thing.
 
 
-def _segments(src: str, trim: float, keep: list[tuple[float, float]], out: str, *, audio: bool) -> str:
-    """src -> out: the kept stretches of the clip (jump cuts), back to back. 15 ms fades on audio cuts."""
+def _segments(
+    src: str, trim: float, keep: list[tuple[float, float]], out: str, *, audio: bool, fps: float = 30.0
+) -> str:
+    """src -> out: the kept stretches of the clip (jump cuts), back to back. 15 ms fades on audio cuts.
+
+    The picture is always put on the constant frame grid of fps first (see CFR). With cuts, keep lies on
+    that grid (jumpcut.on_frames): the picture is cut by frame number, the sound at the same instants, so
+    both pieces are equally long."""
     n = len(keep)
     tr, sp = ("atrim", "asetpts") if audio else ("trim", "setpts")
     if n == 1:
         a, b = keep[0]
-        return f"{src}{tr}=start={trim + a:.3f}:duration={b - a:.3f},{sp}=PTS-STARTPTS{out}"
+        grid = "" if audio else f",fps={fps:g}"
+        return f"{src}{tr}=start={trim + a:.3f}:duration={b - a:.3f},{sp}=PTS-STARTPTS{grid}{out}"
     tag = "ja" if audio else "jv"
-    g = [f"{src}{'asplit' if audio else 'split'}={n}" + "".join(f"[{tag}{i}]" for i in range(n))]
+    outs = "".join(f"[{tag}{i}]" for i in range(n))
+    if audio:
+        g = [f"{src}asplit={n}{outs}"]
+    else:  # constant frame rate from the clip start: frame k is k / fps into the clip
+        end = trim + keep[-1][1] + 1.0
+        g = [f"{src}trim=start={trim:.3f}:end={end:.3f},setpts=PTS-STARTPTS,fps={fps:g},split={n}{outs}"]
     for i, (a, b) in enumerate(keep):
         d = b - a
-        fade = f",afade=t=in:d=0.015,afade=t=out:st={max(0.0, d - 0.015):.3f}:d=0.015" if audio else ""
-        g.append(f"[{tag}{i}]{tr}=start={trim + a:.3f}:duration={d:.3f},{sp}=PTS-STARTPTS{fade}[{tag}{i}o]")
+        if audio:
+            cut = f"atrim=start={trim + a:.6f}:duration={d:.6f}"
+            fade = f",afade=t=in:d=0.015,afade=t=out:st={max(0.0, d - 0.015):.3f}:d=0.015"
+        else:
+            cut, fade = f"trim=start_frame={round(a * fps)}:end_frame={round(b * fps)}", ""
+        g.append(f"[{tag}{i}]{cut},{sp}=PTS-STARTPTS{fade}[{tag}{i}o]")
     g.append(
         "".join(f"[{tag}{i}o]" for i in range(n))
         + f"concat=n={n}:v={0 if audio else 1}:a={1 if audio else 0}{out}"
@@ -167,11 +241,13 @@ def _audio_chain(
 
 
 def _measure(src: Path, coarse: float, trim: float, dur: float, cold_open=None, keep=None) -> dict | None:
-    """loudnorm pass 1 over the exact audio the render will use; None on failure (dynamic mode then)."""
-    chain = _audio_chain(trim, dur, cold_open, keep=keep).replace(
+    """loudnorm pass 1 over the exact audio the render will use; None on failure (dynamic mode then).
+    It decodes the sound alone, so it seeks like every single-stream read (render/seek.py)."""
+    inp, at = seek.one_stream(src, coarse + trim)
+    chain = _audio_chain(at, dur, cold_open, keep=keep).replace(
         f"{LOUDNORM},aresample=48000[a]", f"{LOUDNORM}:print_format=json[a]"
     )
-    cmd = [ffmpeg_bin(), "-hide_banner", "-nostats", "-ss", f"{coarse:.3f}", "-i", str(src)]
+    cmd = [ffmpeg_bin(), "-hide_banner", "-nostats", *inp]
     cmd += ["-filter_complex", chain, "-map", "[a]", "-f", "null", "-"]
     try:
         err = subprocess.run(cmd, capture_output=True, text=True, timeout=120).stderr
@@ -248,8 +324,11 @@ def build_short_graph(
     gradient_idx: int, logo_idx: int, hook_idx: int, ass: Path, fontsdir: Path, cta_idx: int = -1,
     hook_s: float = 3.5, cold_open: tuple[float, float] | None = None, zoom: float = 1.15,
     measured: dict | None = None, src_wh: tuple[int, int] = (1920, 1080), fps: float = 30.0,
-    face: Rect | None = None,
+    face: Rect | None = None, overlay: tuple[int, rm.Overlay] | None = None, probe: str | None = None,
 ) -> str:  # fmt: skip
+    """overlay = (ffmpeg input index, Remotion caption overlay) laid over the picture after the ASS pass;
+    probe = a filter chain that replaces the captions and the sound: the graph then ends in the picture
+    under the captions, sampled for the auto colours."""
     g: list[str] = []
     use_bg = style == "ambient"
     grad = f"[{gradient_idx}:v]"
@@ -257,7 +336,7 @@ def build_short_graph(
         cs, cd = cold_open
         g.append(
             "[0:v]split=2[cov][mnv];"
-            f"[cov]trim=start={trim + cs:.3f}:duration={cd:.3f},setpts=PTS-STARTPTS[cov1];"
+            f"[cov]trim=start={trim + cs:.3f}:duration={cd:.3f},setpts=PTS-STARTPTS,fps={fps:g}[cov1];"  # CFR
             f"[mnv]trim=start={trim:.3f}:duration={dur:.3f},setpts=PTS-STARTPTS[srcv]"
         )
         trimmed = "[srcv]null"
@@ -286,8 +365,9 @@ def build_short_graph(
         last = grad
     sh = ":shortest=1" if not use_bg else ""
     if has_webcam:
-        cx, cy, cw, ch = cam
-        gx, gy, gw, gh = game
+        centre = (face[0] + face[2] / 2, face[1] + face[3] / 2) if face else None
+        cx, cy, cw, ch = fit_crop(cam, 1080 / 480, centre)  # the panel's shape: never stretched
+        gx, gy, gw, gh = fit_crop(game, 1080 / 540)
         g.append(f"[cs]crop={cw}:{ch}:{cx}:{cy},scale=1080:480:flags=lanczos,setsar=1[cam]")
         g.append(f"[gs]crop={gw}:{gh}:{gx}:{gy},scale=1080:540:flags=lanczos,setsar=1[game]")
         g.append(f"{last}[cam]overlay=0:{PANEL_Y}{sh}[v0]")
@@ -307,11 +387,19 @@ def build_short_graph(
         )
     else:
         g.append("[v3]null[v4]")
-    g.append(
-        f"[v4]ass=filename={esc_filter_path(ass)}:fontsdir={esc_filter_path(fontsdir)},format=yuv420p[v]"
-    )
+    if probe:
+        return ";".join([*g, f"[v4]{probe}[v]"])
+    g += _caption_tail("[v4]", ass, fontsdir, overlay)
     g.append(_audio_chain(trim, dur, cold_open, measured))
     return ";".join(g)
+
+
+def _caption_tail(last: str, ass: Path, fontsdir: Path, overlay: tuple[int, rm.Overlay] | None) -> list[str]:
+    """last -> [v]: the ASS pass (captions, or only the credit), then the Remotion overlay if there is one."""
+    burn = f"{last}ass=filename={esc_filter_path(ass)}:fontsdir={esc_filter_path(fontsdir)},format=yuv420p"
+    if not overlay:
+        return [burn + "[v]"]
+    return [burn + "[capbase]", rm.overlay_filter(overlay[0], overlay[1], "[capbase]", "[v]")]
 
 
 # -- split layout (owner, 17 Nov evening): full-bleed webcam over gameplay, 1080x960 each, captions on the
@@ -415,14 +503,18 @@ def fit_crop(rect: Rect, aspect: float, centre: tuple[float, float] | None = Non
     return int(cx) // 2 * 2, int(cy) // 2 * 2, cw, ch
 
 
-def split_game_crop(cam: Rect | None, fw: int, fh: int, aspect: float = 1080 / 960) -> Rect:
-    """Gameplay half of the split Short: the full frame height at the panel's aspect, centred, where the
-    action is in third-person games (owner, 18 Nov: the old crop of the strip above/beside the cam showed
-    sky and cut the character). The facecam overlay may show in a corner: sliding away from it cut the
-    character instead, which is worse. cam is kept for the signature."""
-    cw = min(fw, int(fh * aspect)) // 2 * 2
-    ch = fh // 2 * 2 if fw >= fh * aspect else int(cw / aspect) // 2 * 2
-    return (fw - cw) // 2 // 2 * 2, (fh - ch) // 2 // 2 * 2, cw, ch
+def split_crops(cam: Rect, game: Rect, face: Rect | None, src_wh: tuple[int, int]) -> tuple[Rect, Rect]:
+    """Source crops of the split layout's two 1080x960 panels: the largest crop of the panel's shape inside
+    the webcam rectangle, placed on the face (or on where it went: layout passes the span), and inside the
+    gameplay rectangle. Both stay inside the source picture."""
+    fw, fh = src_wh
+    centre = (face[0] + face[2] / 2, face[1] + face[3] / 2) if face else None
+    return fit_crop(_inside(cam, fw, fh), 1080 / 960, centre), fit_crop(_inside(game, fw, fh), 1080 / 960)
+
+
+def _inside(r: Rect, fw: int, fh: int) -> Rect:
+    x, y = min(max(r[0], 0), fw - 2), min(max(r[1], 0), fh - 2)
+    return x, y, max(2, min(r[2], fw - x)), max(2, min(r[3], fh - y))
 
 
 def zoom_expr(cold_open_s: float, zoom: float, beat_ts: list[float]) -> str | None:
@@ -454,9 +546,11 @@ def build_split_graph(
     face: Rect | None = None, beats: list[tuple] | None = None,
     sfx: list[tuple[float, int]] | None = None, sfx_gain_db: float = -4.0,
     keep: list[tuple[float, float]] | None = None, reframe_x: str | None = None,
+    overlay: tuple[int, rm.Overlay] | None = None, probe: str | None = None,
 ) -> str:  # fmt: skip
     """beats are on the output timeline (after the cold open); sfx = (output time, ffmpeg input index);
-    keep = jump-cut stretches of the clip (relative to its start), None = the whole clip."""
+    keep = jump-cut stretches of the clip (relative to its start), None = the whole clip.
+    overlay / probe: as in build_short_graph."""
     g: list[str] = []
     co_d = cold_open[1] if cold_open else 0.0
     keep = keep or [(0.0, dur)]
@@ -464,18 +558,18 @@ def build_split_graph(
         cs, cd = cold_open
         g.append(
             "[0:v]split=2[cov][mnv];"
-            f"[cov]trim=start={trim + cs:.3f}:duration={cd:.3f},setpts=PTS-STARTPTS[cov1];"
-            + _segments("[mnv]", trim, keep, "[mnv1]", audio=False)
+            f"[cov]trim=start={trim + cs:.3f}:duration={cd:.3f},setpts=PTS-STARTPTS,fps={fps:g}[cov1];"  # CFR
+            + _segments("[mnv]", trim, keep, "[mnv1]", audio=False, fps=fps)
             + ";[cov1][mnv1]concat=n=2:v=1:a=0[sv]"
         )
     else:
-        g.append(_segments("[0:v]", trim, keep, "[sv]", audio=False))
+        g.append(_segments("[0:v]", trim, keep, "[sv]", audio=False, fps=fps))
     z = zoom_expr(co_d, zoom, [b[0] for b in beats or []])
     if has_webcam:
-        centre = (face[0] + face[2] / 2, face[1] + face[3] / 2) if face else None
+        cam_crop, game_crop = split_crops(cam, game, face, src_wh)
         g.append("[sv]split=2[cs][gs]")
-        g.append(_zoomed("[cs]", fit_crop(cam, 1080 / 960, centre), (1080, 960), z, fps, "[cam]"))
-        g.append(_zoomed("[gs]", split_game_crop(cam, *src_wh), (1080, 960), None, fps, "[game]"))
+        g.append(_zoomed("[cs]", cam_crop, (1080, 960), z, fps, "[cam]"))
+        g.append(_zoomed("[gs]", game_crop, (1080, 960), None, fps, "[game]"))
         g.append("[cam][game]vstack=inputs=2,format=yuv420p,setsar=1[v1]")
     elif reframe_x:  # full-screen 9:16 window following the person (crop x is evaluated per frame)
         fw, fh = src_wh
@@ -507,9 +601,9 @@ def build_split_graph(
             d, f = FX_FILTERS[k]
             g.append(f"{last}{f}:enable='between(t,{t:.3f},{t + d:.3f})'[fx{i}]")
             last = f"[fx{i}]"
-    g.append(
-        f"{last}ass=filename={esc_filter_path(ass)}:fontsdir={esc_filter_path(fontsdir)},format=yuv420p[v]"
-    )
+    if probe:
+        return ";".join([*g, f"{last}{probe}[v]"])
+    g += _caption_tail(last, ass, fontsdir, overlay)
     audio = _audio_chain(trim, dur, cold_open, measured, keep=keep)
     if sfx:
         audio = audio[: audio.rindex("[a]")] + "[am];" + _sfx_mix(sfx, sfx_gain_db)
@@ -525,11 +619,14 @@ def render_short(
     cold_open: tuple[float, float] | None = None, face: Rect | str | None = None,
     beats: list[tuple] | None = None, layout: str | None = None,
     actions: list[tuple[float, float, str]] | None = None, reframe: bool = False,
+    report: dict | None = None,
 ) -> Path:  # fmt: skip
     """cold_open=(start, duration) relative to start_s: that moment plays first, zoomed in, then the clip.
     The output is duration + dur_s long; captions follow the clip part. beats = judge beats (t relative to
     start_s, kind, label): zoom punch, colour effect and sound-effect label. layout split (default) | stack;
-    split never draws the hook on the video (owner, 17 Nov)."""
+    split never draws the hook on the video (owner, 17 Nov). report, when given, is filled with what the
+    Short got: `captions` (the style on the video: the ASS fallback when an rm: template could not be
+    rendered) and then `captions_error` (why)."""
     src, out = Path(src), Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
     auto_style, auto_accent = pick_style(clip_id)
@@ -542,7 +639,7 @@ def render_short(
     game = parse_rect(game) or default_game(info)
     coarse, trim = _seek(start_s)
     ensure_branding(BRANDING_DIR)
-    fps = min(info.fps, 60.0)
+    fps = float(f"{min(info.fps, 60.0):g}")  # as ffmpeg is told it (-r, fps=): frame maths uses the same
     co_d = cold_open[1] if cold_open else 0.0
     split = (layout or layout_mode()) == "split"
     keep = [(0.0, dur_s)]
@@ -552,7 +649,7 @@ def render_short(
 
         protect = [(b[0] - jumpcut.PROTECT_S, b[0] + jumpcut.PROTECT_S) for b in beats or []]
         protect += [(a[0], a[1]) for a in actions or []]
-        keep = jumpcut.keep_ranges(words, dur_s, protect=protect)
+        keep = jumpcut.on_frames(jumpcut.keep_ranges(words, dur_s, protect=protect), fps)
         if len(keep) > 1:
             words = jumpcut.remap_words(words, keep)
             beats = [(t, *b[1:]) for b in beats or [] if (t := jumpcut.remap(b[0], keep)) is not None]
@@ -581,16 +678,13 @@ def render_short(
             game=game, has_webcam=has_webcam, words=words, beats=beats, streamer=streamer,
             captions=captions or caption_style(clip_id), cold_open=cold_open, face=parse_rect(face),
             profile=profile, sfx=pick_sfx(cues(beats, words)), keep=keep, actions=actions,
-            cue_beats=cues(beats, words),
+            cue_beats=cues(beats, words), report=report,
             reframe_x=_reframe_path(src, start_s, dur_s, info, keep, cold_open) if do_reframe else None,
         )  # fmt: skip
 
     with tempfile.TemporaryDirectory(prefix="clipwatcher_") as td:
         work = Path(td)
-        ass = write_ass(
-            work / "subs.ass", words, total, credit=screen_credit(streamer),
-            style=captions or caption_style(clip_id),
-        )  # fmt: skip
+        cap_style = captions or caption_style(clip_id)
         cmd = [ffmpeg_bin(), "-y", "-hide_banner", "-ss", f"{coarse:.3f}", "-i", str(src)]
         idx = 1
         logo_idx = idx
@@ -614,18 +708,87 @@ def render_short(
                 str(BRANDING_DIR / f"frame_gradient_{accent}.png"),
             ]
             idx += 1
-        graph = build_short_graph(
+        gk = dict(
             trim=trim, dur=dur_s, style=style, has_webcam=has_webcam, has_hook=bool(hook), cam=cam,
             game=game, gradient_idx=gradient_idx, logo_idx=logo_idx, hook_idx=hook_idx,
-            ass=ass, fontsdir=FONTS_DIR, hook_s=hook_seconds(), cold_open=cold_open,
+            fontsdir=FONTS_DIR, hook_s=hook_seconds(), cold_open=cold_open,
             zoom=co_settings()[1], measured=_measure(src, coarse, trim, dur_s, cold_open),
             src_wh=(info.width, info.height), fps=fps, face=parse_rect(face),
         )  # fmt: skip
-        cmd += ["-filter_complex", graph, "-map", "[v]", "-map", "[a]", *video_args(profile)]
-        cmd += ["-fps_mode", "cfr", "-r", f"{fps:g}", "-c:a", "aac", "-b:a", "192k", "-ar", "48000"]
-        cmd += ["-t", f"{total:.3f}", "-movflags", "+faststart", str(out)]
-        _run(cmd)
+        tail = [*video_args(profile), "-fps_mode", "cfr", "-r", f"{fps:g}", "-c:a", "aac", "-b:a", "192k"]
+        tail += ["-ar", "48000", "-t", f"{total:.3f}", "-movflags", "+faststart", str(out)]
+
+        def encode(style_: str, overlay: rm.Overlay | None) -> None:
+            shown = [] if overlay or rm.is_rm(style_) else words  # with an overlay the ASS file is the credit
+            ass = write_ass(
+                work / "subs.ass", shown, total, credit=screen_credit(streamer),
+                style="word" if rm.is_rm(style_) else style_,
+            )  # fmt: skip
+            extra = rm.overlay_input(overlay) if overlay else []
+            graph = build_short_graph(**gk, ass=ass, overlay=(idx, overlay) if overlay else None)
+            _run([*cmd, *extra, "-filter_complex", graph, "-map", "[v]", "-map", "[a]", *tail])
+
+        used = _encode_with_captions(
+            encode, cap_style, work, words, total, fps, rm.caption_box(1495, "stack"), None, None,
+            lambda p: [*cmd, "-filter_complex", build_short_graph(**gk, ass=work / "none.ass", probe=p)],
+        )  # fmt: skip
+        if report is not None:
+            report.update(used)
+    _verify(out, total)
     return out
+
+
+def _probe_background(cmd: list[str], total: float) -> rm.Background | None:
+    """The picture under the captions, sampled small and slow, for the auto colours. cmd is the render
+    command with a probe graph; None when it cannot be read (the fixed colours are used then)."""
+    try:
+        r = subprocess.run(
+            [*cmd, "-map", "[v]", "-t", f"{total:.3f}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+            capture_output=True, timeout=600,
+        )  # fmt: skip
+    except (OSError, subprocess.SubprocessError) as e:
+        log.warning("caption colours: could not sample the picture (%s), using the fixed colours", e)
+        return None
+    if r.returncode != 0 or not r.stdout:
+        log.warning("caption colours: sampling failed, using the fixed colours: %s", r.stderr[-300:])
+        return None
+    return rm.background_from_raw(r.stdout)
+
+
+def _encode_with_captions(
+    encode, style: str, work: Path, words: list[Word], total: float, fps: float, box: rm.Box,
+    beats: list | None, actions: list | None, probe_cmd,
+) -> dict:  # fmt: skip
+    """Run encode(style, overlay) with the captions the style asks for. For rm:<template> the overlay is
+    rendered first; if Node, the bundle or the render is missing or fails, or ffmpeg cannot use the result,
+    the clip is encoded with the ASS fallback style instead: captions never cost a clip. Returns what went
+    on the video: {"captions": style} and, after a fallback, "captions_error"."""
+    if not rm.is_rm(style):
+        encode(style, None)
+        return {"captions": style}
+    fb = rm.fallback_style()
+    try:
+        bg = None
+        if rm.color_mode() == "auto":
+            bg = _probe_background(probe_cmd(rm.probe_filter(box)), total)
+        overlay = rm.render_overlay(
+            words, total, rm.template_name(style), work / "rm", box=box, fps=fps, beats=beats,
+            actions=actions, background=bg,
+        )  # fmt: skip
+    except Exception as e:  # noqa: BLE001 - any failure here means ASS captions, never a lost clip
+        level = log.warning if isinstance(e, rm.RemotionError) else log.exception
+        level("Remotion captions %s not rendered (%s): using the ASS style %s", style, e, fb)
+        encode(fb, None)
+        return {"captions": fb, "captions_error": str(e)[-400:]}
+    try:
+        encode(style, overlay)
+    except RuntimeError as e:
+        if overlay is None:
+            raise
+        log.warning("render with the Remotion overlay failed (%s): using the ASS style %s", str(e)[-300:], fb)
+        encode(fb, None)
+        return {"captions": fb, "captions_error": str(e)[-400:]}
+    return {"captions": style}
 
 
 def _reframe_path(
@@ -659,7 +822,7 @@ def _render_split(
     captions: str, cold_open: tuple[float, float] | None, face: Rect | None, profile: str,
     sfx: list[tuple[float, Path]] | None = None, keep: list[tuple[float, float]] | None = None,
     actions: list[tuple[float, float, str]] | None = None, cue_beats: list[tuple] | None = None,
-    reframe_x: str | None = None,
+    reframe_x: str | None = None, report: dict | None = None,
 ) -> Path:  # fmt: skip
     """beats drive zoom and colour effects; cue_beats (labels and sounds moved off speech) the captions.
     reframe_x: crop x(t) of a full-screen 9:16 window that follows the person (no-webcam clips)."""
@@ -668,11 +831,8 @@ def _render_split(
         (7, 24, SEAM_Y + 75) if has_webcam else (7, 24, 170) if reframe_x else (7, 24, FRAME_Y + FRAME_H + 12)
     )
     use_logo = bool(config.global_config().get("render", {}).get("logo", True))
+    label_beats = beats if cue_beats is None else cue_beats
     with tempfile.TemporaryDirectory(prefix="clipwatcher_") as td:
-        ass = write_ass(
-            Path(td) / "subs.ass", words, total, credit=screen_credit(streamer), style=captions,
-            y=cap_y, beats=beats if cue_beats is None else cue_beats, credit_pos=credit_pos, actions=actions,
-        )  # fmt: skip
         cmd = [ffmpeg_bin(), "-y", "-hide_banner", "-ss", f"{coarse:.3f}", "-i", str(src)]
         if use_logo:
             cmd += ["-i", str(BRANDING_DIR / "top_logo.png")]
@@ -681,16 +841,37 @@ def _render_split(
             cmd += ["-i", str(f)]
         sfx_in = [(t, first + j) for j, (t, _) in enumerate(sfx or [])]
         gain = float(config.global_config().get("render", {}).get("sfx_gain_db", -4.0))
-        graph = build_split_graph(
+        gk = dict(
             trim=trim, dur=dur_s, has_webcam=has_webcam, cam=cam, game=game, logo_idx=1 if use_logo else -1,
-            ass=ass, fontsdir=FONTS_DIR, cold_open=cold_open, zoom=co_settings()[1],
+            fontsdir=FONTS_DIR, cold_open=cold_open, zoom=co_settings()[1],
             measured=_measure(src, coarse, trim, dur_s, cold_open, keep), src_wh=(info.width, info.height),
             fps=fps, face=face, beats=beats, sfx=sfx_in, sfx_gain_db=gain, keep=keep, reframe_x=reframe_x,
         )  # fmt: skip
-        cmd += ["-filter_complex", graph, "-map", "[v]", "-map", "[a]", *video_args(profile)]
-        cmd += ["-fps_mode", "cfr", "-r", f"{fps:g}", "-c:a", "aac", "-b:a", "192k", "-ar", "48000"]
-        cmd += ["-t", f"{total:.3f}", "-movflags", "+faststart", str(out)]
-        _run(cmd)
+        tail = [*video_args(profile), "-fps_mode", "cfr", "-r", f"{fps:g}", "-c:a", "aac", "-b:a", "192k"]
+        tail += ["-ar", "48000", "-t", f"{total:.3f}", "-movflags", "+faststart", str(out)]
+        n_inputs = first + len(sfx or [])
+
+        def encode(style: str, overlay: rm.Overlay | None) -> None:
+            blank = bool(overlay) or rm.is_rm(
+                style
+            )  # the overlay carries the words: the ASS file is the credit
+            ass = write_ass(
+                Path(td) / "subs.ass", [] if blank else words, total, credit=screen_credit(streamer),
+                style="word" if blank else style, y=cap_y, beats=None if blank else label_beats,
+                credit_pos=credit_pos, actions=None if blank else actions,
+            )  # fmt: skip
+            extra = rm.overlay_input(overlay) if overlay else []
+            graph = build_split_graph(**gk, ass=ass, overlay=(n_inputs, overlay) if overlay else None)
+            _run([*cmd, *extra, "-filter_complex", graph, "-map", "[v]", "-map", "[a]", *tail])
+
+        kind = "seam" if has_webcam else "reframe" if reframe_x else "frame"
+        used = _encode_with_captions(
+            encode, captions, Path(td), words, total, fps, rm.caption_box(cap_y, kind), label_beats, actions,
+            lambda p: [*cmd, "-filter_complex", build_split_graph(**gk, ass=Path(td) / "no.ass", probe=p)],
+        )  # fmt: skip
+        if report is not None:
+            report.update(used)
+    _verify(out, total)
     return out
 
 
@@ -709,4 +890,5 @@ def render_clean(src: Path, start_s: float, dur_s: float, out: Path, *, profile:
     cmd += ["-fps_mode", "cfr", "-r", f"{fps:g}", "-c:a", "aac", "-b:a", "192k", "-ar", "48000"]
     cmd += ["-t", f"{dur_s:.3f}", "-movflags", "+faststart", str(out)]
     _run(cmd)
+    _verify(out, dur_s)
     return out

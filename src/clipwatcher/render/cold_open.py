@@ -20,6 +20,7 @@ from typing import Any
 
 from clipwatcher import config
 from clipwatcher.models import Word
+from clipwatcher.render import seek
 
 LEAD_S = 2.5  # default render.cold_open_lead_s: start this long before the peak (owner, 17 Nov: the build-up,
 # not the middle of the shout, which alone is unintelligible)
@@ -55,10 +56,10 @@ def lead() -> float:
 
 def loudness(media: Path, start: float, dur: float) -> list[tuple[float, float]]:
     """EBU R128 momentary loudness (400 ms) every 100 ms as (t relative to start, LUFS). [] on failure."""
-    coarse = max(0.0, start - 6)  # D9: coarse input seek, exact trim in the graph
+    inp, trim = seek.one_stream(media, start)  # D9: coarse input seek, exact trim in the graph
     cmd = [
-        config.ffmpeg_bin(), "-nostats", "-hide_banner", "-ss", f"{coarse:.3f}", "-i", str(media), "-vn",
-        "-af", f"atrim=start={start - coarse:.3f}:duration={dur:.3f},asetpts=PTS-STARTPTS,"
+        config.ffmpeg_bin(), "-nostats", "-hide_banner", *inp, "-vn",
+        "-af", f"atrim=start={trim:.3f}:duration={dur:.3f},asetpts=PTS-STARTPTS,"
         "ebur128=metadata=1,ametadata=print:key=lavfi.r128.M:file=-", "-f", "null", "-",
     ]  # fmt: skip
     try:
@@ -234,7 +235,7 @@ def plan(
     media: Path, win_start: float, win_dur: float, chat_peak_rel: float, jr: Any, words: list[Word]
 ) -> Plan:
     """Trim + cold open for one candidate. jr is a JudgeResult or its dict; words relative to the window."""
-    from clipwatcher.judge.snap import heuristic_trim, reaction_s, snap_trim
+    from clipwatcher.judge.snap import clip_bounds, fit_length, heuristic_trim, reaction_s, snap_trim
 
     get = jr.get if isinstance(jr, dict) else lambda k, d=None: getattr(jr, k, d)
     judged = get("source") == "claude"
@@ -254,8 +255,12 @@ def plan(
     if not judged:
         t0, t1 = heuristic_trim(react if react is not None else reaction_s(None, chat_peak_rel), win_dur)
         t0, t1 = snap_trim(t0, t1, words, win_dur)
-    if not (0 <= t0 < t1 <= win_dur + 0.5 and t1 - t0 >= 12):
+    if not (0 <= t0 < t1 <= win_dur + 0.5):
         t0, t1 = 0.0, win_dur
+    f0, f1 = fit_length(t0, t1, win_dur)
+    if (f0, f1) != (round(t0, 2), round(t1, 2)):  # stretched or shortened: the new edges must not cut a word
+        t0, t1 = snap_trim(f0, f1, words, win_dur)
+        t0 = max(t0, t1 - clip_bounds()[1])
     beats = [(onset(series, t) if series else t, k, lb, sx) for t, k, lb, sx in raw_beats]
     return Plan(t0, t1, react, window(react, t0, t1 - t0, words), beats)
 

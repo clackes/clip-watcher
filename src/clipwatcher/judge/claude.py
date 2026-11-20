@@ -5,11 +5,13 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
 from .. import config
 from ..models import Candidate, JudgeResult, Word
+from . import ledger
 from .snap import heuristic_trim, reaction_s, snap_trim
 
 log = logging.getLogger(__name__)
@@ -63,14 +65,26 @@ def _prompt(name: str) -> str:
     return (PROMPTS / name).read_text()
 
 
-def _client() -> Any:
-    import anthropic
-
-    return anthropic.Anthropic()
-
-
 def _jcfg() -> dict[str, Any]:
     return config.global_config().get("judge", {})
+
+
+TIMEOUT_S = 60.0  # judge.timeout_s: one attempt; a judge call normally answers in well under 30 s
+MAX_RETRIES = 1  # judge.max_retries: retries after the first attempt (timeouts are retried too)
+
+
+def _client() -> Any:
+    """SDK client on a short leash. Left alone the SDK waits 10 minutes per attempt and makes 3: one hung
+    call held one of the machine's two render slots for up to half an hour. With judge.timeout_s and
+    judge.max_retries a call is over after about two minutes at worst, and the heuristic answers."""
+    import anthropic
+
+    j = _jcfg()
+    timeout, retries = j.get("timeout_s"), j.get("max_retries")
+    return anthropic.Anthropic(
+        timeout=float(TIMEOUT_S if timeout is None else timeout),
+        max_retries=int(MAX_RETRIES if retries is None else retries),
+    )
 
 
 def _call(client: Any, model: str, system: str, content: list[dict], schema: dict, max_tokens: int) -> dict:
@@ -81,6 +95,7 @@ def _call(client: Any, model: str, system: str, content: list[dict], schema: dic
         messages=[{"role": "user", "content": content}],
         output_config={"format": {"type": "json_schema", "schema": schema}},
     )
+    ledger.record(task="legacy", model=model, usage=_usage(resp))
     stop = getattr(resp, "stop_reason", None)
     if stop in ("refusal", "max_tokens"):
         raise JudgeError(f"stop_reason={stop}")
@@ -223,6 +238,9 @@ def judge_clip(
 
     login = cand.stream
     plat = platform or config.streamer(login).get("platform", "twitch")
+    # without a client handed in and without a key no call can be made: the fallback is not a failed call
+    # (with the SDK installed a client is still built, and only its first request says there is no key)
+    asked = client is not None or bool(os.environ.get("ANTHROPIC_API_KEY"))
     try:
         client = client or _client()
         payload = compact.build_payload(
@@ -238,6 +256,10 @@ def judge_clip(
         if out["pk"] is not None and not out["t0"] <= out["pk"] <= out["t1"]:
             out["pk"] = None
         log.info("judge %s %s sc=%s ok=%s usage=%s", task, login, out["sc"], out["ok"], usage)
+        ledger.record(
+            task=task, model=mdl, usage=usage, streamer=login, start_s=cand.start_s, ok=out["ok"],
+            score=out["sc"], flags=out["fl"], why=out["why"], title=out["tt"],
+        )  # fmt: skip
         reasons = [k for k, v in out["fl"].items() if v]
         return JudgeResult(
             funny_score=float(out["sc"]),
@@ -262,6 +284,9 @@ def judge_clip(
         )
     except Exception as e:  # noqa: BLE001
         log.warning("judge failed (%s); using heuristic", e)
+        if asked:  # a call was attempted: keep its error
+            tried = model or _jcfg().get("screen_model" if task == "screen" else "judge_model", "")
+            ledger.record(task=task, model=tried, streamer=cand.stream, start_s=cand.start_s, error=str(e))
         return heuristic_judge(cand, words, game=game or None)
 
 

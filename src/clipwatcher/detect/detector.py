@@ -1,4 +1,5 @@
-"""D3 spike detector: chat_score = 0.5*z(U) + 0.35*z(E) + 0.15*z(S), median/MAD over a trailing window."""
+"""D3/D13 spike detector: chat_score = weighted z of unique chatters (U), messages (M), keyword energy (E) and
+short/repeated share (S), each measured against the whole stream so far (detect.session.SessionTable)."""
 
 from __future__ import annotations
 
@@ -6,16 +7,21 @@ import bisect
 import math
 import re
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
+from itertools import groupby
+from typing import Any
 
 from clipwatcher import config
 from clipwatcher.detect.baseline import x_normal_at, x_normal_series
+from clipwatcher.detect.session import SessionTable
 from clipwatcher.models import Candidate, ChatMessage
 
-_MAD_K = 1.4826
-_FLOORS = {"U": 1.5, "E": 2.0, "S": 0.08}
+_FLOORS = {"U": 1.5, "M": 2.0, "E": 2.0, "S": 0.08}
+_WEIGHTS = {"U": 0.3, "M": 0.25, "E": 0.3, "S": 0.15}
 _SUB_BOMB_TYPES = {"submysterygift", "subgift"}
+_SUB_BOMB_MIN = 5
+_EPOCH_S = 10**8  # timestamps above this are wall-clock (a saved live log), below it seconds into a VOD
 
 
 @dataclass
@@ -62,10 +68,91 @@ def _norm(text: str) -> str:
     return " ".join(t.split())
 
 
+def _held_keys(keyword: str) -> str:
+    """Regex for a keyword that also matches it typed with held keys: LMAOOO, KEKWW, WWWW, LETS GOOO.
+
+    The last letter of a word may repeat any number of times (lmaoo, nahh) and so may a keyword that is one
+    letter throughout (W, kkkk, ?????: its own count is the minimum). A letter inside a word counts as held
+    only from three on (loool): twice is usually another word (god / good, bot / boot).
+    """
+    words = []
+    for word in keyword.split():
+        runs = [(ch, len(list(run))) for ch, run in groupby(word)]
+        parts = []
+        for i, (ch, n) in enumerate(runs):
+            c = re.escape(ch)
+            if len(runs) == 1 or i == len(runs) - 1:
+                parts.append(f"{c}{{{n},}}" if n > 1 else f"{c}+")
+            else:
+                parts.append(f"{c}{{{n}}}(?:{c}{{2,}})?")
+        words.append("".join(parts))
+    return r"\s+".join(words)
+
+
 def _kw_patterns(keywords: dict[str, float]) -> list[tuple[str, re.Pattern[str], float]]:
     return [
-        (k, re.compile(rf"(?<!\w){re.escape(k)}(?!\w)", re.IGNORECASE), float(w)) for k, w in keywords.items()
+        (k, re.compile(rf"(?<!\w){_held_keys(k)}(?!\w)", re.IGNORECASE), float(w))
+        for k, w in keywords.items()
     ]
+
+
+def settings(streamer: str, category: str | None = None) -> dict[str, Any]:
+    """Detector settings for one stream: config/global.yaml ``detector``, the overrides of the kind of
+    stream it is (``categories.<kind>.detector``, D16) and the per-streamer ones."""
+    sc = config.streamer(streamer)
+    kind = config.category_profile(category or sc.get("game"))[1]
+    cfg = {**config.global_config().get("detector", {}), **(kind.get("detector") or {})}
+    return {
+        "weights": dict(cfg.get("weights") or _WEIGHTS),  # a column without a weight does not count
+        "win": int(cfg.get("window_s", 10)),
+        "level_s": int(float(cfg.get("level_min", 60)) * 60),
+        "session_share": float(cfg.get("level_session_share", 0.5)),
+        "max_rows": int(float(cfg.get("session_max_h", 24)) * 3600),
+        "fire_z": float(cfg.get("fire_z", 3.0)),
+        "pre_z": float(cfg.get("pre_z", 2.0)),
+        "keep_z": float(cfg.get("keep_z", 5.0)),
+        "fire_q": float(sc.get("fire_q", cfg.get("fire_q", 0.98))),
+        "keep_q": float(sc.get("keep_q", cfg.get("keep_q", 0.99))),
+        "floor_z": float(cfg.get("floor_z", 2.0)),
+        "session_min_s": int(cfg.get("session_min_s", 900)),
+        "max_per_hour": int(sc.get("max_per_hour", cfg.get("max_per_hour", 8))),
+        "rescue_s": float(cfg.get("rescue_s", 600)),
+        "onset_max_s": float(cfg.get("onset_max_s", 15)),
+        "min_unique": int(sc.get("min_unique", cfg.get("min_unique", 8))),
+        "min_unique_floor": int(cfg.get("min_unique_floor", 3)),
+        "pct": float(cfg.get("min_unique_viewer_pct", 0.01)),
+        "mute_s": float(cfg.get("mute_after_notice_s", 75)),
+        "sub_bomb_min": int(cfg.get("sub_bomb_min", 10)),
+        "min_react": float(cfg.get("min_reaction_share", 0.0)),
+        "cooldown": float(cfg.get("cooldown_s", 45)),
+        "mature_s": float(cfg.get("live_mature_s", 15)),
+        "delay_s": float(sc.get("delay_s", cfg.get("default_delay_s", 8))),
+        "before_s": float(cfg.get("before_s", 20)),
+        "after_s": float(cfg.get("after_s", 10)),
+        "other_weight": float(cfg.get("other_weight", 0.5)),
+        "prompt_share": float(cfg.get("prompt_share", 0.4)),
+        "laughter": cfg.get("laughter_regex", ""),
+    }
+
+
+def new_table(p: Mapping[str, Any]) -> SessionTable:
+    return SessionTable(
+        _FLOORS, p["weights"], level_s=p["level_s"], session_share=p["session_share"], max_rows=p["max_rows"]
+    )
+
+
+def gate(table: SessionTable, p: Mapping[str, Any]) -> tuple[float, float]:
+    """(fire, keep) score thresholds.
+
+    Once the stream has ``session_min_s`` of history a spike is measured against the stream itself: it fires
+    in the top ``1 - fire_q`` of all seconds so far and is kept when its peak reaches the top ``1 - keep_q``.
+    A fixed z threshold cannot do this: 5.0 is routine in a 3-chatter chat and was never reached in three
+    hours of a 100k-viewer one. Before that, or with fire_q 0, the fixed fire_z / keep_z apply.
+    """
+    if p["fire_q"] and table.scored >= p["session_min_s"]:
+        fire = max(p["floor_z"], table.quantile(p["fire_q"]) or 0.0)
+        return fire, max(fire, table.quantile(p["keep_q"] or p["fire_q"]) or 0.0)
+    return p["fire_z"], p["keep_z"]
 
 
 def _build_records(
@@ -121,8 +208,7 @@ def _mute_spans(
         t = m.ts_ms / 1000
         recent = [n for n in notices if 0 <= (n.ts_ms / 1000 - t) <= 10]
         bomb = m.notice_type in _SUB_BOMB_TYPES and len(recent) >= sub_bomb_min and recent[0] is m
-        mystery = m.notice_type == "submysterygift" and (m.viewers is None or m.viewers >= sub_bomb_min)
-        if m.notice_type == "raid" or mystery or bomb:
+        if m.notice_type == "raid" or mystery_bomb(m, sub_bomb_min) or bomb:
             spans.append((t, t + mute_s))
     humans = [m for m in msgs if not (m.is_bot or m.is_notice)]
     times = [m.ts_ms for m in humans]
@@ -147,32 +233,29 @@ def _mute_spans(
     return spans
 
 
+def mystery_bomb(m: ChatMessage, n: int = _SUB_BOMB_MIN) -> bool:
+    """A mystery gift of n+ subs (or of unknown size): chat thanks the gifter, that is not a moment.
+    The lanes pass detector.sub_bomb_min (10, owner 18 Nov)."""
+    return m.notice_type == "submysterygift" and (m.viewers is None or m.viewers >= n)
+
+
 def _median(xs: list[float]) -> float:
     s = sorted(xs)
     n = len(s)
     return s[n // 2] if n % 2 else 0.5 * (s[n // 2 - 1] + s[n // 2])
 
 
-class _Robust:
-    """Trailing median/MAD, refreshed every few steps."""
-
-    def __init__(self, floor: float, size: int, refresh: int = 5):
-        self.hist: list[float] = []
-        self.floor, self.size, self.refresh = floor, size, refresh
-        self.med, self.sd, self._n = 0.0, floor, 0
-
-    def z(self, x: float) -> float:
-        return (x - self.med) / self.sd
-
-    def push(self, x: float) -> None:
-        self.hist.append(x)
-        if len(self.hist) > self.size:
-            self.hist.pop(0)
-        self._n += 1
-        if self._n % self.refresh == 1 or len(self.hist) < 30:
-            self.med = _median(self.hist)
-            mad = _median([abs(v - self.med) for v in self.hist])
-            self.sd = max(_MAD_K * mad, self.floor)
+def window_features(window: Sequence[_Rec]) -> tuple[int, int, float, float]:
+    """(U unique chatters, M messages, E keyword energy, S short/repeated share) of one 10 s window."""
+    if not window:
+        return 0, 0, 0.0, 0.0
+    best: dict[str, float] = {}
+    for r in window:
+        if r.weight > best.get(r.user, -1):
+            best[r.user] = r.weight
+    counts = Counter(r.norm for r in window)
+    s = sum(1 for r in window if r.short or counts[r.norm] > 1) / len(window)
+    return len(best), len(window), sum(best.values()), s
 
 
 def detect(
@@ -186,88 +269,90 @@ def detect(
     gap_s: float = 90,
     delay_s: float | None = None,
     bucket_s: int = 10,
+    category: str | None = None,
 ) -> list[Candidate]:
-    cfg = config.global_config().get("detector", {})
-    sc = config.streamer(streamer)
-    w = cfg.get("weights", {"U": 0.5, "E": 0.35, "S": 0.15})
-    win = int(cfg.get("window_s", 10))
-    fire_z, pre_z = float(cfg.get("fire_z", 3.0)), float(cfg.get("pre_z", 2.0))
-    min_unique = int(sc.get("min_unique", cfg.get("min_unique", 8)))
-    pct = float(cfg.get("min_unique_viewer_pct", 0.01))
-    mute_s = float(cfg.get("mute_after_notice_s", 75))
-    cooldown = float(cfg.get("cooldown_s", 45))
+    """Top moments of a finished chat. All of it is known, so every second is scored against the whole.
+    ``category``: the kind of stream, as the platform names it (its keywords and settings apply, D16)."""
+    p = settings(streamer, category)
+    win, cooldown, other_w = p["win"], p["cooldown"], p["other_weight"]
     if delay_s is None:
-        delay_s = float(sc.get("delay_s", cfg.get("default_delay_s", 8)))
-    hist_n = int(cfg.get("baseline_min", 15)) * 60
-    other_w = float(cfg.get("other_weight", 0.5))
-    prompt_max = float(cfg.get("prompt_share", 0.4))
-    u_need = max(min_unique, pct * viewers if viewers else 0)
+        delay_s = p["delay_s"]
+    u_need = max(p["min_unique"], p["pct"] * viewers if viewers else 0)
 
     msgs = sorted(messages, key=lambda m: m.ts_ms)
     if not msgs:
         return []
-    recs = _build_records(
-        msgs,
-        config.keywords_for(streamer),
-        float(cfg.get("other_weight", 0.5)),
-        cfg.get("laughter_regex", ""),
-    )
-    spans = _mute_spans(msgs, mute_s, min_unique, int(cfg.get("sub_bomb_min", 10)))
+    # A saved live log is stamped with wall-clock time: count from its first second, not from 1970.
+    first_s = int(msgs[0].ts_ms // 1000)
+    base = first_s if first_s >= _EPOCH_S else 0
+    if base:
+        msgs = [replace(m, ts_ms=m.ts_ms - base * 1000) for m in msgs]
+    recs = _build_records(msgs, config.keywords_for(streamer, category), other_w, p["laughter"])
+    spans = _mute_spans(msgs, p["mute_s"], p["min_unique"], p["sub_bomb_min"])
     horizon = int(msgs[-1].ts_ms // 1000) + 1
     per_sec: list[list[_Rec]] = [[] for _ in range(horizon + 1)]
     for sec, r in recs:
         per_sec[sec].append(r)
 
-    rU, rE, rS = (_Robust(_FLOORS[k], hist_n) for k in "UES")
-    min_react = float(cfg.get("min_reaction_share", 0.0))
-    steps: list[tuple[float, float, float, float, int, float] | None] = []
+    table = new_table(p)
+    table.auto = False
+    feats: list[tuple[int, int, float, float]] = []
+    muted: list[bool] = []
+    react: list[float] = []  # real-reaction share per window (min_reaction_share, owner 18 Nov)
     for t in range(horizon + 1):
         window = [r for s in range(max(0, t - win + 1), t + 1) for r in per_sec[s]]
-        if window:
-            best: dict[str, float] = {}
-            for r in window:
-                if r.weight > best.get(r.user, -1):
-                    best[r.user] = r.weight
-            counts = Counter(r.norm for r in window)
-            u, e = len(best), sum(best.values())
-            s = sum(1 for r in window if r.short or counts[r.norm] > 1) / len(window)
-        else:
-            u, e, s = 0, 0.0, 0.0
-        if t >= 60:
-            zu, ze, zs = rU.z(u), rE.z(e), rS.z(s)
-            score = w["U"] * zu + w["E"] * ze + w["S"] * zs
-            muted = any(a <= t <= b for a, b in spans) or (
-                bool(window) and prompted_share(window, other_w) >= prompt_max
-            )
-            steps.append(None if muted else (score, zu, ze, zs, u, reaction_share(window)))
-        else:
-            steps.append(None)
-        rU.push(u)
-        rE.push(e)
-        rS.push(s)
+        f = window_features(window)
+        mute = any(a <= t <= b for a, b in spans) or (
+            bool(window) and prompted_share(window, other_w) >= p["prompt_share"]
+        )
+        feats.append(f)
+        react.append(reaction_share(window))
+        muted.append(mute)
+        table.push(*f, scorable=t >= 60 and not mute, sec=t)
+    table.refresh()
+    fire_z, _ = gate(table, p)
+    pre_z = fire_z * p["pre_z"] / p["fire_z"]
+    lo = len(feats) - len(table)  # rows a marathon dropped from the table are not scored
+    steps: list[tuple[float, dict[str, float], int] | None] = [
+        None if muted[t] or t < 60 or t < lo else (*table.score(*table.row(t - lo)), f[0])
+        for t, f in enumerate(feats)
+    ]
 
     # Small channels: never ask for more unique chatters than the busiest 0.5% of windows reach.
-    us = sorted(st[4] for st in steps if st)
+    us = sorted(st[2] for st in steps if st)
     if us:
         q = us[int(0.995 * (len(us) - 1))]
-        u_need = max(int(cfg.get("min_unique_floor", 3)), min(u_need, q))
+        u_need = max(p["min_unique_floor"], min(u_need, q))
 
     series = x_normal_series(msgs, bucket_s)
     found: list[Candidate] = []
     t, last_fire = 0, -1e9
     while t < len(steps):
         st = steps[t]
-        if st is None or st[0] < fire_z or st[4] < u_need or st[5] < min_react or t - last_fire < cooldown:
+        if (
+            st is None
+            or st[0] < fire_z
+            or st[2] < u_need
+            or react[t] < p["min_react"]
+            or t - last_fire < cooldown
+        ):
             t += 1
             continue
         # best score within the cooldown span after the first fire
         end = min(len(steps), t + int(cooldown))
         best_t = max(
-            (i for i in range(t, end) if steps[i] is not None and steps[i][4] >= u_need),  # type: ignore[index]
+            (i for i in range(t, end) if steps[i] is not None and steps[i][2] >= u_need),  # type: ignore[index]
             key=lambda i: steps[i][0],  # type: ignore[index]
         )
-        first = t
-        while first - 1 >= 0 and steps[first - 1] is not None and steps[first - 1][0] >= pre_z:  # type: ignore[index]
+        # The moment is where the burst that reached that score began: walk back from the best second, but
+        # no further than a burst takes to build, or a long lively stretch drags the clip to its start.
+        first = best_t
+        while (
+            first - 1 >= 0
+            and best_t - (first - 1) <= p["onset_max_s"]
+            and steps[first - 1] is not None
+            and steps[first - 1][0] >= pre_z  # type: ignore[index]
+        ):
             first -= 1
         peak = max(0.0, first - delay_s)
         bs = steps[best_t]
@@ -275,14 +360,19 @@ def detect(
         found.append(
             Candidate(
                 stream=streamer,
-                peak_s=peak,
-                start_s=max(0.0, peak - before_s),
-                end_s=peak + after_s,
+                peak_s=base + peak,
+                start_s=base + max(0.0, peak - before_s),
+                end_s=base + peak + after_s,
                 chat_score=bs[0],
                 final_score=bs[0],
                 x_normal=x_normal_at(series, float(first), bucket_s),
-                unique_chatters=bs[4],
-                signals={"zU": bs[1], "zE": bs[2], "zS": bs[3], "fire_s": float(t)},
+                unique_chatters=bs[2],
+                signals={
+                    **{f"z{k}": v for k, v in bs[1].items()},
+                    "fire_s": float(base + t),
+                    "gate": fire_z,
+                    "session_pct": table.share_below(bs[0]),
+                },
             )
         )
         last_fire = t
@@ -294,7 +384,46 @@ def detect(
             kept.append(c)
         if len(kept) >= top:
             break
+    for rank, c in enumerate(sorted(found, key=lambda c: -c.chat_score), 1):
+        c.signals["session_rank"] = float(rank)
     return kept
+
+
+def loud_z(
+    series: Sequence[tuple[float, float]], peak_rel: float, before_s: float = 5.0, after_s: float = 12.0
+) -> float | None:
+    """How far the loudest instant around the moment stands above the clip's usual level, as a robust z.
+
+    series = [(seconds from the window start, loudness in dB)], peak_rel = the moment in the same seconds.
+    None without audio. A scream or a crash where chat spiked is D3's second confirmation of a moment.
+    """
+    levels = sorted(v for _, v in series if v > -70.0)  # below that is digital silence, not a level
+    near = [v for t, v in series if peak_rel - before_s <= t <= peak_rel + after_s and v > -70.0]
+    if len(levels) < 20 or not near:
+        return None
+    med = _median(levels)
+    mad = _median(sorted(abs(v - med) for v in levels))
+    return (max(near) - med) / max(1.4826 * mad, 1.0)
+
+
+def clip_confirmed(
+    windows: Sequence[tuple[float, float]], moment_s: float, pad_s: float = 5.0, base_s: float = 1800.0
+) -> bool:
+    """Did viewers clip this moment, and more than they clip any moment of this channel?
+
+    windows = the stretch each viewer clip covers. One clip is a confirmation on a channel where clips are
+    rare. On a big channel viewers clip something every few seconds (four clips a minute on a 37k-viewer Kick
+    stream), so some clip covers every moment: there the moment needs at least twice the clips that cover
+    an ordinary instant of the half hour before it.
+    """
+    near = sum(1 for a, b in windows if a - pad_s <= moment_s <= b + pad_s)
+    if not near:
+        return False
+    before = [(a, b) for a, b in windows if moment_s - base_s <= b < moment_s - 60]
+    # the half hour before, or as much of it as there are clips for (the bot may have joined ten minutes ago)
+    span = max(60.0, moment_s - 60 - max(moment_s - base_s, min(a for a, _ in windows)))
+    usual = sum(b - a + 2 * pad_s for a, b in before) / span  # clips covering an ordinary instant
+    return near >= max(1.0, 2.0 * usual)
 
 
 def confirm(
@@ -306,7 +435,7 @@ def confirm(
     """Optional confirmation hooks: viewer-made clips near the peak and audio loudness z-score."""
     bonus = 0.0
     sig = dict(candidate.signals)
-    if any(abs(t - candidate.peak_s) <= clip_tol_s for t in viewer_clip_times):
+    if clip_confirmed([(t - clip_tol_s, t + clip_tol_s) for t in viewer_clip_times], candidate.peak_s, 0.0):
         bonus += 1.5
         sig["viewer_clip"] = 1.0
     if loud_z is not None and loud_z > 0:

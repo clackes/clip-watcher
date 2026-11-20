@@ -151,21 +151,6 @@ def test_live_detector_matches_batch():
     assert not any(synth.RAID_AT - 20 <= p <= synth.RAID_AT + 90 for p in peaks)
 
 
-def test_live_detector_warms_up_and_primes_from_logged_chat():
-    base = 1_700_000_000_000
-    calm = [ChatMessage(base + t * 1000, f"u{t % 40}", f"talking {t}") for t in range(400)]
-    spike = [ChatMessage(base + 400_000 + i * 100, f"fan{i}", "KEKW LMAO") for i in range(80)]
-    cold = LiveDetector("nobody")
-    cold.warmup_s = 600
-    fired = [c for m in calm + spike if (c := cold.feed(m))] + cold.drain()
-    assert fired == []  # 400 s in: still learning this chat
-    warm = LiveDetector("nobody")
-    warm.warmup_s = 600
-    assert warm.prime([ChatMessage(m.ts_ms - 600_000, m.user, m.text) for m in calm]) == 400
-    fired = [c for m in calm + spike if (c := warm.feed(m))] + warm.drain()
-    assert len(fired) == 1  # the same spike after a restart that primed the baseline
-
-
 def test_live_detector_tick_finalizes_quiet_chat():
     det = LiveDetector("x")
     assert det.feed(ChatMessage(ts_ms=1_000_000, user="a", text="hi")) is None

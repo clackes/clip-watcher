@@ -1,0 +1,153 @@
+{
+  "title": "Creep",
+  "description": "Horror: dripping acid-green caps on black with a sickly glow. Letters ooze down into place one by one and never hold quite still; the spoken word turns hotter and its heart beats twice; shouted words are blood red and shudder; before a pause the letters melt through the floor.",
+  "font": {
+    "family": "Creepster",
+    "file": "captions/Creepster-Regular.ttf",
+    "weight": 400,
+    "style": "normal"
+  },
+  "emphFont": null,
+  "size": 136,
+  "minSize": 64,
+  "lineHeight": 1.14,
+  "letterSpacing": 0.02,
+  "wordGap": 0.3,
+  "case": "upper",
+  "emphScale": 1.1,
+  "grow": 0.05,
+  "tilt": 0,
+  "margin": {
+    "x": 40,
+    "y": 22
+  },
+  "paging": {
+    "mode": "page",
+    "maxWords": 2,
+    "maxLines": 2,
+    "gapS": 0.6,
+    "holdS": 0.5,
+    "lingerS": 0.25,
+    "minShowS": 0.14,
+    "leadS": 0.03,
+    "overlapS": 0
+  },
+  "timing": {
+    "enterS": 0.3,
+    "exitS": 0.34,
+    "activeInS": 0.1,
+    "activeOutS": 0.2,
+    "colorS": 0.25,
+    "staggerS": 0.1
+  },
+  "colors": {
+    "text": "#8DFF2F",
+    "active": "#FFE600",
+    "emph": "#FF6B5E",
+    "stroke": "#000000",
+    "shadow": "#000000",
+    "plate": "#000000",
+    "plateText": "#FFFFFF",
+    "accent": "#8DFF2F",
+    "accent2": "#FFFFFF",
+    "cycle": [
+      "#8DFF2F"
+    ]
+  },
+  "auto": {
+    "candidates": {
+      "text": [
+        "lime",
+        "mint",
+        "cyan"
+      ],
+      "active": [
+        "yellow",
+        "gold",
+        "orange"
+      ],
+      "emph": [
+        "red",
+        "pink",
+        "violet"
+      ],
+      "stroke": [
+        "black"
+      ]
+    },
+    "pairs": [
+      [
+        "text",
+        "stroke"
+      ],
+      [
+        "active",
+        "stroke"
+      ],
+      [
+        "emph",
+        "stroke"
+      ],
+      [
+        "accent2",
+        "stroke"
+      ]
+    ],
+    "avoidHue": [
+      "text",
+      "active",
+      "emph"
+    ],
+    "distinct": [
+      [
+        "text",
+        "active"
+      ],
+      [
+        "active",
+        "emph"
+      ],
+      [
+        "text",
+        "emph"
+      ]
+    ]
+  },
+  "label": {
+    "size": 124,
+    "enterS": 0.3,
+    "exitS": 0.3,
+    "rotate": 0
+  },
+  "fx": {
+    "halo": 0.08,
+    "drip": 0.05,
+    "glow": 0.11,
+    "glowAlpha": 0.075,
+    "glowSteps": 7,
+    "sheen": 0.3,
+    "sheenTo": 0.7,
+    "oozeFrom": 0.56,
+    "oozeFreq": 2.6,
+    "oozeDamp": 0.36,
+    "letterS": 0.035,
+    "arriveS": 0.22,
+    "arriveShare": 0.45,
+    "tremble": 0.012,
+    "trembleHz": 1.6,
+    "activeTop": 0.35,
+    "beat": 0.1,
+    "beat2": 0.6,
+    "beatGapS": 0.22,
+    "beatEveryS": 0.85,
+    "beatUpS": 0.09,
+    "beatDownS": 0.13,
+    "beatGlow": 0.5,
+    "beatTwistDeg": 0.5,
+    "shudder": 0.03,
+    "shudderHz": 4.5,
+    "shudderS": 0.6,
+    "meltStretch": 1.9,
+    "meltStagger": 0.35
+  }
+}

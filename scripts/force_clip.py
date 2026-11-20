@@ -17,6 +17,7 @@ from clipwatcher.fastlane import FastLane
 from clipwatcher.ingest.ringbuffer import RingBuffer
 from clipwatcher.models import Candidate
 from clipwatcher.queue.db import ClipDB
+from clipwatcher.queue.staging import staging_root
 
 
 async def _empty():
@@ -36,8 +37,8 @@ def main() -> None:
     end = min(time.time(), ring.covered_until_ms() / 1000) - a.secs_ago
     start = max(end - a.dur, ring.segments()[0]["start_ms"] / 1000 + 1)
     cand = Candidate(a.login, start + 20, start, end, chat_score=9.9, final_score=9.9)
-    root = Path("staging")
-    root.mkdir(exist_ok=True)
+    root = staging_root()
+    root.mkdir(parents=True, exist_ok=True)
     db = ClipDB(root / "clips.db")
 
     async def run():

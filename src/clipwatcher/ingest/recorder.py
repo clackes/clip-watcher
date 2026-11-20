@@ -171,6 +171,7 @@ class Recorder:
         self.on_alert = on_alert  # async callable(text), e.g. a Telegram alert
         self.lag_alert_s = float(config.global_config().get("buffer", {}).get("lag_alert_s", 60))
         self._lagging = False
+        self._last_ingest = time.time()  # wall clock of the last segment that arrived
 
     def newest_segment_age_s(self, now: float | None = None) -> float | None:
         rows = self.ring.segments()
@@ -212,10 +213,22 @@ class Recorder:
                 self._last_end[run_id] = start + dur_ms
                 n += 1
             self._ingested.add(name)
+        if n:
+            self._last_ingest = time.time()
         return n
+
+    def drop_unindexed(self) -> list[str]:
+        """Delete segment files the index does not know. When a lane restarts into the same folder, the
+        last segments of the previous run were written but never ingested, so pruning would never see them."""
+        known = {r["name"] for r in self.ring.segments()}
+        gone = [f.name for f in self.dir.glob("seg_*.ts") if f.name not in known]
+        for name in gone:
+            (self.dir / name).unlink(missing_ok=True)
+        return gone
 
     async def start(self) -> None:
         await self.stop()
+        self.drop_unindexed()
         await self._spawn()
         self._tasks.append(asyncio.create_task(self._ingest_loop()))
 
@@ -266,9 +279,22 @@ class Recorder:
             self.ads.feed(raw.decode(errors="replace"))
 
     async def _ingest_loop(self) -> None:
+        """Runs for as long as the recorder does. One failed check (a full disk while rewriting the index,
+        a file another thread holds open) must not end it: ffmpeg would keep writing segments that nobody
+        ingests or prunes until the disk is full."""
+        failing = False
         while True:
             await asyncio.sleep(self.segment_s)
-            await self.check_once()
+            try:
+                await self.check_once()
+                failing = False
+            except Exception as e:  # noqa: BLE001 - keep ingesting and pruning whatever went wrong once
+                log.exception("%s: recorder check failed; retrying in %s s", self.login, self.segment_s)
+                if not failing:  # one alert per streak of failures, not one every 10 s
+                    failing = True
+                    await self._alert(
+                        f"{self.login}: recorder check failed ({type(e).__name__}: {e}); retrying"
+                    )
 
     async def check_once(self) -> None:
         """Ingest finished segments, prune, and pause/resume recording on low disk."""
@@ -300,6 +326,11 @@ class Recorder:
         quality, and clips would be cut from minutes-old video. Clears when it catches up."""
         lag = self.newest_segment_age_s()
         if lag is None or self.paused:
+            return
+        if time.time() - self._last_ingest > max(6 * self.segment_s, 60):
+            # Nothing is arriving at all: the broadcast ended or the channel is offline. Behind live means
+            # segments keep coming but old; a finished stream used to raise this alert every time.
+            self._lagging = False
             return
         if lag > self.lag_alert_s and not self._lagging:
             self._lagging = True
@@ -339,6 +370,22 @@ def kill_group(pgid: int, sig: int) -> None:
         pass
 
 
+def still_recorder(pid: int) -> bool:
+    """Is this pid, written down by an earlier run, still its recorder pipeline? After a reboot the number
+    may belong to any process, and the sweep kills what it finds with SIGKILL. Unknown (no ps, Windows)
+    counts as yes: an orphaned recorder fills the disk."""
+    if os.name == "nt":
+        return True
+    try:
+        out = subprocess.run(
+            ["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True, timeout=5
+        )
+    except (OSError, subprocess.SubprocessError):
+        return True
+    cmd = out.stdout.strip()
+    return not cmd or "streamlink" in cmd  # gone already: killing the group is a no-op
+
+
 def sweep_stale(ring_root: Path, login: str, keep: Path | None = None) -> list[Path]:
     """Kill recorders left by a previous run of this login and delete their ring folders.
 
@@ -353,7 +400,9 @@ def sweep_stale(ring_root: Path, login: str, keep: Path | None = None) -> list[P
         pf = d / "pids.json"
         if pf.exists():
             try:
-                kill_group(int(json.loads(pf.read_text())["pgid"]), _SIGKILL)
+                pgid = int(json.loads(pf.read_text())["pgid"])
+                if still_recorder(pgid):
+                    kill_group(pgid, _SIGKILL)
             except (ValueError, KeyError):
                 pass
         shutil.rmtree(d, ignore_errors=True)

@@ -1,0 +1,151 @@
+{
+  "title": "Glitch",
+  "description": "RGB split: white caps on a dark outline with a cyan and a pink copy behind them. Words arrive torn into three bands that slide into register while the copies snap together, the spoken word takes the highlight with a split pulse, shouted words tear again and lean, and before a pause the copies fly apart and the word collapses to a line.",
+  "font": {
+    "family": "Russo One",
+    "file": "captions/RussoOne-Regular.ttf",
+    "weight": 400,
+    "style": "normal"
+  },
+  "emphFont": null,
+  "size": 86,
+  "minSize": 52,
+  "lineHeight": 1.14,
+  "letterSpacing": 0.01,
+  "wordGap": 0.42,
+  "case": "upper",
+  "emphScale": 1,
+  "grow": 0,
+  "tilt": 0,
+  "margin": {
+    "x": 46,
+    "y": 22
+  },
+  "paging": {
+    "mode": "page",
+    "maxWords": 3,
+    "maxLines": 2,
+    "gapS": 0.6,
+    "holdS": 0.5,
+    "lingerS": 0.25,
+    "minShowS": 0.14,
+    "leadS": 0.03,
+    "overlapS": 0
+  },
+  "timing": {
+    "enterS": 0.2,
+    "exitS": 0.18,
+    "activeInS": 0.08,
+    "activeOutS": 0.16,
+    "colorS": 0.25,
+    "staggerS": 0.04
+  },
+  "colors": {
+    "text": "#FFFFFF",
+    "active": "#FFE600",
+    "emph": "#FF6B5E",
+    "stroke": "#000000",
+    "shadow": "#000000",
+    "plate": "#000000",
+    "plateText": "#FFFFFF",
+    "accent": "#00E5FF",
+    "accent2": "#FF70CB",
+    "cycle": [
+      "#00E5FF",
+      "#FF70CB"
+    ]
+  },
+  "auto": {
+    "candidates": {
+      "text": [
+        "white"
+      ],
+      "active": [
+        "yellow",
+        "lime",
+        "orange"
+      ],
+      "emph": [
+        "red",
+        "orange",
+        "lime",
+        "yellow"
+      ],
+      "stroke": [
+        "black"
+      ],
+      "accent": [
+        "cyan",
+        "sky",
+        "mint"
+      ],
+      "accent2": [
+        "pink",
+        "violet"
+      ]
+    },
+    "pairs": [
+      [
+        "text",
+        "stroke"
+      ],
+      [
+        "active",
+        "stroke"
+      ],
+      [
+        "emph",
+        "stroke"
+      ]
+    ],
+    "avoidHue": [
+      "active",
+      "emph"
+    ],
+    "distinct": [
+      [
+        "active",
+        "emph"
+      ],
+      [
+        "accent",
+        "accent2"
+      ]
+    ]
+  },
+  "label": {
+    "size": 88,
+    "enterS": 0.2,
+    "exitS": 0.16,
+    "rotate": 0
+  },
+  "fx": {
+    "halo": 0.085,
+    "split": 0.05,
+    "splitDy": 0.35,
+    "breathe": 0.45,
+    "breatheHz": 1.1,
+    "enterSplit": 0.24,
+    "tearX": 0.17,
+    "tearS": 0.3,
+    "cutA": 0.28,
+    "cutB": 0.52,
+    "cutVary": 0.015,
+    "bandC": 0.45,
+    "tearVary": 0.4,
+    "attack": 0.25,
+    "pulseSplit": 0.1,
+    "pulseS": 0.3,
+    "emphPulse": 1.8,
+    "emphTear": 0.17,
+    "emphTearS": 0.34,
+    "emphSkew": 9,
+    "emphGrow": 1.07,
+    "emphShakeS": 0.4,
+    "emphShakeHz": 5,
+    "emphHot": 0.35,
+    "exitSplit": 0.25,
+    "exitThin": 0.08,
+    "exitHalo": 2.4
+  }
+}

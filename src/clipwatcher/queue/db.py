@@ -30,6 +30,22 @@ CREATE TABLE IF NOT EXISTS audit(
 );
 """
 
+# Columns added to clips after the first release; _migrate() adds them to an existing file.
+COLUMNS = {
+    # the clip's approval card in Telegram: where it is, whether it carries the video, and the lease of
+    # whoever is posting it right now (the live lane or the approval bot)
+    "card_chat_id": "INTEGER",
+    "card_message_id": "INTEGER",
+    "card_video": "INTEGER",
+    "card_lease_until": "REAL",
+    "card_attempts": "INTEGER",
+    "card_replaced": "INTEGER",  # message id of the card of an older render, to retire when the new one is up
+    # why the last upload of an APPROVED clip did not finish (shown on the card); NULL once it is published
+    "publish_error": "TEXT",
+}
+LEGACY_CARD = 0  # card_message_id of clips queued before cards were tracked: taken as posted, never re-posted
+CARD_MAX_ATTEMPTS = 3
+
 
 class ClipDB:
     def __init__(self, path: str | Path):
@@ -38,6 +54,26 @@ class ClipDB:
         c = self._conn()
         c.execute("PRAGMA journal_mode=WAL")
         c.executescript(SCHEMA)
+        self._migrate(c)
+
+    def _migrate(self, c: sqlite3.Connection) -> None:
+        """Add COLUMNS to a file made by an older version (CREATE TABLE IF NOT EXISTS leaves it alone)."""
+        have = {r["name"] for r in c.execute("PRAGMA table_info(clips)")}
+        if all(name in have for name in COLUMNS):
+            return
+        c.execute("BEGIN IMMEDIATE")  # the lane and the bot may open the same file at the same moment
+        try:
+            have = {r["name"] for r in c.execute("PRAGMA table_info(clips)")}
+            for name, kind in COLUMNS.items():
+                if name in have:
+                    continue
+                c.execute(f"ALTER TABLE clips ADD COLUMN {name} {kind}")
+                if name == "card_message_id":
+                    c.execute("UPDATE clips SET card_message_id=?", (LEGACY_CARD,))
+            c.execute("COMMIT")
+        except Exception:
+            c.execute("ROLLBACK")
+            raise
 
     def _conn(self) -> sqlite3.Connection:
         c = getattr(self._local, "c", None)
@@ -61,17 +97,43 @@ class ClipDB:
             q, a = q + " WHERE clip_id=?", (clip_id,)
         return self._conn().execute(q + " ORDER BY id", a).fetchall()
 
+    def last_audit(self, clip_id: str, action_like: str) -> sqlite3.Row | None:
+        """The newest audit row of a clip whose action matches a LIKE pattern (e.g. 'youtube%')."""
+        return (
+            self._conn()
+            .execute(
+                "SELECT * FROM audit WHERE clip_id=? AND action LIKE ? ORDER BY id DESC LIMIT 1",
+                (clip_id, action_like),
+            )
+            .fetchone()
+        )
+
     # -- clips -------------------------------------------------------------
     def add_clip(
         self, clip_id: str, streamer: str, meta: dict[str, Any] | None = None, score: float = 0.0
-    ) -> None:
+    ) -> bool:
+        """Queue a staged clip as READY. Staging the same id again refreshes meta and score only while the
+        clip is still READY; a claimed, approved, rejected or published clip keeps its state, operator and
+        video ids (returns False). One atomic statement, like the claim.
+
+        A re-staged clip has a new video, so it also needs a new card: the old card's id moves to
+        card_replaced and post_card retires that card once the new one is up."""
         now = time.time()
-        self._conn().execute(
-            "INSERT OR REPLACE INTO clips(id,streamer,state,meta_json,created_at,updated_at,score)"
-            " VALUES(?,?,?,?,?,?,?)",
+        known = self.get(clip_id) is not None  # only picks the audit label
+        cur = self._conn().execute(
+            "INSERT INTO clips(id,streamer,state,meta_json,created_at,updated_at,score)"
+            " VALUES(?,?,?,?,?,?,?)"
+            " ON CONFLICT(id) DO UPDATE SET streamer=excluded.streamer, meta_json=excluded.meta_json,"
+            " score=excluded.score, updated_at=excluded.updated_at, card_replaced=CASE"
+            " WHEN clips.card_message_id>0 THEN clips.card_message_id ELSE clips.card_replaced END,"
+            " card_message_id=NULL, card_lease_until=NULL, card_attempts=NULL WHERE clips.state='READY'",
             (clip_id, streamer, READY, json.dumps(meta or {}), now, now, score),
         )
-        self.log("system", "add", clip_id, f"score={score}")
+        if cur.rowcount != 1:
+            self.log("system", "restage_refused", clip_id, f"state={self.state(clip_id)}")
+            return False
+        self.log("system", "restage" if known else "add", clip_id, f"score={score}")
+        return True
 
     def get(self, clip_id: str) -> dict[str, Any] | None:
         r = self._conn().execute("SELECT * FROM clips WHERE id=?", (clip_id,)).fetchone()
@@ -129,6 +191,25 @@ class ClipDB:
         ok = self._holder_update(clip_id, operator, "state='READY', claimed_by=NULL, claim_until=NULL", ())
         self.log(operator, "release" if ok else "release_denied", clip_id)
         return ok
+
+    def release_expired(self) -> list[str]:
+        """Put clips whose claim ran out back to READY and return their ids. One guarded UPDATE per clip: a
+        take-over by another operator at the same moment either happens before it or after it, never half."""
+        now = time.time()
+        rows = self._conn().execute(
+            "SELECT id, claimed_by FROM clips WHERE state='CLAIMED' AND claim_until<?", (now,)
+        )
+        freed = []
+        for r in rows.fetchall():
+            cur = self._conn().execute(
+                "UPDATE clips SET state='READY', claimed_by=NULL, claim_until=NULL, updated_at=? "
+                "WHERE id=? AND state='CLAIMED' AND claimed_by=? AND claim_until<?",
+                (now, r["id"], r["claimed_by"], now),
+            )
+            if cur.rowcount == 1:
+                self.log("system", "claim_expired", r["id"], f"holder={r['claimed_by']}")
+                freed.append(r["id"])
+        return freed
 
     def edit(self, clip_id: str, operator: str, changes: dict[str, Any]) -> bool:
         row = self.get(clip_id)
@@ -215,8 +296,61 @@ class ClipDB:
                 raise ValueError(k)
             sets.append(f"{k}=?")
             args.append(v)
+        if state == PUBLISHED:
+            sets.append("publish_error=NULL")
         self._conn().execute(f"UPDATE clips SET {', '.join(sets)} WHERE id=?", (*args, clip_id))
-        self.log(actor, f"state:{state}", clip_id)
+        self.log(actor, f"state:{state}", clip_id, " ".join(f"{k}={v}" for k, v in fields.items()))
+
+    # -- publishing --------------------------------------------------------
+    def note_upload(self, clip_id: str, youtube_id: str) -> None:
+        """YouTube has given an upload in progress its video id. The clip stays APPROVED until the upload is
+        through; if it never is, the id says which video to look for before anyone uploads again."""
+        self._conn().execute("UPDATE clips SET youtube_id=? WHERE id=?", (youtube_id, clip_id))
+        self.log("publisher", "youtube_video_id", clip_id, youtube_id)
+
+    def publish_failed(self, clip_id: str, error: str) -> None:
+        """Keep the reason on the clip and in the audit log. updated_at stays the time of the approval."""
+        self._conn().execute("UPDATE clips SET publish_error=? WHERE id=?", (error[:500], clip_id))
+        self.log("publisher", "youtube_failed", clip_id, error[:500])
+
+    def publish_ok(self, clip_id: str) -> None:
+        """The last upload attempt went through (a dry run leaves the clip APPROVED): forget the old error."""
+        self._conn().execute("UPDATE clips SET publish_error=NULL WHERE id=?", (clip_id,))
+
+    # -- approval cards ----------------------------------------------------
+    def reserve_card(self, clip_id: str, lease_s: float = 600) -> int:
+        """Atomically take the right to post a clip's card. Returns the attempt number (1, 2, ...), or 0 when
+        the clip has a card or someone holds the lease (is posting it, or failed less than lease_s ago)."""
+        now = time.time()
+        cur = self._conn().execute(
+            "UPDATE clips SET card_lease_until=?, card_attempts=COALESCE(card_attempts,0)+1 "
+            "WHERE id=? AND card_message_id IS NULL AND (card_lease_until IS NULL OR card_lease_until<?)",
+            (now + lease_s, clip_id, now),
+        )
+        if cur.rowcount != 1:
+            return 0
+        return int((self.get(clip_id) or {}).get("card_attempts") or 1)
+
+    def set_card(self, clip_id: str, chat_id: int, message_id: int, video: bool = False) -> None:
+        """Record the clip's card. A card it replaces (card_replaced) is the caller's to retire first."""
+        self._conn().execute(
+            "UPDATE clips SET card_chat_id=?, card_message_id=?, card_video=?, card_lease_until=NULL, "
+            "card_replaced=NULL WHERE id=?",
+            (chat_id, message_id, int(video), clip_id),
+        )
+        self.log("system", "card", clip_id, f"chat={chat_id} message={message_id}")
+
+    def cardless(self, grace_s: float = 120, max_age_s: float = 24 * 3600) -> list[dict[str, Any]]:
+        """READY clips no operator can see: no card, nobody posting one, fewer than CARD_MAX_ATTEMPTS tries.
+        Younger than grace_s is left to the lane that staged it; older than max_age_s is left alone."""
+        now = time.time()
+        rows = self._conn().execute(
+            "SELECT * FROM clips WHERE state='READY' AND card_message_id IS NULL "
+            "AND (card_lease_until IS NULL OR card_lease_until<?) AND COALESCE(card_attempts,0)<? "
+            "AND updated_at<=? AND created_at>=? ORDER BY created_at",
+            (now, CARD_MAX_ATTEMPTS, now - grace_s, now - max_age_s),
+        )
+        return [dict(r) for r in rows.fetchall()]
 
     # -- jobs --------------------------------------------------------------
     def enqueue_job(self, stage: str, payload: dict[str, Any] | None = None) -> int:

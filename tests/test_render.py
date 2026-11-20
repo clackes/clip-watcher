@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 
@@ -60,7 +61,6 @@ def check_short(out, dur, fps=60):
 
 def test_pure_helpers():
     assert pick_style("abc") == pick_style("abc")
-    assert esc_filter_path("/a b/c:d'e") == "/a b/c\\:d\\'e"
     ass = build_ass(demo_words(4), 4, credit="twitch.tv/x")
     assert "PlayResX: 1080" in ass and "\\pos(540,1495)" in ass and "&H00E6FF&" in ass
     assert "\\an9\\pos(1060,407)" in ass
@@ -345,15 +345,23 @@ def test_jump_cuts_drop_dead_air_but_keep_protected_and_edges():
     w += [Word(9.0, 9.3, "end"), Word(9.4, 9.7, "now")]  # pause 5.15-9.0
     keep = jumpcut.keep_ranges(w, 11.0, gap=0.8)  # 3.85 s pause cut; 11 s clip: floor = its length
     assert keep == [(0.0, 11.0)]
-    keep = jumpcut.keep_ranges(w + [Word(t, t + 0.25, "go") for t in (11.0, 11.3, 11.6)], 30.0, gap=0.8)
+    keep = jumpcut.keep_ranges(w + [Word(t, t + 0.25, "go") for t in (11.0, 11.3, 11.6)], 50.0, gap=0.8)
     assert keep[:2] == [(0.0, 1.45), (3.85, 5.45)]  # the 2.4 s pause goes; the 3.85 s one before 9 s stays
     assert jumpcut.remap(4.0, keep) == 1.6 and jumpcut.remap(2.0, keep) is None
     # a beat inside the second pause keeps it
-    keep2 = jumpcut.keep_ranges(w, 30.0, gap=0.8, protect=[(6.0, 7.0)])
-    assert keep2 == [(0.0, 1.45), (3.85, 30.0)]
+    keep2 = jumpcut.keep_ranges(w, 50.0, gap=0.8, protect=[(6.0, 7.0)])
+    assert keep2 == [(0.0, 1.45), (3.85, 50.0)]
+    assert jumpcut.keep_ranges(w, 31.0, gap=0.8) == [(0.0, 31.0)]  # cuts never go below clip_min_s (30 s)
     talk = [Word(i, i + 0.3, "go") for i in (0, 1, 2, 9, 10, 11)]
     assert jumpcut.keep_ranges(talk, 30.0) == [(0.0, 30.0)]  # a 6.7 s silence is content: never cut
     assert jumpcut.keep_ranges(w[:3], 11.0) == [(0.0, 11.0)]  # almost no speech: visual clip, no cuts
+    # cut edges go to the nearest frame, so picture and sound of every stretch are equally long
+    assert jumpcut.on_frames([(0.0, 1.45), (3.85, 5.46), (7.01, 50.0)], 30.0) == [
+        (0.0, 1.466667), (3.866667, 5.466667), (7.0, 50.0)
+    ]  # fmt: skip
+    assert jumpcut.on_frames([(0.0, 11.0)], 30.0) == [(0.0, 11.0)]
+    assert jumpcut.on_frames([(0.0, 1.45), (3.85, 3.88), (5.0, 9.0)], 30.0) == [(0.0, 1.466667), (5.0, 9.0)]
+    assert jumpcut.on_frames([(0.0, 0.02), (3.85, 9.0)], 30.0) == [(0.0, 9.0)]  # one stretch left: no cut
 
 
 def test_action_labels_replace_words_on_their_stretch():
@@ -420,15 +428,6 @@ def test_split_short_reframes_a_full_camera_clip(synth_src, tmp_path, monkeypatc
     check_short(out, 4.0)
 
 
-def test_split_game_crop_is_full_height_centre():
-    """Owner, 18 Nov: the gameplay half showed sky (strip above a bottom-left cam), not the action."""
-    from clipwatcher.render.template import split_game_crop
-
-    assert split_game_crop(None, 1920, 1080) == (352, 0, 1214, 1080)
-    assert split_game_crop((345, 760, 210, 320), 1920, 1080) == (352, 0, 1214, 1080)
-    assert split_game_crop(None, 1280, 720) == (234, 0, 810, 720)
-
-
 def test_still_edges_cut_no_signal_head_and_frozen_tail():
     """Owner, 18 Nov: a clip opened on 2 s of an Elgato NO SIGNAL card."""
     from clipwatcher.render.still import edges, freezes
@@ -452,3 +451,248 @@ def test_no_credit_on_screen_by_default():
     from clipwatcher.render.template import screen_credit
 
     assert screen_credit("xqc") is None
+
+
+# -- jump cuts keep picture and sound together ---------------------------------------------------------
+FLASH_FPS = 30
+FLASH_SECONDS = 28
+
+
+@pytest.fixture(scope="session")
+def flash_src(tmp_path_factory):
+    """720p30 .ts: on every whole second the picture goes white and a 1 kHz beep sounds, for 0.1 s."""
+    p = tmp_path_factory.mktemp("flash") / "flash.ts"
+    on = "lt(mod(t,1),0.1)"
+    cmd = [
+        ffmpeg_bin(), "-y", "-hide_banner", "-loglevel", "error",
+        "-f", "lavfi", "-i", f"color=c=black:s=1280x720:r={FLASH_FPS}:d={FLASH_SECONDS}",
+        "-f", "lavfi", "-i", f"aevalsrc='0.5*sin(2*PI*1000*t)*{on}':s=48000:d={FLASH_SECONDS}",
+        "-vf", f"drawbox=x=0:y=0:w=iw:h=ih:color=white:t=fill:enable='{on}'",
+        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-g", "60",
+        "-c:a", "aac", "-b:a", "128k", "-f", "mpegts", str(p),
+    ]  # fmt: skip
+    subprocess.run(cmd, check=True)
+    return p
+
+
+def flash_times(p, fps=FLASH_FPS, crop=None) -> list[float]:
+    """Times at which the picture of p (or its crop "w:h:x:y") turns white."""
+    vf = (f"crop={crop}," if crop else "") + "scale=16:16,format=gray"
+    raw = subprocess.run(
+        [ffmpeg_bin(), "-v", "error", "-i", str(p), "-vf", vf, "-f", "rawvideo", "-"],
+        capture_output=True, check=True,
+    ).stdout  # fmt: skip
+    bright = [sum(raw[i : i + 256]) / 256 > 110 for i in range(0, len(raw), 256)]
+    return [i / fps for i in range(1, len(bright)) if bright[i] and not bright[i - 1]]
+
+
+def beep_times(p, rate=8000) -> list[float]:
+    """Times at which a beep starts in the sound of p (after at least 0.2 s without one)."""
+    import array
+
+    raw = subprocess.run(
+        [ffmpeg_bin(), "-v", "error", "-i", str(p), "-vn", "-ac", "1", "-ar", str(rate), "-f", "s16le", "-"],
+        capture_output=True, check=True,
+    ).stdout  # fmt: skip
+    pcm = array.array("h", raw)
+    level = 0.25 * max(abs(v) for v in pcm)
+    out, last = [], -rate
+    for i, v in enumerate(pcm):
+        if abs(v) >= level:
+            if i - last > 0.2 * rate:
+                out.append(i / rate)
+            last = i
+    return out
+
+
+@pytest.mark.ffmpeg
+def test_jump_cuts_keep_picture_and_sound_together(flash_src, tmp_path, monkeypatch):
+    """19 jump cuts in one clip: every flash must still coincide with its beep, up to the last one.
+
+    Each video piece used to be rounded up to whole frames while the sound was cut to the sample, so the
+    picture fell behind by most of a frame per cut and the final -t chopped the ending.
+    """
+    import copy
+
+    from clipwatcher import config
+    from clipwatcher.render import jumpcut
+
+    cfg = copy.deepcopy(config.global_config())
+    cfg.setdefault("render", {}).update(clip_min_s=12, jump_cuts=True, jump_gap_s=0.8)
+    monkeypatch.setattr(config, "global_config", lambda: cfg)
+    start, dur = 6.5, 20.0  # flashes at 0.5, 1.5, ... 19.5 s of the clip, one spoken word on each
+    words = [Word(k + 0.45, k + 0.61, "go") for k in range(20)]
+    cuts = len(jumpcut.keep_ranges(words, dur)) - 1
+    assert cuts == 19  # the 0.84 s pause after every word goes
+    out = tmp_path / "cuts.mp4"
+    render_short(
+        flash_src, start, dur, out, clip_id="cuts", streamer="tester", words=words, hook=None,
+        profile="cpu_live", captions="word", layout="split",
+    )  # fmt: skip
+    seen, heard = flash_times(out), beep_times(out)
+    assert len(seen) == len(heard) == 20, (seen, heard)  # nothing lost at the end either
+    offsets = [s - h for s, h in zip(seen, heard, strict=True)]
+    assert max(abs(o) for o in offsets) <= 1.5 / FLASH_FPS, [round(o, 3) for o in offsets]
+    assert max(offsets) - min(offsets) <= 1 / FLASH_FPS  # and no drift from the first cut to the last
+    info = probe(out)
+    v = next(s for s in info["streams"] if s["codec_type"] == "video")
+    assert abs(int(v["nb_read_frames"]) / FLASH_FPS - (dur - cuts * 0.39)) <= 0.35  # ~12.6 s left
+    assert abs(float(info["format"]["duration"]) - int(v["nb_read_frames"]) / FLASH_FPS) <= 0.05
+
+
+# -- a render that came out wrong must not pass for a clip -----------------------------------------------
+@pytest.mark.ffmpeg
+@pytest.mark.parametrize("layout", ["split", "stack"])
+def test_render_raises_when_the_source_ends_long_before_the_clip(synth_src, tmp_path, layout):
+    """6 s asked for 2 s before the end of the recording: ffmpeg exits 0 with a 2 s file."""
+    out = tmp_path / "short.mp4"
+    with pytest.raises(RuntimeError, match="2.0 s"):
+        render_short(
+            synth_src, SRC_SECONDS - 2.0, 6.0, out, clip_id="cut", streamer="tester", words=[], hook=None,
+            profile="cpu_live", layout=layout,
+        )  # fmt: skip
+    assert not out.exists()  # nothing left to stage
+    with pytest.raises(RuntimeError, match="2.0 s"):
+        render_clean(synth_src, SRC_SECONDS - 2.0, 6.0, tmp_path / "clean.mp4", profile="cpu_live")
+
+
+@pytest.mark.ffmpeg
+def test_render_raises_when_the_clip_starts_after_the_recording_ends(synth_src, tmp_path):
+    """ffmpeg exits 0 and writes a few hundred bytes without a single frame."""
+    with pytest.raises(RuntimeError, match="no video"):
+        render_clean(synth_src, SRC_SECONDS + 5.0, 3.0, tmp_path / "clean.mp4", profile="cpu_live")
+    with pytest.raises(RuntimeError, match="no video"):
+        render_short(
+            synth_src, SRC_SECONDS + 5.0, 3.0, tmp_path / "s.mp4", clip_id="gone", streamer="tester",
+            words=[], hook=None, profile="cpu_live",
+        )  # fmt: skip
+
+
+@pytest.mark.ffmpeg
+def test_render_keeps_a_clip_the_recording_cut_short_when_it_is_still_long_enough(
+    synth_src, tmp_path, monkeypatch, caplog
+):
+    """The stream ended 5 s into an 8 s clip. With render.clip_min_s at 4 that is still a clip (and it is
+    logged); at the configured 30 s it is not."""
+    import copy
+
+    from clipwatcher import config
+
+    out = tmp_path / "clean.mp4"
+    with pytest.raises(RuntimeError, match="5.0 s"):
+        render_clean(synth_src, SRC_SECONDS - 5.0, 8.0, out, profile="cpu_live")
+    cfg = copy.deepcopy(config.global_config())
+    cfg.setdefault("render", {})["clip_min_s"] = 4
+    monkeypatch.setattr(config, "global_config", lambda: cfg)
+    with caplog.at_level("WARNING"):
+        render_clean(synth_src, SRC_SECONDS - 5.0, 8.0, out, profile="cpu_live")
+    assert abs(float(probe(out)["format"]["duration"]) - 5.0) <= 0.1
+    assert "5.0 s of 8.0 s" in caplog.text
+
+
+# -- paths in the filter graph -----------------------------------------------------------------------------
+ODD_DIR = "it's 12:30, [take 2]; final"  # every character ffmpeg's two parsers treat as special
+
+
+def test_filter_paths_are_escaped_for_both_parsers(monkeypatch):
+    r"""The graph parser reads the string first (\ ' [ ] , ;), the filter's option parser second (\ ' :)."""
+    assert esc_filter_path("/a b/c:d'e") == r"/a b/c\\:d\\\'e"
+    assert esc_filter_path("/x/a,b;[c]") == r"/x/a\,b\;\[c\]"
+    assert esc_filter_path("/plain/path-1_2.ass") == "/plain/path-1_2.ass"
+    import pathlib
+
+    from clipwatcher.render import template
+
+    monkeypatch.setattr(template.os, "name", "nt")  # Windows: forward slashes, the drive colon like any colon
+    monkeypatch.setattr(template, "Path", pathlib.PureWindowsPath)
+    assert esc_filter_path(r"C:\Users\me\subs.ass") == r"C\\:/Users/me/subs.ass"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="':' cannot be in a Windows folder name")
+@pytest.mark.ffmpeg
+def test_ass_filter_finds_file_and_fonts_in_an_oddly_named_folder(tmp_path):
+    """ffmpeg itself must read the escaped paths: the captions file opens and the font comes from fontsdir."""
+    import shutil
+
+    from clipwatcher.render.branding import FONTS_DIR
+
+    odd = tmp_path / ODD_DIR
+    shutil.copytree(FONTS_DIR, odd / "fonts")
+    (odd / "subs.ass").write_text(build_ass(demo_words(1), 1, style="word"), encoding="utf-8")
+    vf = f"ass=filename={esc_filter_path(odd / 'subs.ass')}:fontsdir={esc_filter_path(odd / 'fonts')}"
+    r = subprocess.run(
+        [ffmpeg_bin(), "-hide_banner", "-v", "debug", "-f", "lavfi", "-i", "color=s=1080x1920:r=5:d=1",
+         "-vf", vf, "-f", "null", "-"],
+        capture_output=True, text=True,
+    )  # fmt: skip
+    assert r.returncode == 0, r.stderr[-600:]
+    said = [ln for ln in r.stderr.splitlines() if ODD_DIR in ln]
+    assert any("Added subtitle file" in ln and "subs.ass" in ln for ln in said)
+    assert any("Loading font file" in ln and "Anton-Regular.ttf" in ln for ln in said)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="':' cannot be in a Windows folder name")
+@pytest.mark.ffmpeg
+@pytest.mark.parametrize("layout", ["split", "stack"])
+def test_short_renders_from_an_oddly_named_work_folder(synth_src, tmp_path, monkeypatch, layout):
+    """Every render failed when the temp folder or the fonts folder had a ':' or an apostrophe in its path."""
+    import shutil
+    import tempfile
+
+    from clipwatcher.render import template
+
+    odd = tmp_path / ODD_DIR
+    shutil.copytree(template.FONTS_DIR, odd / "fonts")
+    monkeypatch.setattr(template, "FONTS_DIR", odd / "fonts")
+    monkeypatch.setattr(tempfile, "tempdir", str(odd))  # where the captions file is written
+    out = odd / "out.mp4"
+    render_short(
+        synth_src, 3.0, 2.0, out, clip_id="odd", streamer="tester", words=demo_words(2), hook="LOOK",
+        profile="cpu_live", layout=layout,
+    )  # fmt: skip
+    check_short(out, 2.0)
+
+
+# -- a source with dropped frames --------------------------------------------------------------------------
+@pytest.fixture(scope="session")
+def gap_src(tmp_path_factory):
+    """flash_src, 12 s long, with half a second of frames missing (5.2-5.7 s): the timestamps keep the
+    gap, as in a live recording whose encoder dropped frames."""
+    p = tmp_path_factory.mktemp("gap") / "gap.ts"
+    on = "lt(mod(t,1),0.1)"
+    cmd = [
+        ffmpeg_bin(), "-y", "-hide_banner", "-loglevel", "error",
+        "-f", "lavfi", "-i", f"color=c=black:s=1280x720:r={FLASH_FPS}:d=12",
+        "-f", "lavfi", "-i", f"aevalsrc='0.5*sin(2*PI*1000*t)*{on}':s=48000:d=12",
+        "-vf", f"drawbox=x=0:y=0:w=iw:h=ih:color=white:t=fill:enable='{on}',select='not(between(t,5.2,5.7))'",
+        "-fps_mode", "passthrough", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+        "-g", "60", "-c:a", "aac", "-b:a", "128k", "-f", "mpegts", str(p),
+    ]  # fmt: skip
+    subprocess.run(cmd, check=True)
+    return p
+
+
+@pytest.mark.ffmpeg
+@pytest.mark.parametrize(
+    "layout,extra",
+    [
+        ("split", {"beats": [(1.5, "hype", "", "")]}),  # a zoom punch on the webcam half
+        ("split", {"cold_open": (2.5, 2.0)}),  # the cold open (zoomed) spans the missing frames
+        ("stack", {"cold_open": (2.5, 2.0)}),
+    ],
+)
+def test_zoom_keeps_time_when_the_source_dropped_frames(gap_src, tmp_path, layout, extra):
+    """zoompan numbers its output frames 0, 1, 2 ... at the output rate and forgets their timestamps. Half
+    a second of dropped frames in the source therefore put the zoomed picture half a second ahead of the
+    sound for the rest of the clip (and, in the split layout, the webcam ahead of the gameplay)."""
+    out = tmp_path / "gap.mp4"
+    render_short(
+        gap_src, 2.0, 8.0, out, clip_id="gap", streamer="tester", words=[], hook=None, profile="cpu_live",
+        captions="word", layout=layout, **extra,
+    )  # fmt: skip
+    heard = beep_times(out)
+    cam, game = flash_times(out, crop="1080:300:0:500"), flash_times(out, crop="1080:300:0:1000")
+    assert len(cam) >= 6 and len(game) >= 6
+    for seen in (cam, game):  # every flash on a beep, to the end of the clip
+        late = [round(min((t - h for h in heard), key=abs), 3) for t in seen]
+        assert max(abs(d) for d in late) <= 1.5 / FLASH_FPS, late

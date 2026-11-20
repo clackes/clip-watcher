@@ -7,7 +7,10 @@ press Enter here to close. The profile is reused by publish/youtube_browser.py.
     python scripts/yt_browser_login.py --account <username>     # -> ~/.clipwatcher/yt-profiles/<username>
     python scripts/yt_browser_login.py --profile-dir D:/profiles/x
 
-Then set YT_BROWSER_ACCOUNT=<username> in .env so the publisher uploads with that saved session.
+Override the profile dir with YT_BROWSER_PROFILE. Without it this opens the profile uploads use: the
+account that posts when the companion app keeps accounts (its Connect place does this sign-in step by step,
+for several accounts), else ~/.clipwatcher/yt-chrome-profile.
+On the server set YT_BROWSER_ACCOUNT=<username> in .env so the publisher uploads with that saved session.
 """
 
 from __future__ import annotations

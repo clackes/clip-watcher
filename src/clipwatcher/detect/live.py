@@ -1,33 +1,43 @@
-"""Incremental D3 detector for live chat.
+"""Incremental D3/D13 detector for live chat.
 
-Same scoring as ``detect.detector.detect`` (0.5*z(U) + 0.35*z(E) + 0.15*z(S), trailing median/MAD baseline,
-mute after raid / sub-bomb / giveaway, cooldown) but fed one message at a time. Times are epoch seconds.
+Same scoring as ``detect.detector.detect`` (weighted z of chatters, messages, keyword energy and short share,
+mute after raid / sub-bomb / giveaway) but fed one message at a time. Times are epoch seconds.
 
-A second is "final" once a message with a later second arrives (or ``tick(now_s)`` is called), so a candidate
-fires about one second after the score crosses ``fire_z``.
+The baseline is the whole stream so far (``SessionTable``), not a rolling window: ``prime()`` loads the chat
+from before the bot joined (replay + saved log) so the first live spike is already measured against hours of
+history, and a restart mid-stream picks up where it left off.
+
+A second is "final" once a message with a later second arrives (or ``tick(now_s)`` is called). A spike that
+crosses the fire threshold matures for ``live_mature_s`` and is emitted only if its peak reaches the keep
+threshold; a weak fire starts no cooldown, so it cannot shadow the real spike right behind it.
 """
 
 from __future__ import annotations
 
 import re
 from collections import Counter, deque
+from collections.abc import Iterable
 
 from clipwatcher import config
 from clipwatcher.detect.detector import (
-    _FLOORS,
     CLIP_LINK,
     REACT_MIN_WEIGHT,
     _kw_patterns,
-    _median,
     _norm,
     _Rec,
-    _Robust,
+    gate,
+    mystery_bomb,
+    new_table,
     prompted_share,
     reaction_share,
+    settings,
+    window_features,
 )
+from clipwatcher.detect.session import Row
 from clipwatcher.models import Candidate, ChatMessage
 
 _GIVEAWAY_LOOKAHEAD_S = 20
+_GAP_MAX_S = 900  # a longer hole in the chat (bot offline, no replay) is skipped, not filled with silence
 
 
 class LiveDetector:
@@ -39,40 +49,30 @@ class LiveDetector:
         delay_s: float | None = None,
         before_s: float | None = None,
         after_s: float | None = None,
+        category: str | None = None,
     ):
-        cfg = config.global_config().get("detector", {})
-        self.streamer = streamer
-        # Chat lag differs per stream and per viewer, so the window is wide and the judge trims it.
-        self.before_s = float(before_s if before_s is not None else cfg.get("live_before_s", 20))
-        self.after_s = float(after_s if after_s is not None else cfg.get("live_after_s", 10))
-        self.w = cfg.get("weights", {"U": 0.5, "E": 0.35, "S": 0.15})
-        self.win = int(cfg.get("window_s", 10))
-        self.fire_z, self.pre_z = float(cfg.get("fire_z", 3.0)), float(cfg.get("pre_z", 2.0))
-        sc0 = config.streamer(streamer)
-        self.min_unique = int(sc0.get("min_unique", cfg.get("min_unique", 8)))
-        self.min_unique_floor = int(cfg.get("min_unique_floor", 3))
-        self._u_hist: deque[int] = deque(maxlen=int(cfg.get("baseline_min", 15)) * 60)
+        p = self.p = settings(streamer, category)
+        self.streamer, self.category = streamer, category
+        self.before_s = p["before_s"] if before_s is None else before_s
+        self.after_s = p["after_s"] if after_s is None else after_s
+        self.win = p["win"]
+        self.min_unique, self.min_unique_floor = p["min_unique"], p["min_unique_floor"]
         self.trace: deque[tuple] | None = None  # set to a deque to record (t, score, u, u_need, hold, muted)
         self.viewers = viewers
-        self.mute_s = float(cfg.get("mute_after_notice_s", 75))
-        self.min_react = float(cfg.get("min_reaction_share", 0.0))
-        self.sub_bomb_min = int(cfg.get("sub_bomb_min", 10))
-        self.cooldown = float(cfg.get("cooldown_s", 45))
-        # Learn the chat before judging it: every chat has its own normal, so no fire until this much of
-        # it has been seen (a restart primes it from the chat log, see prime()).
-        self.warmup_s = float(sc0.get("warmup_s", cfg.get("warmup_s", 60)))
-        sc = config.streamer(streamer)
-        default_delay = sc.get("delay_s", cfg.get("default_delay_s", 8))
-        self.delay_s = float(delay_s if delay_s is not None else default_delay)
-        self.other_weight = float(cfg.get("other_weight", 0.5))
-        self.prompt_max = float(cfg.get("prompt_share", 0.4))
-        self._laugh = re.compile(cfg["laughter_regex"]) if cfg.get("laughter_regex") else None
-        self._pats = _kw_patterns(config.keywords_for(streamer))
+        self.mute_s = p["mute_s"]
+        # two kept spikes closer than a clip is long would be the same footage twice
+        self.cooldown = max(p["cooldown"], self.before_s + self.after_s)
+        self.mature_s = p["mature_s"]
+        self.delay_s = float(delay_s if delay_s is not None else p["delay_s"])
+        self.other_weight = p["other_weight"]
+        self.prompt_max = p["prompt_share"]
+        self._laugh = re.compile(p["laughter"]) if p["laughter"] else None
+        self._pats = _kw_patterns(config.keywords_for(streamer, category))
+        self.min_react = p["min_react"]  # owner, 18 Nov: a spike needs real reactions
+        self.sub_bomb_min = p["sub_bomb_min"]  # owner, 18 Nov: only a real sub-bomb mutes
         self._wmap = {k: w for k, _, w in self._pats}
-        hist_n = int(cfg.get("baseline_min", 15)) * 60
-        self._hist_n = hist_n
-        self._r = {k: _Robust(_FLOORS[k], hist_n) for k in "UES"}
-        self._pct = float(cfg.get("min_unique_viewer_pct", 0.01))
+        self.table = new_table(p)
+        self.spikes: list[tuple[float, Row, Row]] = []  # kept: (fire_s, peak row, last-hour medians then)
         self._total = 0
         self._hits: Counter[str] = Counter()
         self._match_cache: dict[str, list[str]] = {}
@@ -85,11 +85,12 @@ class LiveDetector:
         self._next: int | None = None
         self._start: int | None = None
         self._run_first: int | None = None
-        self._last_fire = -1e9
-        self._counts: deque[int] = deque(maxlen=hist_n)  # messages per window, for x_normal
+        self._last_keep, self._last_keep_score = -1e9, 0.0
+        self._kept: deque[tuple[float, float]] = deque()  # (fire_s, score) of the last hour's kept spikes
+        self._live_from = -1e9  # spikes fired up to this second are history: recorded, not emitted
         self._out: deque[Candidate] = deque()
-        self._maturing: list[Candidate] = []
-        self.mature_s = float(cfg.get("live_mature_s", 15))
+        self._maturing: list[tuple[Candidate, Row, Row]] = []  # with the peak row and its medians
+        self.near: deque[Candidate] = deque()  # fired, peaked under the keep threshold: see rescue()
 
     # -- public ---------------------------------------------------------------------------------
     def feed(self, msg: ChatMessage) -> Candidate | None:
@@ -100,15 +101,6 @@ class LiveDetector:
         self._ingest(msg, sec)
         return self._out.popleft() if self._out else None
 
-    def prime(self, messages: list[ChatMessage]) -> int:
-        """Learn the chat from messages already logged (the minutes before a restart) without firing,
-        so the baseline and warm-up carry over instead of starting from zero."""
-        for m in messages:
-            self.feed(m)
-        self._out.clear()
-        self._maturing.clear()
-        return len(messages)
-
     def tick(self, now_s: float) -> Candidate | None:
         """Finalize seconds up to ``now_s`` without a message (quiet chat)."""
         if self._next is not None:
@@ -116,10 +108,66 @@ class LiveDetector:
         return self._out.popleft() if self._out else None
 
     def drain(self) -> list[Candidate]:
-        out = list(self._out) + self._maturing
+        _, keep = gate(self.table, self.p)
+        out = list(self._out) + [c for c, *_ in self._maturing if c.chat_score >= keep and self._is_live(c)]
         self._out.clear()
         self._maturing = []
         return out
+
+    def set_category(self, category: str | None) -> None:
+        """The streamer moved to another kind of stream (or it just became known): its keywords apply from
+        the next message on. The baseline stays: it is this broadcast's chat, whatever is on screen."""
+        if category == self.category:
+            return
+        self.category = category
+        self._pats = _kw_patterns(config.keywords_for(self.streamer, category))
+        self._wmap = {k: w for k, _, w in self._pats}
+        self._match_cache.clear()
+        self._hits.clear()
+
+    def rescue(self, moment_s: float, tol_s: float = 30.0) -> list[Candidate]:
+        """A viewer clipped ``moment_s`` (D3 confirmation): hand out the spikes of the last minutes that
+        fired there but stayed under the keep threshold. Each is returned once."""
+        hit = [c for c in self.near if abs(c.peak_s - moment_s) <= tol_s]
+        for c in hit:
+            self.near.remove(c)
+            c.signals["viewer_clip"] = 1.0
+        return hit
+
+    def prime(self, history: Iterable[ChatMessage]) -> int:
+        """Load the chat from before now (oldest first) as baseline. Nothing in it is emitted as a clip:
+        the video of those moments is gone or was already handled. Returns the number of messages read."""
+        self.table.auto = False  # one refresh at the end instead of one every few rows
+        n, last = 0, None
+        for msg in history:
+            self.feed(msg)
+            n, last = n + 1, msg
+        self.table.auto = True
+        if last is not None:
+            self._live_from = last.ts_ms / 1000
+            self.table.refresh()
+            self._history_spikes()
+        self._out.clear()
+        return n
+
+    def _history_spikes(self) -> None:
+        """What this stream's spikes looked like before the bot joined, scored against the whole of it:
+        the next live spike is ranked among them (signals.session_rank)."""
+        tab = self.table
+        fire, keep = gate(tab, self.p)
+        span, i, last = int(self.mature_s), 0, -1e9
+        while i < len(tab):
+            if not tab.scorable[i] or i - last < self.cooldown or tab.score(*tab.row(i))[0] < fire:
+                i += 1
+                continue
+            best = max(
+                (j for j in range(i, min(len(tab), i + span + 1)) if tab.scorable[j]),
+                key=lambda j: tab.score(*tab.row(j))[0],
+            )
+            if tab.score(*tab.row(best))[0] >= keep:
+                self.spikes.append((float(tab.secs[i]), *tab.row(best)))
+                last = i
+            i += span + 1
 
     # -- ingestion ------------------------------------------------------------------------------
     def _matches(self, text: str) -> list[str]:
@@ -155,9 +203,7 @@ class LiveDetector:
         self._total += 1
         t = m.ts_ms / 1000
         if m.is_notice:
-            if m.notice_type == "raid" or (
-                m.notice_type == "submysterygift" and (m.viewers is None or m.viewers >= self.sub_bomb_min)
-            ):
+            if m.notice_type == "raid" or mystery_bomb(m, self.sub_bomb_min):
                 self._spans.append((t, t + self.mute_s))
             elif m.notice_type == "subgift":
                 self._gifts.append(m.ts_ms)
@@ -182,8 +228,8 @@ class LiveDetector:
     # -- stepping -------------------------------------------------------------------------------
     def _advance_to(self, sec: int) -> None:
         assert self._next is not None
-        if sec - self._next > self._hist_n:
-            self._next = sec - self._hist_n
+        if sec - self._next > _GAP_MAX_S:
+            self._next = sec - _GAP_MAX_S
         while self._next < sec:
             self._step(self._next)
             self._next += 1
@@ -221,6 +267,30 @@ class LiveDetector:
         self._bots_pending = keep
         return hold
 
+    def _is_live(self, c: Candidate) -> bool:
+        return c.signals["fire_s"] > self._live_from
+
+    def _over_budget(self, c: Candidate) -> bool:
+        """The gate keeps the top seconds of a stream, and a flat chat whose top seconds are scattered noise
+        would turn each into a clip. Past ``max_per_hour`` a spike must beat the hour's typical kept one."""
+        while self._kept and self._kept[0][0] < c.signals["fire_s"] - 3600:
+            self._kept.popleft()
+        if len(self._kept) < self.p["max_per_hour"]:
+            return False
+        scores = sorted(s for _, s in self._kept)
+        return c.chat_score <= scores[len(scores) // 2]
+
+    def _onset(self, t: int) -> int:
+        """Where the burst peaking at ``t`` began: the start of the run above the pre-threshold, but no
+        further back than a burst takes to build (a long lively stretch is one run for minutes)."""
+        first = self._run_first if self._run_first is not None else t
+        return max(first, t - int(self.p["onset_max_s"]))
+
+    def _rank(self, row: Row, recent: Row) -> int:
+        """Place of a spike among the kept spikes of this stream, all scored against today's baseline."""
+        score = self.table.score(row, recent)[0]
+        return 1 + sum(1 for _, r, lv in self.spikes if self.table.score(r, lv)[0] > score)
+
     def _step(self, t: int) -> None:
         recs = self._pending.pop(t, [])
         self._recent.append((t, recs))
@@ -229,80 +299,82 @@ class LiveDetector:
         while self._humans and self._humans[0][0] < (t - 60) * 1000:
             self._humans.popleft()
         window = [r for _, rs in self._recent for r in rs]
-        if window:
-            best: dict[str, float] = {}
-            for r in window:
-                if r.weight > best.get(r.user, -1):
-                    best[r.user] = r.weight
-            counts = Counter(r.norm for r in window)
-            u, e = len(best), sum(best.values())
-            s = sum(1 for r in window if r.short or counts[r.norm] > 1) / len(window)
-        else:
-            u, e, s = 0, 0.0, 0.0
+        row = window_features(window)
+        u = row[0]
         hold = self._eval_giveaways(t)
         self._spans = [sp for sp in self._spans if sp[1] >= t - 5]
-        rU, rE, rS = self._r["U"], self._r["E"], self._r["S"]
+        tab = self.table
+        muted = any(a <= t <= b for a, b in self._spans) or (
+            bool(window) and prompted_share(window, self.other_weight) >= self.prompt_max
+        )
+        warm = self._start is not None and t - self._start >= 60
+        primed = tab.auto  # False while history is loading: rows only, nothing is scored against a half table
         score: float | None = None
-        if self._start is not None and t - self._start >= self.warmup_s:
-            zu, ze, zs = rU.z(u), rE.z(e), rS.z(s)
-            sc = self.w["U"] * zu + self.w["E"] * ze + self.w["S"] * zs
-            if not any(a <= t <= b for a, b in self._spans) and not (
-                window and prompted_share(window, self.other_weight) >= self.prompt_max
-            ):
-                score = sc
-        if score is not None and score >= self.pre_z:
+        zs: dict[str, float] = {}
+        fire_z, keep_z = gate(tab, self.p) if primed else (float("inf"), float("inf"))
+        recent = tab.recent()
+        if warm and not muted and primed:
+            score, zs = tab.score(row, recent)
+        if score is not None and score >= fire_z * self.p["pre_z"] / self.p["fire_z"]:
             if self._run_first is None:
                 self._run_first = t
         else:
             self._run_first = None
-        u_need = max(self.min_unique, self._pct * self.viewers if self.viewers else 0)
+        u_need = max(self.min_unique, self.p["pct"] * self.viewers if self.viewers else 0)
         # Small channels (most GTA RP chats): never ask for more unique chatters than the busiest 0.5% of
-        # recent windows reached, as the batch detector does.
-        if len(self._u_hist) >= 60:
-            q = sorted(self._u_hist)[int(0.995 * (len(self._u_hist) - 1))]
-            u_need = max(self.min_unique_floor, min(u_need, q))
+        # windows of this stream reached, as the batch detector does.
+        if len(tab) >= 60:
+            u_need = max(self.min_unique_floor, min(u_need, tab.u_top))
         if self.trace is not None:
-            muted = any(a <= t <= b for a, b in self._spans)
-            self.trace.append((t, score, u, u_need, hold, muted, t - self._last_fire))
+            self.trace.append((t, score, u, u_need, hold, muted, t - self._last_keep))
         if (
             score is not None
             and not hold
-            and score >= self.fire_z
+            and not self._maturing
+            and score >= fire_z
             and u >= u_need
             and reaction_share(window) >= self.min_react
-            and t - self._last_fire >= self.cooldown
+            # a spike half as big again as the one just kept is another moment: no waiting out the cooldown
+            and (t - self._last_keep >= self.cooldown or score >= 1.5 * self._last_keep_score)
         ):
-            first = self._run_first if self._run_first is not None else t
-            self._last_fire = t
-            peak = first - self.delay_s
-            med = _median(list(self._counts)) if self._counts else 0.0
-            self._maturing.append(
-                Candidate(
-                    stream=self.streamer,
-                    peak_s=peak,
-                    start_s=peak - self.before_s,
-                    end_s=peak + self.after_s,
-                    chat_score=score,
-                    final_score=score,
-                    x_normal=len(window) / max(1.0, med),
-                    unique_chatters=u,
-                    signals={"zU": rU.z(u), "zE": rE.z(e), "zS": rS.z(s), "fire_s": float(t)},
-                )
+            peak = self._onset(t) - self.delay_s
+            cand = Candidate(
+                stream=self.streamer,
+                peak_s=peak,
+                start_s=peak - self.before_s,
+                end_s=peak + self.after_s,
+                chat_score=score,
+                final_score=score,
+                x_normal=row[1] / max(1.0, tab.med["M"]),
+                unique_chatters=u,
+                signals={**{f"z{k}": v for k, v in zs.items()}, "fire_s": float(t), "gate": keep_z},
             )
+            self._maturing.append((cand, row, recent))
         # Let fired candidates mature: the score keeps climbing for seconds after the threshold is
-        # crossed, so emit after mature_s with the peak score (the fast lane waits that long anyway).
+        # crossed, so decide after mature_s on the peak score (the fast lane waits that long anyway).
         still = []
-        for c in self._maturing:
+        for c, peak_row, peak_recent in self._maturing:
             if score is not None and score > c.chat_score:
                 c.chat_score = c.final_score = score
                 c.unique_chatters = max(c.unique_chatters, u)
-            if t - c.signals["fire_s"] >= self.mature_s:
-                self._out.append(c)
-            else:
-                still.append(c)
+                c.x_normal = row[1] / max(1.0, tab.med["M"])
+                c.signals.update({f"z{k}": v for k, v in zs.items()})
+                c.peak_s = self._onset(t) - self.delay_s
+                c.start_s, c.end_s = c.peak_s - self.before_s, c.peak_s + self.after_s
+                peak_row, peak_recent = row, recent
+            if t - c.signals["fire_s"] < self.mature_s:
+                still.append((c, peak_row, peak_recent))
+            elif c.chat_score >= keep_z and not self._over_budget(c):
+                self._last_keep, self._last_keep_score = c.signals["fire_s"], c.chat_score
+                self._kept.append((c.signals["fire_s"], c.chat_score))
+                c.signals["session_pct"] = tab.share_below(c.chat_score)
+                c.signals["session_rank"] = float(self._rank(peak_row, peak_recent))
+                self.spikes.append((c.signals["fire_s"], peak_row, peak_recent))
+                if self._is_live(c):
+                    self._out.append(c)
+            elif self._is_live(c):
+                self.near.append(c)
+        while self.near and self.near[0].signals["fire_s"] < t - self.p["rescue_s"]:
+            self.near.popleft()
         self._maturing = still
-        self._counts.append(len(window))
-        rU.push(u)
-        self._u_hist.append(u)
-        rE.push(e)
-        rS.push(s)
+        tab.push(*row, scorable=warm and not muted, sec=t)

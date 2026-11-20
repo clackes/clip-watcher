@@ -1,0 +1,171 @@
+{
+  "title": "Jelly",
+  "description": "Soft round lowercase that behaves like jelly: every letter springs up with a stretch and a squash, a wave runs through the spoken word letter by letter and leaves the highlight behind it, the line keeps breathing, and before a pause the letters pop away. Plum outline, candy colours.",
+  "font": {
+    "family": "Fredoka",
+    "file": "captions/Fredoka-Bold.ttf",
+    "weight": 700,
+    "style": "normal"
+  },
+  "emphFont": null,
+  "size": 104,
+  "minSize": 60,
+  "lineHeight": 1.2,
+  "letterSpacing": 0.12,
+  "wordGap": 0.36,
+  "case": "lower",
+  "emphScale": 1,
+  "grow": 0.03,
+  "tilt": 0,
+  "margin": {
+    "x": 20,
+    "y": 14
+  },
+  "paging": {
+    "mode": "page",
+    "maxWords": 3,
+    "maxLines": 2,
+    "gapS": 0.6,
+    "holdS": 0.55,
+    "lingerS": 0.3,
+    "minShowS": 0.14,
+    "leadS": 0.03,
+    "overlapS": 0
+  },
+  "timing": {
+    "enterS": 0.3,
+    "exitS": 0.3,
+    "activeInS": 0.1,
+    "activeOutS": 0.22,
+    "colorS": 0.25,
+    "staggerS": 0.07
+  },
+  "colors": {
+    "text": "#FFFFFF",
+    "active": "#3DFFC0",
+    "emph": "#FF9A1F",
+    "stroke": "#240A33",
+    "shadow": "#240A33",
+    "plate": "#240A33",
+    "plateText": "#FFFFFF",
+    "accent": "#3DFFC0",
+    "accent2": "#FFE600",
+    "cycle": [
+      "#3DFFC0"
+    ]
+  },
+  "auto": {
+    "candidates": {
+      "text": [
+        "white"
+      ],
+      "active": [
+        "mint",
+        "yellow",
+        "sky",
+        "lime",
+        "gold"
+      ],
+      "emph": [
+        "orange",
+        "gold",
+        "violet"
+      ],
+      "stroke": [
+        "plum",
+        "navy",
+        "black"
+      ],
+      "shadow": [
+        "plum",
+        "navy",
+        "black"
+      ],
+      "accent2": [
+        "yellow",
+        "cream",
+        "white"
+      ]
+    },
+    "pairs": [
+      [
+        "text",
+        "stroke"
+      ],
+      [
+        "active",
+        "stroke"
+      ],
+      [
+        "emph",
+        "stroke"
+      ],
+      [
+        "accent2",
+        "stroke"
+      ],
+      [
+        "text",
+        "shadow"
+      ],
+      [
+        "active",
+        "shadow"
+      ],
+      [
+        "emph",
+        "shadow"
+      ],
+      [
+        "accent2",
+        "shadow"
+      ]
+    ],
+    "avoidHue": [
+      "active",
+      "emph"
+    ],
+    "distinct": [
+      [
+        "active",
+        "emph"
+      ]
+    ]
+  },
+  "label": {
+    "size": 104,
+    "enterS": 0.22,
+    "exitS": 0.22,
+    "rotate": 0
+  },
+  "fx": {
+    "halo": 0.1,
+    "haloFloor": 6,
+    "haloFill": 6,
+    "letterGap": 0.17,
+    "drop": 0.06,
+    "letterStepS": 0.024,
+    "cascadeS": 0.22,
+    "popFrom": 0.5,
+    "riseFrom": 0.14,
+    "letterHz": 3.6,
+    "letterDamp": 0.55,
+    "squash": 0.2,
+    "waveLift": 0.14,
+    "waveS": 0.26,
+    "waveStepS": 0.034,
+    "waveSquash": 0.06,
+    "landS": 0.24,
+    "activeScale": 1.02,
+    "emphWave": 1.35,
+    "emphFlash": 0.85,
+    "emphWobbleDeg": 9,
+    "breathe": 0.012,
+    "breatheHz": 0.7,
+    "breatheLag": 0.6,
+    "popStepS": 0.018,
+    "popShare": 0.55,
+    "popHop": 0,
+    "popWiden": 0
+  }
+}

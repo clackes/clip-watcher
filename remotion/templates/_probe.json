@@ -1,0 +1,121 @@
+{
+  "title": "Punch",
+  "description": "The viral standard: fat geometric caps with a thick outline; the phrase pops in, the spoken word punches up in the highlight colour, shouted words shake.",
+  "font": {
+    "family": "Poppins",
+    "file": "captions/Poppins-Black.ttf",
+    "weight": 900,
+    "style": "normal"
+  },
+  "emphFont": null,
+  "size": 92,
+  "minSize": 56,
+  "lineHeight": 1.1,
+  "letterSpacing": -0.01,
+  "wordGap": 0.3,
+  "case": "upper",
+  "emphScale": 1,
+  "grow": 0.08,
+  "tilt": 0,
+  "margin": {
+    "x": 30,
+    "y": 32
+  },
+  "paging": {
+    "mode": "page",
+    "maxWords": 3,
+    "maxLines": 2,
+    "gapS": 0.6,
+    "holdS": 0.5,
+    "lingerS": 0.25,
+    "minShowS": 0.14,
+    "leadS": 0.03,
+    "overlapS": 0
+  },
+  "timing": {
+    "enterS": 0.22,
+    "exitS": 0.14,
+    "activeInS": 0.1,
+    "activeOutS": 0.16,
+    "colorS": 0.25,
+    "staggerS": 0
+  },
+  "colors": {
+    "text": "#FFFFFF",
+    "active": "#FFE600",
+    "emph": "#FF6B5E",
+    "stroke": "#000000",
+    "shadow": "#000000",
+    "plate": "#000000",
+    "plateText": "#FFFFFF",
+    "accent": "#FFE600",
+    "accent2": "#00E5FF",
+    "cycle": [
+      "#FFE600"
+    ]
+  },
+  "auto": {
+    "candidates": {
+      "text": [
+        "white"
+      ],
+      "active": [
+        "yellow",
+        "lime",
+        "cyan",
+        "pink",
+        "orange"
+      ],
+      "emph": [
+        "red",
+        "orange",
+        "pink",
+        "yellow"
+      ],
+      "stroke": [
+        "black"
+      ],
+      "shadow": [
+        "black"
+      ]
+    },
+    "pairs": [
+      [
+        "text",
+        "stroke"
+      ],
+      [
+        "active",
+        "stroke"
+      ],
+      [
+        "emph",
+        "stroke"
+      ]
+    ],
+    "avoidHue": [
+      "active",
+      "emph"
+    ],
+    "distinct": [
+      [
+        "active",
+        "emph"
+      ]
+    ]
+  },
+  "label": {
+    "size": 96,
+    "enterS": 0.18,
+    "exitS": 0.12,
+    "rotate": -3
+  },
+  "fx": {
+    "halo": 0.1,
+    "vx": 6,
+    "vy": 6,
+    "rot": 0,
+    "spin": 0,
+    "growth": 0
+  }
+}

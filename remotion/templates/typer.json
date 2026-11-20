@@ -1,0 +1,169 @@
+{
+  "title": "Typer",
+  "description": "A terminal line: a dark plate with a prompt mark and a block caret. Words are typed letter by letter as they are spoken, the caret runs ahead of every key and swells slowly when idle, the spoken word is bright, shouted words are in inverse video, and the plate switches on and off like a CRT.",
+  "font": {
+    "family": "JetBrains Mono",
+    "file": "captions/JetBrainsMono-ExtraBold.ttf",
+    "weight": 800,
+    "style": "normal"
+  },
+  "emphFont": null,
+  "size": 72,
+  "minSize": 44,
+  "lineHeight": 1.2,
+  "letterSpacing": 0,
+  "wordGap": 0.6,
+  "case": "lower",
+  "emphScale": 1,
+  "grow": 0,
+  "tilt": 0,
+  "margin": {
+    "x": 84,
+    "y": 28
+  },
+  "paging": {
+    "mode": "build",
+    "maxWords": 4,
+    "maxLines": 1,
+    "gapS": 0.6,
+    "holdS": 0.7,
+    "lingerS": 0.3,
+    "minShowS": 0.14,
+    "leadS": 0.03,
+    "overlapS": 0
+  },
+  "timing": {
+    "enterS": 0.16,
+    "exitS": 0.26,
+    "activeInS": 0.06,
+    "activeOutS": 0.2,
+    "colorS": 0.25,
+    "staggerS": 0
+  },
+  "colors": {
+    "text": "#8DFF2F",
+    "active": "#FFFFFF",
+    "emph": "#FFC53D",
+    "stroke": "#000000",
+    "shadow": "#000000",
+    "plate": "#052B1B",
+    "plateText": "#FFFFFF",
+    "accent": "#FF70CB",
+    "accent2": "#00E5FF",
+    "cycle": [
+      "#8DFF2F"
+    ]
+  },
+  "auto": {
+    "candidates": {
+      "text": [
+        "lime",
+        "mint",
+        "cyan",
+        "yellow",
+        "sky"
+      ],
+      "active": [
+        "white",
+        "cream"
+      ],
+      "emph": [
+        "gold",
+        "orange",
+        "pink",
+        "cyan"
+      ],
+      "accent": [
+        "pink",
+        "orange",
+        "violet",
+        "yellow"
+      ]
+    },
+    "pairs": [
+      [
+        "text",
+        "plate"
+      ],
+      [
+        "active",
+        "plate"
+      ],
+      [
+        "stroke",
+        "emph"
+      ],
+      [
+        "stroke",
+        "active"
+      ]
+    ],
+    "avoidHue": [
+      "emph",
+      "accent"
+    ],
+    "distinct": [
+      [
+        "text",
+        "emph"
+      ],
+      [
+        "text",
+        "accent"
+      ],
+      [
+        "emph",
+        "accent"
+      ]
+    ]
+  },
+  "label": {
+    "size": 72,
+    "enterS": 0.1,
+    "exitS": 0.22,
+    "rotate": 0
+  },
+  "fx": {
+    "padX": 0.4,
+    "padY": 0.3,
+    "radius": 0.16,
+    "rim": 0.03,
+    "rimMix": 0.55,
+    "promptW": 0.3,
+    "promptH": 0.5,
+    "promptUp": 0.27,
+    "promptStroke": 0.11,
+    "promptGap": 0.4,
+    "promptS": 0.3,
+    "promptAttack": 0.2,
+    "caretW": 0.5,
+    "caretGap": 0.16,
+    "caretUp": 0.8,
+    "caretDown": 0.16,
+    "caretS": 0.05,
+    "idleS": 0.2,
+    "blinkHz": 1.3,
+    "blinkDepth": 0.8,
+    "typeShare": 0.6,
+    "keyS": 0.06,
+    "typeTailS": 0.08,
+    "keyFrom": 0.6,
+    "keyHz": 9,
+    "keyDamp": 0.6,
+    "knock": 0.08,
+    "blockPadX": 0.12,
+    "blockPadY": 0.1,
+    "blockRadius": 0.08,
+    "blockHot": 0.5,
+    "openS": 0.16,
+    "openXS": 0.08,
+    "openThin": 0.06,
+    "openFromX": 0.3,
+    "openOver": 1.4,
+    "offLine": 0.6,
+    "offThin": 0.05,
+    "offFlash": 0.6,
+    "flashBelow": 0.2,
+    "labelTypeS": 0.25
+  }
+}

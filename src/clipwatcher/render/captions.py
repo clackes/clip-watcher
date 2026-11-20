@@ -52,8 +52,12 @@ DEMO_TEXT = "NO WAY DID YOU SEE THAT HE JUST WENT ALL IN AND IT ACTUALLY WORKED 
 
 
 def caption_style(clip_id: str) -> str:
-    """Caption style from render.captions: classic | bounce | pop | ab (stable classic/pop split by clip_id)."""
+    """Caption style from render.captions: classic | bounce | pop | ab (stable classic/pop split by clip_id)
+    | rm:<template> (an animated Remotion template, render/remotion.py; render_short falls back to an ASS
+    style when it cannot be rendered)."""
     mode = str(config.global_config().get("render", {}).get("captions", "word"))
+    if mode.startswith("rm:") and len(mode) > 3:
+        return mode
     if mode == "ab":
         return ("classic", "pop")[int(hashlib.sha256(f"cap:{clip_id}".encode()).hexdigest(), 16) % 2]
     return mode if mode in CAPTION_STYLES else "word"

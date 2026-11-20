@@ -1,0 +1,83 @@
+{
+  "title": "Marker",
+  "description": "Hand lettering on a slope: words are written on from left to right, a highlighter is swiped across each word as it is spoken and stays on what has been said, shouted words get a scribbled underline; wiped away from right to left.",
+  "font": { "family": "Permanent Marker", "file": "captions/PermanentMarker-Regular.ttf", "weight": 400, "style": "normal" },
+  "emphFont": null,
+  "size": 82,
+  "minSize": 50,
+  "lineHeight": 1.2,
+  "letterSpacing": 0.01,
+  "wordGap": 0.36,
+  "case": "upper",
+  "emphScale": 1.08,
+  "grow": 0.03,
+  "tilt": 2,
+  "margin": { "x": 42, "y": 30 },
+  "paging": {
+    "mode": "page",
+    "maxWords": 3,
+    "maxLines": 2,
+    "gapS": 0.6,
+    "holdS": 0.55,
+    "lingerS": 0.3,
+    "minShowS": 0.14,
+    "leadS": 0.03,
+    "overlapS": 0
+  },
+  "timing": { "enterS": 0.2, "exitS": 0.22, "activeInS": 0.12, "activeOutS": 0.18, "colorS": 0.25, "staggerS": 0.07 },
+  "colors": {
+    "text": "#FFFFFF",
+    "active": "#FFE600",
+    "emph": "#FF70CB",
+    "stroke": "#0B0B12",
+    "shadow": "#0B0B12",
+    "plate": "#FFE600",
+    "plateText": "#0B0B12",
+    "accent": "#00E5FF",
+    "accent2": "#8DFF2F",
+    "cycle": ["#FFE600"]
+  },
+  "auto": {
+    "candidates": {
+      "text": ["white"],
+      "active": ["yellow", "lime", "mint", "orange", "sky"],
+      "emph": ["pink", "orange", "lime", "violet", "red"],
+      "stroke": ["ink"]
+    },
+    "pairs": [
+      ["text", "stroke"],
+      ["active", "stroke"],
+      ["emph", "stroke"]
+    ],
+    "avoidHue": ["active", "emph"],
+    "distinct": [["active", "emph"]]
+  },
+  "label": { "size": 92, "enterS": 0.3, "exitS": 0.16, "rotate": -3 },
+  "fx": {
+    "halo": 0.085,
+    "shadowX": 0.03,
+    "shadowY": 0.055,
+    "jitterDeg": 1,
+    "jitterY": 0.025,
+    "activeScale": 1.07,
+    "activeOvershoot": 1.6,
+    "bandPadX": 0.15,
+    "bandTop": 0.17,
+    "bandBottom": 0.19,
+    "bandDeg": 1.2,
+    "bandWobble": 0.028,
+    "bandWave": 1.7,
+    "bandSlant": 0.06,
+    "bandRound": 0.06,
+    "bandAlpha": 1,
+    "swipeS": 0.22,
+    "swipeLag": 0.5,
+    "scribbleY": 0.17,
+    "scribbleAmp": 0.035,
+    "scribbleTooth": 0.2,
+    "scribbleW": 0.06,
+    "scribbleRim": 0.045,
+    "scribbleS": 0.3,
+    "scribbleLagS": 0.1
+  }
+}

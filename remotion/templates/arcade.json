@@ -1,0 +1,171 @@
+{
+  "title": "Arcade",
+  "description": "8-bit: pixel caps with a one-pixel outline and a hard stepped extrusion. Letters drop in one by one and bounce, the spoken word hops letter by letter and runs between two colours, shouted words are bigger and blink, and before a pause the letters fall off one by one.",
+  "font": {
+    "family": "Press Start 2P",
+    "file": "captions/PressStart2P-Regular.ttf",
+    "weight": 400,
+    "style": "normal"
+  },
+  "emphFont": null,
+  "size": 56,
+  "minSize": 32,
+  "lineHeight": 1.56,
+  "letterSpacing": 0,
+  "wordGap": 0.7,
+  "case": "upper",
+  "emphScale": 1.3,
+  "grow": 0,
+  "tilt": 0,
+  "margin": {
+    "x": 30,
+    "y": 32
+  },
+  "paging": {
+    "mode": "page",
+    "maxWords": 3,
+    "maxLines": 2,
+    "gapS": 0.6,
+    "holdS": 0.6,
+    "lingerS": 0.25,
+    "minShowS": 0.14,
+    "leadS": 0.03,
+    "overlapS": 0
+  },
+  "timing": {
+    "enterS": 0.22,
+    "exitS": 0.36,
+    "activeInS": 0.1,
+    "activeOutS": 0.14,
+    "colorS": 0.25,
+    "staggerS": 0
+  },
+  "colors": {
+    "text": "#FFFFFF",
+    "active": "#FFE600",
+    "emph": "#FF6B5E",
+    "stroke": "#000000",
+    "shadow": "#FF70CB",
+    "plate": "#000000",
+    "plateText": "#FFFFFF",
+    "accent": "#00E5FF",
+    "accent2": "#FFC53D",
+    "cycle": [
+      "#FFE600",
+      "#00E5FF"
+    ]
+  },
+  "auto": {
+    "candidates": {
+      "text": [
+        "white",
+        "cream"
+      ],
+      "active": [
+        "yellow",
+        "lime",
+        "orange",
+        "mint"
+      ],
+      "emph": [
+        "red",
+        "orange"
+      ],
+      "stroke": [
+        "black"
+      ],
+      "shadow": [
+        "pink",
+        "violet",
+        "sky"
+      ],
+      "accent": [
+        "cyan",
+        "mint",
+        "lime"
+      ],
+      "accent2": [
+        "gold",
+        "yellow",
+        "white"
+      ]
+    },
+    "pairs": [
+      [
+        "text",
+        "stroke"
+      ],
+      [
+        "active",
+        "stroke"
+      ],
+      [
+        "accent",
+        "stroke"
+      ],
+      [
+        "emph",
+        "stroke"
+      ],
+      [
+        "accent2",
+        "stroke"
+      ]
+    ],
+    "avoidHue": [
+      "active",
+      "emph",
+      "shadow"
+    ],
+    "distinct": [
+      [
+        "active",
+        "accent"
+      ],
+      [
+        "emph",
+        "accent2"
+      ],
+      [
+        "active",
+        "emph"
+      ],
+      [
+        "shadow",
+        "active"
+      ],
+      [
+        "shadow",
+        "emph"
+      ]
+    ]
+  },
+  "label": {
+    "size": 56,
+    "enterS": 0.22,
+    "exitS": 0.3,
+    "rotate": 0
+  },
+  "fx": {
+    "px": 0.125,
+    "depth": 2,
+    "letterS": 0.03,
+    "cascadeS": 0.2,
+    "dropH": 0.6,
+    "dropFrom": 0.5,
+    "dropS": 0.12,
+    "bounce": 0.42,
+    "bounces": 2,
+    "hopH": 0.24,
+    "hopS": 0.26,
+    "hopSpreadS": 0.1,
+    "cycleHz": 1.2,
+    "emphHop": 1.25,
+    "blinkHz": 3,
+    "waveH": 0.2,
+    "waveS": 0.6,
+    "waveLag": 0.12,
+    "fallS": 0.16,
+    "fallH": 0.4
+  }
+}

@@ -11,20 +11,18 @@ from typing import Any
 
 from .. import config
 from ..models import Word
+from ..render import seek
 
 log = logging.getLogger(__name__)
-SEEK_PAD_S = 6.0
 
 
 def extract_wav(media: str | Path, start_s: float, dur_s: float, out: Path) -> Path:
-    """16 kHz mono wav of the window. Coarse input seek, then atrim in the graph (D9)."""
-    seek = max(0.0, start_s - SEEK_PAD_S)
-    trim = start_s - seek
+    """16 kHz mono wav of the window. Coarse input seek, then atrim in the graph (D9, render/seek.py)."""
+    inp, trim = seek.one_stream(media, start_s)
     af = f"atrim=start={trim:.3f}:duration={dur_s:.3f},asetpts=PTS-STARTPTS"
     cmd = [
         config.ffmpeg_bin(), "-y", "-hide_banner", "-loglevel", "error",
-        "-ss", f"{seek:.3f}", "-i", str(media), "-vn", "-af", af,
-        "-ac", "1", "-ar", "16000", str(out),
+        *inp, "-vn", "-af", af, "-ac", "1", "-ar", "16000", str(out),
     ]  # fmt: skip
     subprocess.run(cmd, check=True, capture_output=True)
     return out

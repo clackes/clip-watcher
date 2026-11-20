@@ -112,7 +112,8 @@ def test_pdtmap_interp_and_gap():
 
 
 def test_streamlink_cmd():
-    c = build_streamlink_cmd("twitch", "foo")
+    # binary given: this is about the flags; finding streamlink is the next test (it needs it installed)
+    c = build_streamlink_cmd("twitch", "foo", binary="streamlink")
     assert (
         c[-3:] == ["--stdout", "https://twitch.tv/foo", "720p60,720p,best"][-3:]
         or c[-2] == "https://twitch.tv/foo"
@@ -125,7 +126,7 @@ def test_streamlink_cmd():
         "--twitch-supported-codecs",
     ):
         assert f in c
-    k = build_streamlink_cmd("kick", "bar", "1080p60,best")
+    k = build_streamlink_cmd("kick", "bar", "1080p60,best", binary="streamlink")
     assert "https://kick.com/bar" in k and "--twitch-supported-codecs" not in k and k[-1] == "1080p60,best"
 
 
@@ -363,8 +364,14 @@ def test_covered_until_ms(tmp_path):
 
 def test_streamlink_bin_found_without_activated_venv(monkeypatch):
     # Regression: a bare "streamlink" made every recorder exit at once when the venv wasn't on PATH.
+    import sys
+
+    import pytest
+
     from clipwatcher import config
 
+    if not (Path(sys.executable).parent / "streamlink").exists():
+        pytest.skip("streamlink is not installed next to this Python (pip install streamlink)")
     config.streamlink_bin.cache_clear()
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
     monkeypatch.delenv("CLIPWATCHER_STREAMLINK", raising=False)
@@ -422,3 +429,92 @@ def test_recorder_alerts_once_when_recording_falls_behind_live(tmp_path, monkeyp
 
     asyncio.run(go())
     assert len(alerts) == 2 and "14.0 min behind live" in alerts[0]
+
+
+def test_recorder_does_not_call_a_finished_broadcast_behind_live(tmp_path, monkeypatch):
+    import asyncio
+
+    from clipwatcher.ingest.recorder import Recorder
+
+    alerts = []
+
+    async def on_alert(text):
+        alerts.append(text)
+
+    rec = Recorder("twitch", "x", "s", tmp_path, on_alert=on_alert)
+    monkeypatch.setattr(rec, "newest_segment_age_s", lambda now=None: 900.0)
+    rec._last_ingest -= 600  # the last segment arrived 10 minutes ago: the stream is over, not slow
+    asyncio.run(rec._check_lag())
+    assert alerts == [] and not rec._lagging
+
+
+def test_recorder_loop_survives_a_failed_check(tmp_path, monkeypatch):
+    """One exception in check_once used to end the loop for good while ffmpeg kept writing: nothing was
+    ingested or pruned any more, so every clip failed and the disk filled."""
+    import asyncio
+
+    from clipwatcher.ingest import recorder
+    from clipwatcher.ingest.recorder import Recorder
+
+    alerts, calls = [], []
+
+    async def on_alert(text):
+        alerts.append(text)
+
+    rec = Recorder("twitch", "x", "s", tmp_path, on_alert=on_alert, segment_s=10)
+
+    async def check():
+        calls.append(1)
+        if len(calls) <= 2:
+            raise OSError(28, "No space left on device")
+        if len(calls) == 4:
+            raise asyncio.CancelledError
+
+    async def no_wait(_):
+        return None
+
+    monkeypatch.setattr(rec, "check_once", check)
+    monkeypatch.setattr(recorder.asyncio, "sleep", no_wait)
+    try:
+        asyncio.run(rec._ingest_loop())
+    except asyncio.CancelledError:
+        pass
+    assert len(calls) == 4  # kept going after two failures, stopped only when cancelled
+    assert len(alerts) == 1 and "No space left" in alerts[0]  # one alert for the streak
+
+
+def test_recorder_reusing_a_ring_drops_segments_the_last_run_never_indexed(tmp_path):
+    from clipwatcher.ingest.recorder import Recorder
+
+    rec = Recorder("twitch", "x", "s", tmp_path)
+    kept, orphan = rec.dir / "seg_r1_00000.ts", rec.dir / "seg_r1_00001.ts"
+    kept.write_bytes(b"x")
+    orphan.write_bytes(b"x")
+    rec.ring.add_segment(kept, 1_000_000, 10)
+    again = Recorder("twitch", "x", "s", tmp_path)  # the lane restarted into the same folder
+    assert again.drop_unindexed() == ["seg_r1_00001.ts"]
+    assert kept.exists() and not orphan.exists() and len(again.ring.segments()) == 1
+
+
+def test_sweep_does_not_kill_a_pid_that_is_no_longer_the_recorder(tmp_path, monkeypatch):
+    import json
+    import os
+
+    from clipwatcher.ingest import recorder
+
+    old = tmp_path / "x" / "20260101-000000"
+    old.mkdir(parents=True)
+    (old / "pids.json").write_text(json.dumps({"pgid": os.getpid()}))  # reused by this very test process
+    killed = []
+    monkeypatch.setattr(recorder, "kill_group", lambda pgid, sig: killed.append(pgid))
+    assert recorder.sweep_stale(tmp_path, "x") == [old] and not old.exists()
+    assert killed == []  # pytest is not a streamlink pipeline
+    assert recorder.still_recorder(2**22 + 12345)  # nothing has that pid: a kill would be a no-op anyway
+
+
+def test_read_jsonl_skips_a_line_torn_by_a_crash(tmp_path):
+    from clipwatcher.chat.convert import read_jsonl
+
+    p = tmp_path / "chat.jsonl"
+    p.write_text('{"ts_ms": 1, "user": "a", "text": "hi"}\n{"ts_ms": 2, "user": "b", "te')
+    assert [m.text for m in read_jsonl(p)] == ["hi"]

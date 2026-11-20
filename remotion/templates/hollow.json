@@ -1,0 +1,142 @@
+{
+  "title": "Hollow",
+  "description": "Outline letters that fill up: slab caps as glass, dark inside a white line. A golden liquid with a head of foam rises in each word as it is spoken and stays, the white line giving way to it; shouted words fill pink and slosh to the brim; lines slide in from opposite sides, then the liquid drains and they slide out.",
+  "font": {
+    "family": "Alfa Slab One",
+    "file": "captions/AlfaSlabOne-Regular.ttf",
+    "weight": 400,
+    "style": "normal"
+  },
+  "emphFont": null,
+  "size": 100,
+  "minSize": 56,
+  "lineHeight": 1.32,
+  "letterSpacing": 0.04,
+  "wordGap": 0.36,
+  "case": "upper",
+  "emphScale": 1.08,
+  "grow": 0.05,
+  "tilt": 0,
+  "margin": {
+    "x": 36,
+    "y": 30
+  },
+  "paging": {
+    "mode": "page",
+    "maxWords": 3,
+    "maxLines": 2,
+    "gapS": 0.6,
+    "holdS": 0.5,
+    "lingerS": 0.25,
+    "minShowS": 0.14,
+    "leadS": 0.03,
+    "overlapS": 0
+  },
+  "timing": {
+    "enterS": 0.28,
+    "exitS": 0.36,
+    "activeInS": 0.1,
+    "activeOutS": 0.18,
+    "colorS": 0.25,
+    "staggerS": 0.07
+  },
+  "colors": {
+    "text": "#FFFFFF",
+    "active": "#FFC53D",
+    "emph": "#FF70CB",
+    "stroke": "#0B0B12",
+    "shadow": "#0B0B12",
+    "plate": "#0B0B12",
+    "plateText": "#FFFFFF",
+    "accent": "#FFC53D",
+    "accent2": "#00E5FF",
+    "cycle": [
+      "#FFC53D"
+    ]
+  },
+  "auto": {
+    "candidates": {
+      "text": [
+        "white"
+      ],
+      "active": [
+        "gold",
+        "cyan",
+        "lime",
+        "orange",
+        "mint"
+      ],
+      "emph": [
+        "pink",
+        "red",
+        "violet",
+        "cyan"
+      ],
+      "stroke": [
+        "ink"
+      ],
+      "plateText": [
+        "white"
+      ]
+    },
+    "pairs": [
+      [
+        "text",
+        "stroke"
+      ],
+      [
+        "active",
+        "stroke"
+      ],
+      [
+        "emph",
+        "stroke"
+      ],
+      [
+        "plateText",
+        "stroke"
+      ]
+    ],
+    "avoidHue": [
+      "active",
+      "emph"
+    ],
+    "distinct": [
+      [
+        "active",
+        "emph"
+      ]
+    ]
+  },
+  "label": {
+    "size": 104,
+    "enterS": 0.34,
+    "exitS": 0.3,
+    "rotate": 0
+  },
+  "fx": {
+    "outer": 0.085,
+    "inline": 0.05,
+    "level": 1,
+    "foam": 0.07,
+    "foamTint": 0.6,
+    "fillS": 0.3,
+    "fillMinS": 0.12,
+    "fillOvershoot": 1.2,
+    "fillLift": 0.025,
+    "sloshDeg": 4,
+    "sloshHz": 2.2,
+    "sloshS": 0.9,
+    "rock": 0.1,
+    "emphFreq": 2.4,
+    "emphDamp": 0.3,
+    "emphSloshDeg": 8,
+    "activeScale": 1.07,
+    "activeLift": 0.04,
+    "activeOvershoot": 2,
+    "slitPad": 0.3,
+    "enterOvershoot": 0.9,
+    "drainShare": 0.55,
+    "slideFrom": 0.3
+  }
+}

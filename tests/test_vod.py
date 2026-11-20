@@ -1,3 +1,4 @@
+import json
 import sys
 import types
 from pathlib import Path
@@ -84,6 +85,118 @@ def test_main_no_judge_with_video(tmp_path, monkeypatch):
         "clipwatcher.queue.staging",
         stage_package=lambda c, s, cl, m, **k: staged.append(m) or tmp_path,
     )
-    vod.main(["--vod", "555555", "--streamer", "foo", "--chat", str(chat), "--video", str(tmp_path / "v.mp4"),
-              "--no-judge", "--top", "2", "--work", str(tmp_path / "w")])  # fmt: skip
+    # --out: the default is ./staging, the real queue (this test used to create staging/clips.db in the repo)
+    args = ["--vod", "555555", "--streamer", "foo", "--chat", str(chat), "--video", str(tmp_path / "v.mp4")]
+    vod.main(
+        [*args, "--no-judge", "--top", "2", "--work", str(tmp_path / "w"), "--out", str(tmp_path / "st")]
+    )
     assert len(staged) == 2 and staged[0]["judge_source"] == "none"
+
+
+def test_judge_rejected_clip_is_not_staged(tmp_path, monkeypatch, capsys):
+    """The VOD lane staged everything as READY, also what the judge marked not publishable or flagged as a
+    spoiler / music risk, with the judge score as queue score: auto-approve could have published it."""
+    chat = synth.to_tdl_json(synth.make_chat(), tmp_path / "chat.json")
+    monkeypatch.setattr(vod, "run_cmd", lambda cmd: None)
+    verdicts = [
+        JudgeResult(
+            9, 9, "", 0, 20, "h", ["t"], "s", ok=False, score=9, flags={"mu": True}, reject_reason="music"
+        ),
+        JudgeResult(7, 7, "", 0, 20, "h", ["t"], "s", ok=True, score=7),
+        JudgeResult(3, 3, "", 0, 20, "h", ["t"], "s", ok=False, score=3, reject_reason="dead air"),
+    ]
+    _fake(monkeypatch, "clipwatcher.judge.transcribe", transcribe=lambda *a, **k: [])
+
+    def no_frames(*a, **k):
+        raise OSError("ffmpeg could not read the window")  # must not abort the run either
+
+    _fake(monkeypatch, "clipwatcher.judge.frames", keyframes_lowres=no_frames, frame_count=lambda d: 8)
+    _fake(monkeypatch, "clipwatcher.judge.claude", judge_clip=lambda *a, **k: verdicts.pop(0))
+    rendered, staged = [], []
+    _fake(
+        monkeypatch, "clipwatcher.render.template",
+        render_short=lambda s, a, d, out, **k: rendered.append(out) or out,
+        render_clean=lambda s, a, d, out, **k: out,
+    )  # fmt: skip
+    _fake(
+        monkeypatch,
+        "clipwatcher.queue.staging",
+        stage_package=lambda c, s, cl, m, **k: staged.append(m) or tmp_path,
+    )
+    monkeypatch.setenv("CLIPWATCHER_EVENTS", str(tmp_path / "events.jsonl"))
+    rc = vod.main(["--vod", "777777", "--streamer", "foo", "--chat", str(chat), "--top", "3",
+                   "--work", str(tmp_path / "w"), "--out", str(tmp_path / "st")])  # fmt: skip
+    assert rc == 0 and len(staged) == 1 and len(rendered) == 1  # rejected clips are not even rendered
+    assert staged[0]["judge_score"] == 7 and capsys.readouterr().out.count("rejected by the judge") == 2
+    # the run told who watches it what happened: chat read, moments found, each clip's fate, the steps
+    rows = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text().splitlines()]
+    kinds = [r["kind"] for r in rows]
+    assert kinds.count("moment") == 3 and kinds.count("rejected") == 2 and kinds.count("staged") == 1
+    assert rows[kinds.index("candidates")]["count"] == 3 and rows[kinds.index("chat")]["messages"] > 0
+    assert {"render_short", "render_clean", "stage"} <= set(staged[0]["timings"]) and staged[0][
+        "lane"
+    ] == "vod"
+
+
+def test_chat_lines_keep_the_reaction_at_the_end_of_the_window():
+    from clipwatcher.models import ChatMessage
+
+    msgs = [ChatMessage(t * 10, f"u{t}", f"line {t}") for t in range(5000)]  # 100 messages a second
+    lines = vod._chat_lines(msgs, 0, 50)
+    assert len(lines) == 2000 and lines[-1] == "u4999: line 4999"  # was: the first 60, all before the moment
+
+
+def test_viewer_clips_confirm_and_reorder_vod_candidates():
+    from clipwatcher.detect.viewer_clips import vod_clip_moments
+    from clipwatcher.models import Candidate
+
+    def post(payload):
+        assert payload["variables"] == {"login": "foo"}
+        nodes = [
+            {"videoOffsetSeconds": 1000, "durationSeconds": 30, "video": {"id": "42"}},
+            {"videoOffsetSeconds": 50, "durationSeconds": 30, "video": {"id": "another vod"}},
+            {"videoOffsetSeconds": None, "durationSeconds": 30, "video": {"id": "42"}},
+            {"videoOffsetSeconds": 77, "durationSeconds": 20, "video": None},
+        ]
+        return {"data": {"user": {"clips": {"edges": [{"node": n} for n in nodes]}}}}
+
+    assert vod_clip_moments("Foo", "42", post=post) == [1015.0]
+    assert vod_clip_moments("foo", "42", post=lambda p: {"errors": ["nope"]}) == []
+    assert vod_clip_moments("foo", "42") == []  # offline (tests never reach Twitch): no clips, no error
+
+    a, b, c = (
+        Candidate("foo", p, p - 40, p + 19, sc, sc) for p, sc in ((500, 9.0), (1020, 8.0), (3000, 7.0))
+    )
+    top = vod.confirmed_top([a, b, c], [1015.0], 2)
+    assert (
+        [x.peak_s for x in top] == [1020, 500] and top[0].final_score == 9.5 and top[0].signals["viewer_clip"]
+    )
+    assert vod.confirmed_top([a, b, c], [], 2) == [a, b]
+    loud = [(i / 10, -8.0 if 400 <= i < 410 else -30.0 + (i % 5) * 0.5) for i in range(590)]
+    both = vod.with_loudness(top[0], loud)  # the loudness bonus is added to the clip bonus, not instead of it
+    assert both.final_score == 8.0 + 1.5 + 1.5 and both.signals["viewer_clip"] and both.signals["loud_z"] > 5
+
+
+def test_one_clip_that_cannot_be_rendered_does_not_end_the_run(tmp_path, monkeypatch, capsys):
+    chat = synth.to_tdl_json(synth.make_chat(), tmp_path / "chat.json")
+    monkeypatch.setattr(vod, "run_cmd", lambda cmd: None)
+    renders, staged = [], []
+
+    def short(src, start, dur, out, **k):
+        renders.append(out)
+        if len(renders) == 1:
+            raise RuntimeError("render failed, 2.0 s of picture for a 30.0 s clip")
+        return out
+
+    _fake(
+        monkeypatch, "clipwatcher.render.template", render_short=short, render_clean=lambda s, a, d, o, **k: o
+    )
+    _fake(
+        monkeypatch,
+        "clipwatcher.queue.staging",
+        stage_package=lambda c, s, cl, m, **k: staged.append(c) or tmp_path,
+    )
+    args = ["--vod", "888888", "--streamer", "foo", "--chat", str(chat), "--no-judge", "--top", "3"]
+    rc = vod.main([*args, "--work", str(tmp_path / "w"), "--out", str(tmp_path / "st")])
+    assert rc == 1 and len(renders) == 3 and len(staged) == 2  # the other two are still made
+    assert "failed #1: RuntimeError" in capsys.readouterr().err

@@ -17,28 +17,69 @@ buffer:
   quality: 720p,720p30,720p60,best
   lag_alert_s: 60           # recording this far behind live -> log + Telegram alert (line too slow)
 
-detector:                   # D3
-  weights: {U: 0.5, E: 0.35, S: 0.15}
+chat:                       # D13: the whole chat of a broadcast is kept in work/chat/<login>/<stream id>.jsonl
+  backfill: true            # on joining, read what was said before from the platform's chat replay
+  backfill_max_h: 12        # ... at most this far back (a 48 h marathon is millions of messages)
+  backfill_first_s: 60      # ... and start detecting after at most this long; the rest is read in the background
+  rebuild_every_s: 120      # while it is, the detector is rebuilt on the deeper history this often (Kick only:
+                            # Twitch's replay is read whole in seconds)
+  session_poll_s: 60        # how often to check whether the streamer started a new broadcast
+
+kick:
+  max_rps: 1.5              # requests a second to Kick, all lanes together. Measured 19 Nov: a burst of 5/s
+                            # passes, but over a minute Kick lets about 1.6/s through and answers 429 beyond.
+                            # Live chat is a websocket and costs none; history reads at ~35 messages a second.
+
+categories:                 # D16: kinds of stream. A stream belongs to the first kind one of whose `match` texts
+  grand-theft-auto-vi:      # is in the category name its platform reports ("Grand Theft Auto VI" on Twitch,
+    match: ["grand theft auto vi", "gta vi", "gta 6", "gta6"]   # "Grand Theft Auto VI (GTA)" on Kick).
+    # No keywords of its own: 403 h of GTA VI chat (20 Nov) react with the words of detector.keywords below.
+    # The candidates the learner found (wasted, physics, jiggle, banned, damn, ayo, gyat ...) found no more
+    # of the moments viewers clipped when the detector was run with them, so none is switched on.
+    # keywords: {wasted: 2}       # hand-set extras for this kind of stream go here
+    # detector: {keep_q: 0.985}   # any detector.* setting can differ for a kind of stream
+  # Add a kind:  python scripts/learn_keywords.py collect --category "<name on Twitch>"
+  #              python scripts/learn_keywords.py learn --category "<name on Twitch>" --write
+  # learn writes config/keywords.yaml, and only words that find more viewer clips in its own test.
+
+detector:                   # D3 + D13
+  # chat_score = sum of weight * z over a 10 s window: U unique chatters, M messages, E keyword energy,
+  # S share of short / repeated messages. z = (value - level) / scale, with the scale taken from every
+  # second of the stream so far (detect/session.py).
+  weights: {U: 0.3, M: 0.25, E: 0.3, S: 0.15}
   window_s: 10
-  baseline_min: 15
-  warmup_s: 600             # owner, 19 Nov: learn each chat 10 min before the first clip (restarts prime it from the chat log)
-  fire_z: 3.0
-  pre_z: 2.0
+  level_min: 60             # "normal right now" = part whole-stream median, part median of the last N minutes
+  level_session_share: 0.5  # the whole-stream part: 1 = whole stream only, 0 = last level_min minutes only
+  session_max_h: 24         # marathons: statistics cover the last N hours (the chat log on disk keeps everything)
+  # Gate, once the stream has session_min_s of chat history: a spike fires in the top (1 - fire_q) of all
+  # seconds of this stream and is clipped when its peak reaches the top (1 - keep_q). 0.98 / 0.99 gave
+  # 3.1 clips/h over six real chats from 0.4 to 8 msg/s (0.8-5/h each); 0.97 / 0.985 about a fifth more.
+  # fire_q: 0 = always use the fixed thresholds below. Per streamer: fire_q / keep_q in streamers.yaml.
+  fire_q: 0.98
+  keep_q: 0.99
+  floor_z: 2.0              # never fire below this score, however quiet the stream has been
+  max_per_hour: 8           # past this many clips in an hour a spike must beat the hour's typical one
+  session_min_s: 900
+  fire_z: 3.0               # fixed thresholds for the first session_min_s of a stream
+  keep_z: 5.0
+  pre_z: 2.0                # run start = score above pre_z / fire_z of the fire threshold
+  onset_max_s: 15           # a burst builds in at most this long: the moment is not searched further back
+  before_s: 40              # live clip window around the moment: 59 s of footage for the judge to trim
+  after_s: 19
   min_unique: 8
-  live_mature_s: 15         # live: emit a fire after 15 s with its peak score
+  live_mature_s: 15         # live: decide on a fire after 15 s, on its peak score
   min_unique_floor: 3       # small channels: adaptive floor (99.5th pct of unique chatters per window)
   min_unique_viewer_pct: 0.01
   mute_after_notice_s: 75   # raid / sub-bomb / giveaway mute window (60-90 s)
   sub_bomb_min: 10          # gifted subs that count as a sub-bomb (smaller gifts don't mute; 18 Nov)
   min_reaction_share: 0.15  # a spike needs this share of real reactions (lol/LMAO/KEKW/omg/wtf/laughter/clip link); 18 Nov
-  cooldown_s: 45
+  cooldown_s: 45            # between kept spikes (live: at least one clip window)
   prompt_share: 0.4         # one keyword-less message from >= 40% of chatters = prompted copy-paste, not a moment
-  keep_final: 4.5
+  rescue_s: 600             # D3: a viewer clip confirms a spike that fired under the keep gate in the last N s
   default_delay_s: 8        # chat reacts ~5-15 s after the moment
-  live_before_s: 30         # live window before the estimated moment: 41/175 judged windows opened mid-sentence at 20 s
-  live_after_s: 12          # and after it (the judge trims both ends)
-  bots: [nightbot, streamelements, moobot, fossabot, sery_bot, streamlabs, wizebot, soundalerts]
-  keywords:                 # weights for E (case-insensitive; emotes match whole tokens)
+  bots: [nightbot, streamelements, moobot, fossabot, sery_bot, streamlabs, wizebot, soundalerts,
+         botrix, kickbot, kicklet]   # the last three are Kick's
+  keywords:                 # weights for E (case-insensitive whole tokens; held keys match too: LMAOOO, WWWW)
     "clip it": 3
     clip: 3
     KEKW: 2
@@ -70,8 +111,8 @@ detector:                   # D3
 
 vod:                        # Day-0 VOD lane defaults (21A)
   top: 5
-  before_s: 20
-  after_s: 10
+  before_s: 40              # 59 s of footage around the moment, as in the live lane (detector.before_s / after_s)
+  after_s: 19
   gap_s: 90
   bucket_s: 10
   pad_s: 6                  # D9 seek fix padding
@@ -86,9 +127,16 @@ render:
   credit_on_screen: false   # owner, 18 Nov: no twitch.tv/<name> tag on the video (credit stays in the description)
   sfx: true                 # meme sound effect on every judge beat (assets/sfx/<kind>/, split layout)
   sfx_gain_db: -4           # sound effect level against the -14 LUFS clip
+  clip_min_s: 30            # owner, 19 Nov: clips run 30-59 s. A shorter judge trim gets more setup (starts earlier),
+  clip_max_s: 59            # a longer one loses its oldest part; jump cuts never go below clip_min_s
   jump_cuts: true           # cut pauses without speech (beats and judge action labels are kept)
   jump_gap_s: 0.8           # a pause this long is dead air
   captions: word            # word (one word on the seam) | pop | classic | bounce | ab; stored in meta.captions
+                            # rm:<template> = an animated template (remotion/README.md lists the 25)
+  rm:                       # the animated templates (D19)
+    colors: auto            # auto = colours picked for the video under each phrase | fixed = the template's own
+    fallback: word          # the built-in style a clip gets when a template cannot be rendered
+    max_fps: 60             # captions move at the clip's frame rate, up to this
   cold_open_s: 0            # replay the reaction first (0 = off; owner, 18 Nov: none of 20 top clip Shorts does it, they open on the setup line)
   cold_open_lead_s: 2.5     # cold open starts this long before the peak (build-up, not mid-shout)
   cold_open_zoom: 1.15      # punch-in on the facecam during the cold open
@@ -105,6 +153,8 @@ judge:
     claude-haiku-5-5: disabled
     claude-sonnet-5-5: adaptive
   max_tokens: 8000          # thinking counts toward it; the answer is ~300 tokens; headroom is not billed
+  timeout_s: 60             # one judge attempt; left to the SDK a hung call held a render slot for up to 30 min
+  max_retries: 1            # retries after the first attempt, then the heuristic answers
   frames: 8                 # min frames (evenly spaced + 2 right after the chat peak)
   frames_max: 16            # one frame every frame_every_s, up to this many
   frame_every_s: 2.5
@@ -129,11 +179,13 @@ publish:
     max_age_h: 24            # fresh clips only
   auto_approve_min: 7       # the 7/10 clips of 18 Nov were the ones the owner liked
   claim_ttl_min: 15
-  youtube_on_approve: true  # Approve in Telegram uploads at once (browser mode + DRY_RUN=1: private, needs YT_BROWSER_FORCE=1)
+  youtube_on_approve: true  # Approve in Telegram uploads at once (private while DRY_RUN=1)
+  resume_max_h: 24          # after a bot restart, upload clips approved up to N hours ago that never got there
+  card_max_age_h: 24        # the bot posts a card for READY clips that have none (VOD / batch clips too); 0 = off
   youtube_mode: browser     # browser: real Chrome via patchright (scripts/yt_browser_login.py); api: Data API (publish/youtube.py)
 
 fastlane:                   # live lane (python -m clipwatcher.live)
-  min_score: 5              # peak chat score gate; replay of 4 VODs: ~3-5 clips/h/streamer, keeps most top moments
+  min_score: 0              # extra fixed floor on the chat score; the gate is detector.keep_q / keep_z (D13)
   max_parallel: 2            # per streamer
   max_parallel_total: 2      # across all streamers on this machine (renders queue, segments stay pinned)
   profile: cpu_live

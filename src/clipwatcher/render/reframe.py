@@ -21,6 +21,7 @@ import tempfile
 from pathlib import Path
 
 from clipwatcher import calibrate, config
+from clipwatcher.render import seek
 
 log = logging.getLogger(__name__)
 
@@ -38,14 +39,11 @@ def enabled() -> bool:
 
 def _frames(media: Path, start: float, dur: float, out: Path) -> list[tuple[float, Path]]:
     """Frames every SAMPLE_S over [start, start+dur] in one pass (D9: coarse seek, trim in the graph)."""
-    coarse = max(0.0, start - 6)
-    vf = (
-        f"trim=start={start - coarse:.3f}:duration={dur:.3f},setpts=PTS-STARTPTS,"
-        f"fps={1 / SAMPLE_S:g},scale=-2:360"
-    )
+    inp, trim = seek.one_stream(media, start)
+    vf = f"trim=start={trim:.3f}:duration={dur:.3f},setpts=PTS-STARTPTS,fps={1 / SAMPLE_S:g},scale=-2:360"
     subprocess.run(
-        [config.ffmpeg_bin(), "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{coarse:.3f}", "-i",
-         str(media), "-vf", vf, "-an", str(out / "f_%04d.png")],
+        [config.ffmpeg_bin(), "-y", "-hide_banner", "-loglevel", "error", *inp, "-vf", vf, "-an",
+         str(out / "f_%04d.png")],
         capture_output=True, timeout=180,
     )  # fmt: skip
     return [(i * SAMPLE_S, p) for i, p in enumerate(sorted(out.glob("f_*.png")))]

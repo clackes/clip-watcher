@@ -4,9 +4,10 @@ Opens the user's real Chrome via patchright with a persistent profile and walks
 through YouTube Studio's upload UI. Approve on Telegram triggers this when
 ``publish.youtube_mode: browser`` in config/global.yaml.
 
-Sign in once with ``python scripts/yt_browser_login.py``; the resulting profile
-(default ``~/.clipwatcher/yt-chrome-profile``) is reused on every upload.
-Override with ``YT_BROWSER_PROFILE``. Screenshots on failure go to
+Sign in once in the companion app (Connect, YouTube: one Chrome profile per account under
+``~/.clipwatcher/youtube/``, the upload uses the account that posts) or with
+``python scripts/yt_browser_login.py`` (the single profile ``~/.clipwatcher/yt-chrome-profile``,
+used while no account is kept). ``YT_BROWSER_PROFILE`` overrides both. Screenshots on failure go to
 ``YT_BROWSER_SHOTS`` when set.
 
 DRY_RUN=1 skips the browser and returns a ``dryrun-...`` id, matching
@@ -22,13 +23,15 @@ import json
 import logging
 import os
 import re
+import sys
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 from .. import config
 from ..queue.db import APPROVED, ClipDB
-from .youtube import NotApproved, build_metadata
+from .youtube import NotApproved, build_metadata, failure_recorded, record_url
 
 log = logging.getLogger(__name__)
 
@@ -39,20 +42,30 @@ _URL_RE = re.compile(r"(?:shorts/|youtu\.be/|watch\?v=)([A-Za-z0-9_-]{6,})")
 
 
 def profile_dir(account: str | None = None) -> Path:
-    """YT_BROWSER_PROFILE (explicit dir) wins; else the account's own profile
-    (YT_BROWSER_ACCOUNT=<username> -> ~/.clipwatcher/yt-profiles/<username>); else the legacy shared one."""
+    """The Chrome profile uploads go through: YT_BROWSER_PROFILE when it is set; else the named account's
+    profile (account, or YT_BROWSER_ACCOUNT=<username> -> ~/.clipwatcher/yt-profiles/<username>, the
+    server's capybarasking); else the account that posts (publish/youtube_accounts.py, chosen in the
+    companion app); else the single profile of before."""
     p = os.environ.get("YT_BROWSER_PROFILE")
     if p:
         return Path(p).expanduser()
     account = account or os.environ.get("YT_BROWSER_ACCOUNT")
     if account:
         return PROFILES_ROOT / re.sub(r"[^A-Za-z0-9._@-]", "_", account.strip())
-    return DEFAULT_PROFILE
+    from . import youtube_accounts
+
+    return youtube_accounts.posting_profile() or DEFAULT_PROFILE
 
 
 def _shots_dir() -> Path | None:
     s = os.environ.get("YT_BROWSER_SHOTS")
     return Path(s).expanduser() if s else None
+
+
+def _select_all_key() -> str:
+    """Select-all in the focused text box: Cmd+A on macOS, Ctrl+A on Windows and Linux (Meta+A selects
+    nothing there, so Studio's prefilled title stayed and ours was typed behind it)."""
+    return "Meta+A" if sys.platform == "darwin" else "Control+A"
 
 
 async def _upload(
@@ -62,6 +75,7 @@ async def _upload(
     *,
     private: bool,
     timeout_s: int = 900,
+    on_video_id: Callable[[str], None] | None = None,
 ) -> str:
     from patchright.async_api import async_playwright
 
@@ -100,7 +114,7 @@ async def _upload(
             boxes = page.locator("ytcp-social-suggestions-textbox #textbox")
             await boxes.first.wait_for(timeout=120_000)
             await boxes.first.click()
-            await page.keyboard.press("Meta+A")
+            await page.keyboard.press(_select_all_key())
             await page.keyboard.press("Delete")
             await page.keyboard.type(title[:95])
 
@@ -120,6 +134,8 @@ async def _upload(
             vid = await dialog_with_id.get_attribute("video-id") or ""
             if not vid:
                 raise RuntimeError("Studio did not assign a video-id")
+            if on_video_id is not None:
+                on_video_id(vid)
             href = f"https://youtube.com/shorts/{vid}"
 
             # Details → Video elements → Checks → Visibility: three Next clicks.
@@ -192,25 +208,33 @@ def publish_clip(db: ClipDB, clip_id: str, root: Path | None = None) -> str:
     if state != APPROVED:
         raise NotApproved(f"{clip_id} is {state}, not APPROVED")
 
-    root = Path(root) if root else staging.DEFAULT_ROOT
-    folder = root / "approved" / clip_id
-    meta = json.loads((folder / "meta.json").read_text())
-    row = db.get(clip_id) or {}
-    meta.update(json.loads(row.get("meta_json") or "{}"))
-    md = build_metadata(meta)
-    video = folder / "short_9x16.mp4"
+    root = Path(root) if root else staging.staging_root()
+    with failure_recorded(db, clip_id):
+        folder = root / "approved" / clip_id
+        meta = json.loads((folder / "meta.json").read_text())
+        row = db.get(clip_id) or {}
+        meta.update(json.loads(row.get("meta_json") or "{}"))
+        md = build_metadata(meta)
+        video = folder / "short_9x16.mp4"
 
-    force = os.environ.get("YT_BROWSER_FORCE") == "1"
-    if config.dry_run() and not force:
-        vid = f"dryrun-{uuid.uuid4().hex[:8]}"
-        db.log("publisher", "youtube_browser_dry_run", clip_id, f"would upload {video.name}")
-        return vid
+        force = os.environ.get("YT_BROWSER_FORCE") == "1"
+        if config.dry_run() and not force:
+            vid = f"dryrun-{uuid.uuid4().hex[:8]}"
+            db.log("publisher", "youtube_browser_dry_run", clip_id, f"would upload {video.name}")
+            return vid
 
-    private = config.dry_run()  # under DRY_RUN with force, still upload private
-    with _profile_lock():
-        url = asyncio.run(_upload(video, md["title"], md["description"], private=private))
-    m = _URL_RE.search(url)
-    yt_id = m.group(1) if m else url
-    db.set_state(clip_id, "PUBLISHED", actor="publisher", youtube_id=yt_id)
-    staging.update_published(clip_id, "youtube", url, root)
+        private = config.dry_run()  # under DRY_RUN with force, still upload private
+        with _profile_lock():  # one Chrome per profile: the scheduler and Telegram never upload at once
+            url = asyncio.run(
+                _upload(
+                    video, md["title"], md["description"], private=private,
+                    # Studio hands out the id long before the dialog is through: keep it, so a video that got
+                    # stuck half way can be found instead of blindly uploaded again
+                    on_video_id=lambda yt_id: db.note_upload(clip_id, yt_id),
+                )
+            )  # fmt: skip
+        m = _URL_RE.search(url)
+        yt_id = m.group(1) if m else url
+        db.set_state(clip_id, "PUBLISHED", actor="publisher", youtube_id=yt_id)
+    record_url(db, clip_id, url, root)
     return url

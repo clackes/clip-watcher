@@ -103,22 +103,92 @@ def test_staging_flow(tmp_path, db):
     assert data["c9"]["youtube"] == "https://y/1"
 
 
+def _videos(tmp_path):
+    s, c = tmp_path / "s.mp4", tmp_path / "c.mp4"
+    s.write_bytes(b"short")
+    c.write_bytes(b"clean")
+    return s, c
+
+
+def test_restaging_never_resets_a_decided_clip(tmp_path, db, monkeypatch):
+    """A VOD re-run stages the same clip ids again: only a clip that is still READY may be replaced."""
+    from clipwatcher.publish import youtube
+
+    monkeypatch.setenv("DRY_RUN", "1")
+    root = tmp_path / "staging"
+    s, c = _videos(tmp_path)
+    staging.stage_package("v1", s, c, {"streamer": "x", "title": "first"}, root, db=db)
+    link = tmp_path / "link.mp4"
+    link.hardlink_to(root / "v1" / "short_9x16.mp4")
+    s.write_bytes(b"short v2")
+    staging.stage_package("v1", s, c, {"streamer": "x", "title": "second", "score": 7}, root, db=db)
+    row = db.get("v1")
+    assert row["state"] == "READY" and row["score"] == 7 and json.loads(row["meta_json"])["title"] == "second"
+    assert (root / "v1" / "short_9x16.mp4").read_bytes() == b"short v2"
+    assert link.read_bytes() == b"short"  # replaced by rename, never written into the shared inode
+
+    db.claim("v1", "manu")
+    db.approve("v1", "manu")
+    staging.mark_approved("v1", "manu", root)
+    db.set_state("v1", "PUBLISHED", actor="publisher", youtube_id="yt1")
+    s.write_bytes(b"short v3")
+    assert staging.stage_package("v1", s, c, {"streamer": "x", "title": "rerun"}, root, db=db) == root / "v1"
+    row = db.get("v1")
+    assert (row["state"], row["youtube_id"], row["approved_by"]) == ("PUBLISHED", "yt1", "manu")
+    assert json.loads(row["meta_json"])["title"] == "second"
+    assert (root / "approved" / "v1" / "short_9x16.mp4").read_bytes() == b"short v2"
+    assert (root / "v1" / "short_9x16.mp4").read_bytes() == b"short v2"
+    assert json.loads((root / "v1" / "meta.json").read_text())["state"] == "APPROVED"
+    assert "restage_refused" in [r["action"] for r in db.audit_rows("v1")]
+    with pytest.raises(youtube.NotApproved):  # no second approve, so no second upload
+        youtube.publish_clip(db, "v1", root)
+
+    for decided in ("claim", "approve", "reject"):
+        cid = f"v-{decided}"
+        staging.stage_package(cid, s, c, {"streamer": "x"}, root, db=db)
+        db.claim(cid, "samu")
+        if decided != "claim":
+            getattr(db, decided)(cid, "samu")
+        before = db.get(cid)
+        assert db.add_clip(cid, "x", {"title": "again"}) is False
+        staging.stage_package(cid, s, c, {"streamer": "x"}, root, db=db)
+        assert db.get(cid) == before
+
+
 OPS = {"manu": {"telegram_id": 11, "label": "Manu"}, "samu": {"telegram_id": 22, "label": "Samu"}}
 
 
+def test_approved_package_carries_the_edited_title(tmp_path, db):
+    """The title an operator typed in Telegram lives in the queue row; approved/meta.json is what the people
+    posting to TikTok and the campaign forms read."""
+    root = tmp_path / "staging"
+    s, c = _videos(tmp_path)
+    staging.stage_package("c9", s, c, {"streamer": "x", "title": "judge title", "hook": "h"}, root, db=db)
+    telegram_bot.handle_action(db, 11, "claim:c9:manu", operators=OPS, root=root)
+    assert telegram_bot.handle_edit_reply(db, 11, "c9", " Operator title ", operators=OPS)
+    assert telegram_bot.handle_action(db, 11, "approve:c9", operators=OPS, root=root)[0] == "Approved."
+    for folder in (root / "approved" / "c9", root / "c9"):
+        meta = json.loads((folder / "meta.json").read_text())
+        assert (meta["title"], meta["hook"], meta["state"], meta["approved_by"]) == (
+            "Operator title", "h", "APPROVED", "manu",
+        )  # fmt: skip
+
+
 def test_bot_logic(db, tmp_path, monkeypatch):
+    monkeypatch.delenv("CLIPWATCHER_STAGING", raising=False)
     monkeypatch.setattr(staging, "DEFAULT_ROOT", tmp_path / "staging")
     assert telegram_bot.handle_action(db, 999, "claim:c1:manu", operators=OPS) == ("", None)
     rows = telegram_bot.buttons_for(db.get("c1"), OPS)
     assert len(rows[0]) == 2 and rows[1] == [("🔁 Redo", "redo:c1")]
     text, _ = telegram_bot.handle_action(db, 11, "claim:c1:manu", operators=OPS)
-    assert text.startswith("👍")
+    assert text == "Claimed."
     assert "manu" in telegram_bot.handle_action(db, 22, "claim:c1:samu", operators=OPS)[0]
-    assert telegram_bot.handle_action(db, 22, "approve:c1", operators=OPS)[0].startswith("✋")
+    refused = telegram_bot.handle_action(db, 22, "approve:c1", operators=OPS)[0]
+    assert refused == "Only the holder can approve."
     labels = [b[0] for r in telegram_bot.buttons_for(db.get("c1"), OPS) for b in r]
-    assert labels[:2] == ["✅ Publish", "✏️ Change title"] and "🔁 Redo" in labels
-    assert "manu is checking it" in telegram_bot.card_text(db.get("c1"))
-    assert telegram_bot.handle_action(db, 11, "approve:c1", operators=OPS)[0] == telegram_bot.APPROVED
+    assert labels[:2] == ["Approve", "Edit"] and "🔁 Redo" in labels
+    assert "Held by: manu" in telegram_bot.card_text(db.get("c1"))
+    assert telegram_bot.handle_action(db, 11, "approve:c1", operators=OPS)[0] == "Approved."
 
 
 def test_bot_redo_queues_a_job_for_the_streamer_lane(db):
@@ -129,6 +199,53 @@ def test_bot_redo_queues_a_job_for_the_streamer_lane(db):
     job = db.claim_job(f"redo:{streamer}")
     assert job["payload"] == {"clip_id": "c1", "operator": "manu", "note": "start earlier"}
     assert telegram_bot.request_redo(db, 999, "c1", "x", operators=OPS) == ""
+
+
+def test_expired_claim_can_be_taken_over_from_the_card(db):
+    """After the TTL the row stays CLAIMED and the card still shows the holder's buttons, which nobody may
+    use any more: a press has to say so and bring the Claim buttons back."""
+    assert db.claim("c1", "manu", ttl_min=0.001)[0]
+    time.sleep(0.1)
+    assert db.state("c1") == "CLAIMED"
+    for who in (11, 22):
+        for action in ("approve", "reject", "release", "edit"):
+            text, row = telegram_bot.handle_action(db, who, f"{action}:c1", operators=OPS)
+            assert "expired" in text and row["state"] == "CLAIMED"
+    assert [b[0] for b in telegram_bot.buttons_for(row, OPS)[0]] == ["Claim: Manu", "Claim: Samu"]
+    assert "expired" in telegram_bot.card_text(row)
+    text, row = telegram_bot.handle_action(db, 22, "claim:c1:samu", operators=OPS)
+    assert text == "Claimed." and row["claimed_by"] == "samu"
+    assert [b[0] for b in telegram_bot.buttons_for(row, OPS)[0]] == ["Approve", "Edit"]
+    assert "expired" not in telegram_bot.card_text(row)
+    assert telegram_bot.handle_action(db, 11, "approve:c1", operators=OPS)[0].startswith("Only")
+    assert telegram_bot.handle_action(db, 22, "approve:c1", operators=OPS)[0] == "Approved."
+    # stale buttons on a card that moved on answer with the state instead of "only the holder"
+    assert telegram_bot.handle_action(db, 22, "reject:c1", operators=OPS)[0] == "Already approved."
+
+
+def test_approve_and_publish_follow_clipwatcher_staging(db, tmp_path, monkeypatch):
+    """Docker sets CLIPWATCHER_STAGING: Approve builds the approved package there, the publishers read it."""
+    from clipwatcher.publish import youtube, youtube_browser
+
+    monkeypatch.setattr(staging, "DEFAULT_ROOT", tmp_path / "repo" / "staging")
+    root = tmp_path / "data" / "staging"
+    monkeypatch.setenv("CLIPWATCHER_STAGING", str(root))
+    monkeypatch.setenv("DRY_RUN", "1")
+    monkeypatch.delenv("YOUTUBE_CREDENTIALS", raising=False)
+    monkeypatch.delenv("YT_BROWSER_FORCE", raising=False)
+    assert staging.staging_root() == root
+    s, c = _videos(tmp_path)
+    assert staging.stage_package("c1", s, c, {"streamer": "x"}, db=db) == root / "c1"
+    telegram_bot.handle_action(db, 11, "claim:c1:manu", operators=OPS)
+    assert telegram_bot.handle_action(db, 11, "approve:c1", operators=OPS)[0] == "Approved."
+    assert (root / "approved" / "c1" / "short_9x16.mp4").read_bytes() == b"short"
+    for pub in (youtube, youtube_browser):
+        assert pub.publish_clip(db, "c1").startswith("dryrun-")
+    staging.update_published("c1", "youtube", "https://y/1")
+    assert (root / "published_clips.json").exists()
+    assert not (tmp_path / "repo").exists()
+    monkeypatch.setenv("CLIPWATCHER_STAGING", "")  # an empty value in .env means "not set"
+    assert staging.staging_root() == tmp_path / "repo" / "staging"
 
 
 @pytest.mark.ffmpeg

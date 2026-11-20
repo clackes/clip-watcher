@@ -78,6 +78,52 @@ def test_bait_lines_are_dropped():
         assert not compact.is_bait(fine), fine
 
 
+def test_bait_is_an_order_to_the_viewer_not_a_word_in_the_line():
+    """D10: begging goes, also a single ask ("Subscribe!"); a line that tells the clip and happens to use
+    like / follow / comment stays (two such words in one line used to drop it)."""
+    for bait in (
+        "Subscribe!", "Like if you laughed", "Follow 🔔", "Like & sub", "Subscribe for more Zack 🔔",
+        "Follow Zack for more 🔥", "Drop a follow for daily chaos", "Hit the bell so you never miss one",
+        "Please follow, it helps", "Comment your rating 👇", "Share this with your duo",
+        "Wild ending 💀 Follow so you never miss one", "Make sure to follow", "like and subscribe for part 2",
+    ):  # fmt: skip
+        assert compact.is_bait(bait), bait
+    for fine in (
+        "He looked like he wanted to follow chat off the map 😭", "Like father, like son 💀",
+        "Moments like this are why people follow Zack 🔔", "Like, what was he thinking? 💀",
+        "Like for real, what was that? 💀", "Like this one was ever going in 😭",
+        "Would you follow him in there or bail? 👇", "The comment section called it 💀",
+        "Does he like it, or is that the face of regret? 👇", "He'd share that loot with nobody 😭",
+        "Chat told him to subscribe to his own channel 😭", "Follow the leader went wrong fast 💀",
+        "#Follow #Like #Clip",
+    ):  # fmt: skip
+        assert not compact.is_bait(fine), fine
+
+
+def test_description_keeps_its_four_lines():
+    """D10: teaser + credit, question, reason to follow, hashtags. A line that only sounds like bait stays;
+    a line that is bait is replaced by the stock line for its place, not just removed."""
+    told = [
+        "He looked like he'd follow chat anywhere 😭",
+        "Would you follow him in there? 👇",
+        "Moments like this are why people follow Zack 🔔",
+        "#Zack #Clip #Shorts",
+    ]
+    lines = compact.build_description(told, "zack", "twitch").split("\n")
+    assert lines == [told[0] + " 🎥 twitch.tv/zack", *told[1:]]
+    begged = ["Nobody saw the ending coming", "Comment below! 👇", "Subscribe!", "#Zack #Clip #Shorts"]
+    lines = compact.build_description(begged, "zack", "twitch").split("\n")
+    assert len(lines) == 4 and lines[0] == begged[0] + " 🎥 twitch.tv/zack" and lines[3] == begged[3]
+    assert lines[1] in compact._FB_QUESTIONS
+    assert lines[2] in [p.format(n="Zack") for p in compact._FB_PROMISES]
+    assert not any(compact.is_bait(ln) for ln in lines)
+    # not the four-line shape: bait is only removed, as before
+    assert (
+        compact.build_description(["Wild one", "Subscribe!"], "zack", "twitch")
+        == "Wild one 🎥 twitch.tv/zack"
+    )
+
+
 def test_fallback_copy_is_english_four_lines():
     c = compact.fallback_copy("zackrawrr", "twitch", "GTA VI", 3)
     lines = c["ds"].split("\n")
@@ -93,8 +139,11 @@ def test_request_system_prompt_is_static_and_cached(tmp_path):
                                transcript=[], chat=[])  # fmt: skip
     p2 = compact.build_payload(streamer="b", platform="twitch", game="h", language="en", dur=40, peak_s=9,
                                transcript=[Word(0, 1, "x")], chat=["u: y"])  # fmt: skip
-    r1 = compact.build_request("claude-haiku-5-5", [(0.0, img)], p1)
-    r2 = compact.build_request("claude-sonnet-5-5", [(1.5, img)], p2)
+    jcfg = config.global_config()["judge"]  # model IDs live only in config/global.yaml
+    screen, judge = jcfg["screen_model"], jcfg["judge_model"]
+    r1 = compact.build_request(screen, [(0.0, img)], p1)
+    r2 = compact.build_request(judge, [(1.5, img)], p2)
+    assert (r1["model"], r2["model"]) == (screen, judge)
     assert r1["system"] == r2["system"]  # identical prefix for every clip -> cache hits
     assert r1["system"][0]["cache_control"] == {"type": "ephemeral"}
     sp = r1["system"][0]["text"]
@@ -104,8 +153,10 @@ def test_request_system_prompt_is_static_and_cached(tmp_path):
     content = r1["messages"][0]["content"]
     assert content[0] == {"type": "text", "text": "[t=0.0s]"} and content[1]["type"] == "image"
     assert content[-1]["type"] == "text" and json.loads(content[-1]["text"])["meta"]["s"] == "a"
-    assert r1["thinking"] == {"type": "disabled"} and r2["thinking"] == {"type": "adaptive"}
-    assert r1["output_config"]["effort"] == "low"
+    for model, req in ((screen, r1), (judge, r2)):  # thinking as configured per model (judge.thinking)
+        mode = (jcfg.get("thinking") or {}).get(model)
+        assert req.get("thinking") == ({"type": mode} if mode else None)
+    assert r1["output_config"].get("effort") == jcfg.get("effort")
     assert r1["output_config"]["format"]["schema"] is compact.OUTPUT_SCHEMA
 
 

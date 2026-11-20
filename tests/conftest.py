@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 
 import pytest
 
 from clipwatcher.config import ffmpeg_bin
+
+os.environ["CLIPWATCHER_LOCAL"] = "0"  # a developer's config/local.yaml must not change what tests see
 
 SRC_SECONDS = 20
 
@@ -47,8 +50,9 @@ def synth_src(tmp_path_factory):
 
 @pytest.fixture(autouse=True)
 def _no_face_detection_in_pipeline_tests(request, monkeypatch):
-    """Pipeline tests use fake media: skip per-clip layout detection (tested in test_layout.py)."""
-    if request.module.__name__.endswith("test_layout"):
+    """Pipeline tests use fake media: skip per-clip layout detection (tested in test_layout.py and
+    test_webcam_sure.py)."""
+    if request.module.__name__.endswith(("test_layout", "test_webcam_sure")):
         return
     from clipwatcher import layout
 
@@ -61,3 +65,20 @@ def _no_category_lookup(monkeypatch):
     from clipwatcher.ingest import category
 
     monkeypatch.setattr(category, "stream_category", lambda *a, **k: None)
+
+
+@pytest.fixture(autouse=True)
+def _no_twitch_calls(monkeypatch):
+    """Tests never touch the network: anything that would ask Twitch gets an error, as when offline."""
+
+    def offline(payload):
+        raise OSError("tests do not touch the network")
+
+    monkeypatch.setattr("clipwatcher.chat.twitch_replay._post", offline)
+
+
+@pytest.fixture(autouse=True)
+def _bookkeeping_stays_out_of_the_repo(tmp_path, monkeypatch):
+    """The judge's ledger goes to the test's own folder, and no test writes progress events unless it asks."""
+    monkeypatch.setenv("CLIPWATCHER_LEDGER", str(tmp_path / "ledger" / "judge.jsonl"))
+    monkeypatch.delenv("CLIPWATCHER_EVENTS", raising=False)

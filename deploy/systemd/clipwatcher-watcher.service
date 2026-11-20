@@ -1,7 +1,9 @@
 [Unit]
-Description=Clip Watcher live watcher and recorder supervisor
+Description=Clip Watcher recorder supervisor (Helix/Kick polling; records only, not needed with the live lane)
 After=network-online.target
 Wants=network-online.target
+# Records into the same ring folders as the live lane, which clears the ones it does not know.
+Conflicts=clipwatcher-live.service
 
 [Service]
 Type=notify
@@ -9,12 +11,12 @@ NotifyAccess=main
 User=clipbot
 WorkingDirectory=/opt/clip-watcher
 EnvironmentFile=/etc/clipwatcher/env
-LoadCredential=secrets.env:/etc/clipwatcher/secrets.env
-Environment=CLIPWATCHER_CREDENTIALS_FILE=%d/secrets.env
+EnvironmentFile=/etc/clipwatcher/secrets.env
 ExecStart=/opt/clip-watcher/.venv/bin/python -m clipwatcher.ingest.watcher
 Restart=always
 RestartSec=5
-WatchdogSec=60
+# WATCHDOG=1 is sent after every poll, one poll a minute: 60 s would expire between two of them
+WatchdogSec=180
 NoNewPrivileges=true
 ProtectSystem=full
 
