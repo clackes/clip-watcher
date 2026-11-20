@@ -78,6 +78,7 @@ type Paper = { plate: string; ink: string };
 type Opts = {
   paper: (w: WordState, j: number) => Paper; // colours of letter j of the page
   lift: (w: WordState) => number; // 0..1 how far the word is lifted off the page
+  straight: (w: WordState) => number; // 0..1 how much of their tilt and nudge its scraps have lost
   block: Affine; // transform of the whole note
 };
 
@@ -152,7 +153,7 @@ function note(c: Ctx<P> | LabelCtx<P>, o: Opts): Scene {
         const pivot: [number, number] = [(l + r) / 2, (top + bottom) / 2];
 
         // at rest: turned and nudged; spoken: lifted, straight, a little bigger
-        const loose = 1 - fx.straighten * clamp(a);
+        const loose = 1 - fx.straighten * clamp(o.straight(w));
         const side = hash01(`${seed}s`) < 0.5 ? -1 : 1;
         const pop = spring(s, fx.slapFreq, fx.slapDamp);
         const arrive = 1 - E.outCubic(prog(s, 0, fx.slapTurnS));
@@ -160,9 +161,11 @@ function note(c: Ctx<P> | LabelCtx<P>, o: Opts): Scene {
         let rot = hashSigned(`${seed}r`) * fx.tiltDeg * loose + side * fx.slapTurnDeg * arrive;
         let y = hashSigned(`${seed}y`) * fx.nudge * u * loose - fx.lift * u * a - fx.slapDrop * u * arrive;
         if (w.emph && w.since > 0 && w.since < fx.emphShakeS) {
-          // a rattle that swells in and dies away, every scrap at its own phase
+          // a rattle that swells in and dies away, every scrap at its own phase. It comes up with the
+          // highlight: at full strength from the first instant, a scrap was turned by degrees in one frame
+          // and back in the next whenever the rattle and the straightening happened to pull against each other
           const life = w.since / fx.emphShakeS;
-          const swell = Math.sin(Math.PI * Math.sqrt(life)) * (1 - life);
+          const swell = E.inOutSine(prog(w.since, 0, P.timing.activeInS)) * Math.sin(Math.PI * Math.sqrt(life)) * (1 - life);
           rot += fx.emphShakeDeg * swell * Math.sin(2 * Math.PI * (fx.emphShakeHz * w.since + hash01(`${seed}p`)));
         }
         // the exit: lets go, falls, turns, shrinks, out through the bottom of the box
@@ -229,6 +232,9 @@ export default defineTemplate<P>({
     return note(c, {
       block: pose(blockCentre(c), {}),
       lift: (w) => pulse(t, w.start, w.activeEnd, P.timing.activeInS, P.timing.activeOutS, back(fx.activeOvershoot)),
+      // the scraps turn straight evenly over the time the lift takes: the lift's own curve is there after a
+      // third of it, which at 30 fps can be the whole turn in a single frame
+      straight: (w) => pulse(t, w.start, w.activeEnd, P.timing.activeInS, P.timing.activeOutS, E.inOutSine),
       paper: (w, j) => {
         const lit = clamp(w.a);
         const q = j + c.index; // the pattern starts somewhere else on every page
@@ -244,6 +250,7 @@ export default defineTemplate<P>({
     note(c, {
       block: pose(blockCentre(c), { rot: c.P.label.rotate }),
       lift: () => 0,
+      straight: () => 0,
       paper: () => ({ plate: c.colors.text, ink: c.colors.plateText }),
     }),
 });
