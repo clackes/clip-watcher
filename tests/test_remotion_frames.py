@@ -351,6 +351,19 @@ def test_the_renderer_closes_a_walled_in_gap_and_nothing_else(tmp_path):
     assert close(dst, again) == 0 and again.read_bytes() == dst.read_bytes()
 
 
+def test_a_long_gap_with_a_wide_end_is_one_opening():
+    """reel, as a word rolls up under its rail: the strip of video between the two was 2 px high at one end
+    and had room for the square at the other, 161 px away. The count followed the roomy part for 160 px
+    and called the rest specks. A region is an opening as a whole or a speck as a whole."""
+    np = pytest.importorskip("numpy")
+    a = np.zeros((60, 420), np.uint8)
+    a[10:50, 10:410] = 255  # a plate
+    a[20:22, 20:400] = 0  # a slit in it, 2 px high and 380 px long
+    assert fc.pinholes(np, a) == 2 * 380  # walled in and nowhere 5 px across: a speck, all of it
+    a[20:28, 20:30] = 0  # the same slit with a wide end
+    assert fc.pinholes(np, a) == 0
+
+
 def test_the_full_set_holds_the_case_found_on_a_real_clip():
     assert "shouts" in fc.FULL and "shouts" not in fc.QUICK
     said = [w.text for w in fc.FIXTURES["shouts"].word_list()]

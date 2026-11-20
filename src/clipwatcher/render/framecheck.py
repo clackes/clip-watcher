@@ -599,7 +599,7 @@ def speck_mask(np, alpha):
     if not enclosed.any():
         return out
     big = _morph(np, enclosed, 5, grow=False)  # the parts at least 5 px across ...
-    for _ in range(80):  # ... and all of the region each belongs to
+    while True:  # ... and all of the region each belongs to, however far it runs on (2 px a step)
         grown = _morph(np, big, 5, grow=True) & enclosed
         if (grown == big).all():
             break
