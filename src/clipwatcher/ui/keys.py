@@ -245,14 +245,16 @@ def _step(name: str, state: str, detail: str = "") -> dict[str, str]:
     return {"name": name, "state": state, "detail": detail}
 
 
-def _result(
-    which: str, outcome: str, headline: str, steps: list[dict[str, str]], **found: Any
-) -> dict[str, Any]:
+def _result(which: str, outcome: str, said: str, steps: list[dict[str, str]], **found: Any) -> dict[str, Any]:
+    """What a check found. ``said`` is what happened and, after its first sentence, what to do next: the
+    page shows the two apart (headline, advice)."""
     value = os.environ.get(KEYS[which]["var"]) or ""
+    headline, dot, advice = said.partition(". ")
     res = {
         "ok": outcome == "works",
         "outcome": outcome,
-        "headline": headline,
+        "headline": headline + dot.strip(),
+        "advice": advice,
         "steps": steps,
         "hint": _hint(value),
         "at": time.time(),
@@ -394,7 +396,11 @@ def test_claude(client: Any = None) -> dict[str, Any]:
         steps.append(_step(f"{role}'s model", "done", f"{shown} is available to this key."))
     names = " and ".join(m["name"] for m in found)
     return _result(
-        "claude", "works", f"Claude is connected. The judge will use {names}.", steps, models=found
+        "claude",
+        "works",
+        f"Claude is connected. The judge will use {names} for titles and scores.",
+        steps,
+        models=found,
     )
 
 
@@ -524,5 +530,9 @@ def test_telegram(transport: Transport | None = None) -> dict[str, Any]:
         who = "1 person" if n == 1 else f"{n} people"
         steps.append(_step("Who may approve", "done", f"{who}: {', '.join(team['operators'])}."))
     return _result(
-        "telegram", "works", f"Telegram is connected. Cards for approval go to {title}.", steps, **found
+        "telegram",
+        "works",
+        f"Telegram is connected. {at[0].upper() + at[1:]} posts the cards for approval in {title}.",
+        steps,
+        **found,
     )

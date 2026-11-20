@@ -36,17 +36,7 @@ MAX_IMAGE = 2_000_000
 IMAGE_HOSTS = ("ggpht.com", "googleusercontent.com")
 READY, SIGN_IN, UNKNOWN = "ready", "signin", "unknown"
 _TYPES = ((b"\x89PNG\r\n\x1a\n", "image/png"), (b"\xff\xd8\xff", "image/jpeg"), (b"GIF8", "image/gif"))
-_FIELDS = (
-    "channel_id",
-    "name",
-    "handle",
-    "picture",
-    "picture_url",
-    "subscribers",
-    "added",
-    "checked",
-    "state",
-)
+_FIELDS = ("channel_id", "name", "handle", "subscribers", "added", "checked", "state")  # what the page gets
 _GUARD = threading.RLock()
 
 
