@@ -24,7 +24,7 @@
     "leadS": 0.03,
     "overlapS": 0
   },
-  "timing": { "enterS": 0.3, "exitS": 0.18, "activeInS": 0.1, "activeOutS": 0.16, "colorS": 0.25, "staggerS": 0.05 },
+  "timing": { "enterS": 0.3, "exitS": 0.18, "activeInS": 0.16, "activeOutS": 0.16, "colorS": 0.25, "staggerS": 0.05 },
   "colors": {
     "text": "#FFE600",
     "active": "#00E5FF",

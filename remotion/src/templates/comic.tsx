@@ -39,7 +39,10 @@ const schema = paramsSchema({
   activeScale: z.number().min(1).max(1.5), // the spoken word punches up to this
   activeLift: z.number().min(0).max(0.3), // and lifts, em
   activeTiltDeg: z.number().min(0).max(8), // and leans, degrees
-  activeOvershoot: z.number().min(0).max(4),
+  // The punch is a back ease: the word is at full size after 1 / (1 + activeOvershoot) of timing.activeInS
+  // and only then swells past it. That first part has to outlast a frame at 30 fps (0.034 s): 2.4 with
+  // 0.16 s is 0.047 s (with 0.1 s it was 0.029 s, the whole punch in one frame).
+  activeOvershoot: z.number().min(0).max(4), // how far the punch swells past its size before it settles
   emphScale: z.number().min(1).max(1.6), // a shouted word punches up to this while spoken
   burstPadX: z.number().min(0).max(1.5), // the burst reaches this far past its word, em
   burstPadY: z.number().min(0).max(1.5),
