@@ -1,0 +1,23 @@
+Fonts of the Remotion caption templates (remotion/templates/*.json).
+
+Every font here is under the SIL Open Font License 1.1 (OFL-<Family>.txt) or the Apache License 2.0
+(LICENSE-<Family>.txt), downloaded unmodified from https://github.com/google/fonts (folders ofl/<family>
+and apache/<family>), with the exceptions below.
+
+Static instances. The caption renderer draws glyph outlines read from the font file and needs one face
+per file, so these five were cut from the upstream variable fonts with fontTools 4.68
+(fontTools.varLib.instancer, overlaps kept and flagged). Nothing else was changed: same glyphs, same
+names, same licence (OFL 1.1; none of these families declares a Reserved Font Name).
+
+  TiltNeon-Regular.ttf              from ofl/tiltneon  TiltNeon[XROT,YROT].ttf            at XROT=0 YROT=0
+  Fredoka-Bold.ttf                  from ofl/fredoka   Fredoka[wdth,wght].ttf             at wght=700 wdth=100
+  Unbounded-Black.ttf               from ofl/unbounded Unbounded[wght].ttf                at wght=900
+  JetBrainsMono-ExtraBold.ttf       from ofl/jetbrainsmono JetBrainsMono[wght].ttf        at wght=800
+  BricolageGrotesque-ExtraBold.ttf  from ofl/bricolagegrotesque BricolageGrotesque[opsz,wdth,wght].ttf
+                                                                                        at opsz=96 wght=800 wdth=100
+
+Emoji are not here on purpose: captions use Apple Color Emoji, which ships with macOS and may not be
+redistributed. Where it is not installed, emoji are left out of the caption text.
+
+The fonts of the ASS caption styles (Anton, Bangers, Luckiest Guy) stay one folder up, where libass
+looks for them; this folder is not scanned by libass.
