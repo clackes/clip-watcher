@@ -405,6 +405,8 @@ class Overlay:
     seconds: float = 0.0
     rendered: int = 0
     debug: Path | None = None
+    gap_frames: int = 0  # frames in which the renderer closed a walled-in gap of video (scripts/gaps.mjs)
+    gap_px: int = 0  # and how many pixels that was in all
 
     @property
     def input(self) -> str:
@@ -509,8 +511,12 @@ def build_props(
 def render_props(
     props: dict, out_dir: Path, *, y: int, debug: Path | None = None, all_frames: bool = False,
     concurrency: int | None = None, timeout_s: float | None = None, bundle: Path | None = None,
+    scene_only: bool = False, raw: bool = False,
 ) -> Overlay:  # fmt: skip
-    """Render props to a PNG sequence in out_dir. Raises RemotionError on any failure."""
+    """Render props to a PNG sequence in out_dir. Raises RemotionError on any failure. scene_only: lay
+    every frame out and write its scene to `debug`, draw nothing (no PNGs; for the frame checks). raw:
+    the frames as the browser drew them, without the renderer's last step (gaps of video that the drawing
+    walls in are closed): for the frame checks, to show that they see such a gap."""
     bundle = ensure_bundle(bundle)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -532,6 +538,10 @@ def render_props(
         cmd += ["--debug", str(debug)]
     if all_frames:
         cmd += ["--all-frames"]
+    if scene_only:
+        cmd += ["--scene-only"]
+    if raw:
+        cmd += ["--raw"]
     t0 = time.monotonic()
     try:
         r = subprocess.run(
@@ -551,13 +561,17 @@ def render_props(
         why = (res or {}).get("error") or r.stderr[-1500:] or r.stdout[-1500:]
         raise RemotionError(f"render failed ({r.returncode}): {why}")
     n = int(res["frames"])
-    if n != props["durationInFrames"] or not (out_dir / f"{n - 1:06d}.png").is_file():
+    drawn = scene_only or (out_dir / f"{n - 1:06d}.png").is_file()
+    if n != props["durationInFrames"] or not drawn:
         raise RemotionError(f"render incomplete: {n} frames reported, {props['durationInFrames']} wanted")
-    return Overlay(
+    ov = Overlay(
         dir=out_dir, pattern=res["pattern"], fps=float(props["fps"]), frames=n, width=int(res["width"]),
         height=int(res["height"]), x=0, y=y, seconds=time.monotonic() - t0, rendered=int(res["rendered"]),
-        debug=debug,
+        debug=debug, gap_frames=int(res.get("gapFrames", 0)), gap_px=int(res.get("gapPx", 0)),
     )  # fmt: skip
+    if res.get("gapFailed"):
+        log.warning("remotion: %d frames could not be read for gap closing", res["gapFailed"])
+    return ov
 
 
 def render_overlay(

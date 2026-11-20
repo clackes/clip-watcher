@@ -9,7 +9,9 @@ CLIPWATCHER_FRAMECHECK=full runs the whole fixture set (minutes per template) in
 from __future__ import annotations
 
 import copy
+import json
 import os
+import subprocess
 
 import pytest
 
@@ -43,10 +45,14 @@ def _ramp(x: float) -> float:
     return min(1.0, max(0.0, x))
 
 
-def _plan_and_frames(fps: float = 30.0):
-    """A plan and the scene records a correct renderer would report for it (boxes made up, timing exact)."""
+def _plan_and_frames(fps: float = 30.0, shift: float = 0.0, grow=None):
+    """A plan and the scene records a correct renderer would report for it (boxes made up, timing exact).
+    shift: the words that much later; grow(seconds since the word began) -> how much bigger the spoken word
+    is (default: a tenth of a second up to 12 %)."""
     P = rm.load_template("punch")
-    words = [Word(*w) for w in fc._seq(0.2, 0.3, "one two three")] + [Word(2.0, 2.4, "four")]
+    said = [*fc._seq(0.2, 0.3, "one two three"), (2.0, 2.4, "four")]
+    words = [Word(a + shift, b + shift, t) for a, b, t in said]
+    grow = grow or (lambda since: 0.12 * _ramp(since / 0.1))
     pl = rm_plan.plan(words, 3.0, P, box_w=900, box_h=190)
     n = round(3.0 * fps)
     frames = {}
@@ -63,8 +69,8 @@ def _plan_and_frames(fps: float = 30.0):
                         "em": 0,
                         "a": 1 if w.start <= T < w.active_end else 0, "m": [1, 0, 0, 1, 0, 0],
                         "fg": ["#FFFFFF"],
-                        # the spoken word grows, easing in and out over a tenth of a second
-                        "sc": 1 + 0.12 * _ramp((T - w.start) / 0.1) * _ramp((w.active_end + 0.1 - T) / 0.1),
+                        # the spoken word grows, and eases out over a tenth of a second
+                        "sc": 1 + grow(T - w.start) * _ramp((w.active_end + 0.1 - T) / 0.1),
                         "rot": 0.0, "z": 0, "box": [200.0 + 220 * i, 100.0, 180.0, 70.0], "clip": None,
                         "halo": 9.0, "reach": 12.0,
                     }
@@ -170,6 +176,49 @@ def test_jumps_and_flashes_are_caught_and_smooth_motion_is_not():
     assert buzz.fail_count["flash"] >= 3  # 15 Hz at 30 fps is flicker, not a shake
 
 
+def test_a_fixture_moved_by_part_of_a_frame_is_the_same_talk():
+    fx = fc.FIXTURES["mix"]
+    assert fx.shifted(0) is fx
+    moved, d = fx.shifted(0.25), 0.25 / 30
+    assert moved.name == "mix+0.25" and moved.box == fx.box
+    assert moved.dur == pytest.approx(fx.dur + 1 / 30, abs=1e-4)  # nothing is cut off at the end
+    for (s0, e0, t0), (s1, e1, t1) in zip(fx.words, moved.words, strict=True):
+        assert t0 == t1 and s1 - s0 == pytest.approx(d, abs=1e-4) and e1 - e0 == pytest.approx(d, abs=1e-4)
+    assert (
+        moved.beats[0][0] - fx.beats[0][0] == pytest.approx(d, abs=1e-4)
+        and moved.beats[0][1:] == fx.beats[0][1:]
+    )
+    assert moved.actions[0][1] - fx.actions[0][1] == pytest.approx(d, abs=1e-4)
+    assert moved.actions[0][2] == fx.actions[0][2]
+    assert fc.parse_phases("4") == (0.0, 0.25, 0.5, 0.75) and fc.parse_phases("0,0.3") == (0.0, 0.3)
+    with pytest.raises(ValueError):
+        fc.parse_phases("0,1.5")
+    assert set(fc.SWEEP) <= set(fc.FULL) and fc.PHASES[0] == 0 and len(fc.PHASES) >= 4
+
+
+@pytest.mark.skipif(not HAVE_TEMPLATES, reason="no remotion/templates")
+def test_a_punch_that_fits_into_one_frame_is_caught_at_some_phases_only():
+    """Why the fixtures are swept through the frame: a pop that is at full size after a third of a tenth of
+    a second is spread over two frames when the word starts in the middle of a frame, and is all in one
+    frame when it starts just before a frame's instant. One phase says nothing about the others."""
+
+    def back(k):
+        return lambda x: 1 + (k + 1) * (x - 1) ** 3 + k * (x - 1) ** 2
+
+    def jumps(seconds: float, phase: float) -> int:
+        grow = lambda since: 0.2 * back(2.4)(_ramp(since / seconds))  # noqa: E731
+        _, _, frames, n, fps = _plan_and_frames(shift=phase / 30, grow=grow)
+        res = _result()
+        fc.check_continuity(res, frames, n, fps)
+        assert not res.fail_count.get("flash"), res.summary()
+        return res.fail_count.get("jump", 0)
+
+    phases = [i / 16 for i in range(16)]
+    snappy = [jumps(0.1, ph) for ph in phases]
+    assert any(snappy) and not all(snappy), snappy  # a true failure, and one that a single phase can miss
+    assert not any(jumps(0.16, ph) for ph in phases)  # the same pop given its time: fine wherever it starts
+
+
 def test_adversarial_backgrounds_are_deterministic_and_cover_the_cases():
     if not _numpy():
         pytest.skip("numpy not installed")
@@ -191,6 +240,23 @@ def test_a_unit_scaled_to_nothing_that_leaves_is_not_a_stutter():
     assert fc._moved({"u": [unit, small]}, {"u": [unit]})  # a letter still on screen that vanishes
     assert fc._moved({"u": [unit]}, {"u": [{**unit, "box": [541.0, 272.0, 49.0, 49.0]}]})
     assert not fc._moved({"u": [unit]}, {"u": [dict(unit)]})
+
+
+def test_a_unit_its_window_shows_nothing_of_is_not_a_stutter_when_it_leaves():
+    """marker at one phase of the sweep: a word the exit had wiped out was still in the scene for a frame,
+    its window ending 26 px short of its letters, and left in the next. No pixel changed: none was drawn."""
+    stays = {"id": "p0w1", "fg": ["#FFFFFF"], "box": [100.0, 250.0, 200.0, 70.0], "sc": 1.0, "clip": None}
+    wiped = {
+        "id": "p1w0", "fg": ["#FFFFFF"], "box": [421.03, 255.87, 236.35, 70.67], "sc": 1.0,
+        "m": [1, 0, 0, 1, 0, 0], "reach": 12.0, "clip": [60, 110, 335.41, 256],
+    }  # fmt: skip
+    assert not fc._moved({"u": [stays, wiped]}, {"u": [stays]})
+    # the window ends 9 px short of the letters: the outline reaches 12 px, so some of it was on screen
+    assert fc._moved({"u": [stays, {**wiped, "clip": [60, 110, 352.0, 256]}]}, {"u": [stays]})
+    assert fc._moved(
+        {"u": [stays, {**wiped, "clip": [60, 110, 480.0, 256]}]}, {"u": [stays]}
+    )  # half the word
+    assert fc._moved({"u": [stays, {**wiped, "clip": None}]}, {"u": [stays]})  # no window at all
 
 
 def test_a_sliver_of_the_letter_itself_is_not_what_it_is_read_against(monkeypatch):
@@ -240,6 +306,64 @@ def test_specks_are_only_what_ink_walls_in():
     assert reached[0, 0] and reached[89, 219] and not reached[40, 60] and not reached[40, 100]
 
 
+@pytest.mark.skipif(not rm.node_bin(), reason="node not found")
+def test_the_renderer_closes_a_walled_in_gap_and_nothing_else(tmp_path):
+    """The last step of every frame (remotion/scripts/gaps.mjs, plain Node): what `specks` counts is painted
+    in the colour of its walls; openings, channels and every other pixel are left as they are."""
+    np = pytest.importorskip("numpy")
+    from PIL import Image
+
+    ink = (11, 11, 18, 255)
+    img = np.zeros((90, 220, 4), np.uint8)
+    img[20:70, 30:190] = ink  # a dark plate
+    img[20, 30:190, 3] = 180  # with a soft upper edge
+    img[30:50, 60:62, 3] = 0  # a slit 2 px wide inside it: walled in
+    img[35, 62, 3] = 200  # the soft edge of the plate beside the slit
+    img[30:50, 100:110, 3] = 0  # a counter 10 px across: an opening
+    img[20:50, 140:142, 3] = 0  # a channel 2 px wide that is open at the top
+    img[40:43, 170:174] = (255, 230, 0, 100)  # something faint (alpha under a half) with ink all round it
+    gaps = 20 * 2 + 3 * 4
+    src, dst = tmp_path / "drawn.png", tmp_path / "closed.png"
+    Image.fromarray(img).save(src)
+    script = rm.REMOTION_DIR / "scripts" / "gaps.mjs"
+
+    def close(a, b):
+        r = subprocess.run(
+            [rm.node_bin(), str(script), str(a), str(b)], capture_output=True, text=True, timeout=60
+        )
+        assert r.returncode == 0, r.stderr
+        return json.loads(r.stdout)["px"]
+
+    assert fc.pinholes(np, img[..., 3]) == gaps
+    assert close(src, dst) == gaps
+    out = np.asarray(Image.open(dst).convert("RGBA"))
+    assert fc.pinholes(np, out[..., 3]) == 0
+    changed = (out != img).any(axis=-1)
+    assert changed[30:50, 60:62].all() and changed[40:43, 170:174].all() and changed[35, 62]
+    assert int(changed.sum()) == gaps + 1  # the gaps and the one soft pixel beside one: nothing else
+    assert (
+        (out[30:50, 60:62] == ink).all() and (out[40:43, 170:174] == ink).all() and tuple(out[35, 62]) == ink
+    )
+    assert (out[30:50, 100:110, 3] == 0).all() and (out[20:50, 140:142, 3] == 0).all()
+    assert (out[20, 30:140, 3] == 180).all()  # a soft edge that is not beside a gap stays soft
+    # a frame without a gap is written as it came, byte for byte
+    again = tmp_path / "again.png"
+    assert close(dst, again) == 0 and again.read_bytes() == dst.read_bytes()
+
+
+def test_a_long_gap_with_a_wide_end_is_one_opening():
+    """reel, as a word rolls up under its rail: the strip of video between the two was 2 px high at one end
+    and had room for the square at the other, 161 px away. The count followed the roomy part for 160 px
+    and called the rest specks. A region is an opening as a whole or a speck as a whole."""
+    np = pytest.importorskip("numpy")
+    a = np.zeros((60, 420), np.uint8)
+    a[10:50, 10:410] = 255  # a plate
+    a[20:22, 20:400] = 0  # a slit in it, 2 px high and 380 px long
+    assert fc.pinholes(np, a) == 2 * 380  # walled in and nowhere 5 px across: a speck, all of it
+    a[20:28, 20:30] = 0  # the same slit with a wide end
+    assert fc.pinholes(np, a) == 0
+
+
 def test_the_full_set_holds_the_case_found_on_a_real_clip():
     assert "shouts" in fc.FULL and "shouts" not in fc.QUICK
     said = [w.text for w in fc.FIXTURES["shouts"].word_list()]
@@ -283,6 +407,33 @@ def test_the_checks_catch_a_broken_template(change, check, tmp_path):
     P = rm._merge(rm.load_template("punch"), change)
     res, _ = fc.run_case("punch", "short", 30.0, tmp_path, params=P, own_colours=False)
     assert res.fail_count.get(check), f"{check} did not fire:\n{res.summary()}"
+
+
+@render_test
+def test_a_speck_is_a_failure_when_the_renderer_leaves_it(tmp_path):
+    """The frames as the browser draws them have specks (letters of a word as it pops in, two outlines that
+    almost meet); the renderer's last step closes every one of them, and `specks` says so either way."""
+    kw = {"synth": ("black",), "own_colours": False}
+    raw, _ = fc.run_case("punch", "short", 30.0, tmp_path / "raw", raw=True, **kw)
+    assert raw.fail_count.get("specks") and raw.stats["speck_px"] > 0, raw.summary()
+    res, _ = fc.run_case("punch", "short", 30.0, tmp_path / "closed", **kw)
+    assert res.ok and res.checks["specks"] > 50, res.summary()
+    assert res.stats["gaps_closed_px"] == raw.stats["speck_px"]
+    assert res.stats["gaps_closed_frames"] == raw.stats["speck_frames"]
+
+
+@pytest.mark.parametrize(
+    "name", rm.templates() or [pytest.param("", marks=pytest.mark.skip(reason="no templates"))]
+)
+@render_test
+def test_every_phase_of_the_template(name, tmp_path):
+    """The phase sweep, the part that draws nothing: the fast talk of the sweep's fixtures at 30 fps with
+    its words moved by quarters of a frame, the plan and every position, scale, angle and colour of every
+    frame checked. (With pixels, more phases, more fixtures: framecheck --phases.)"""
+    results = fc.run_sweep(name, tmp_path, pixels=False)
+    bad = [r.summary() for r in results if not r.ok]
+    assert not bad, "\n".join(bad)
+    assert len(results) == len(fc.SWEEP) * len(fc.PHASES) and all(r.checks["jump"] > 500 for r in results)
 
 
 @render_test

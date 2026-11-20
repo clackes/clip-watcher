@@ -201,7 +201,10 @@ function bounce(c: Ctx<P> | LabelCtx<P>, o: Look): Scene {
     if (v.tl < 0) continue;
     const { w, i, u } = v;
     const dir = i % 2 ? 1 : -1;
-    const flash = v.landed < 0 ? 0 : E.outCubic(prog(v.landed, 0, fx.flashInS)) * (1 - E.inOutSine(prog(v.landed, fx.flashInS, c.P.timing.colorS)));
+    // the landing flash comes up evenly. (Eased out it was four fifths up after a third of its time: from a
+    // strong colour towards white that is nearly the whole change in sRGB, in one frame at 30 fps whenever
+    // the ball landed just after a frame.)
+    const flash = v.landed < 0 ? 0 : prog(v.landed, 0, fx.flashInS) * (1 - E.inOutSine(prog(v.landed, fx.flashInS, c.P.timing.colorS)));
     const fill = o.fill(w, flash);
     const ends = w.box.w / 2 / u; // half the word, em
     const own = pose([w.cx, v.base], {

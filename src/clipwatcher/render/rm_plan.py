@@ -9,8 +9,11 @@ The plan is the specification the renderer is checked against frame by frame (re
 - Judge labels (*FAIL*, *WATCHING*) take the caption spot for their time: a word that starts while a label
   is up is not shown (the rule of the ASS `word` style); a word that started before keeps its place until
   the label arrives.
-- Two words can never be active in the same frame: a word that starts less than MIN_ACTIVE_S after the
-  one before is moved to that distance (only words with identical or near-identical timestamps).
+- Two words can never be active in the same frame, and no word is active for less than MIN_ACTIVE_S
+  (three frames at 30 fps): a word that starts sooner after the one before is moved to that distance (only
+  words with identical or near-identical timestamps), and a word that starts later than that before the end
+  of the clip is not shown. Nothing shorter can be animated: a page of one such word came and went in a
+  single frame, and a highlight was a step with nothing before or after it.
 """
 
 from __future__ import annotations
@@ -25,7 +28,7 @@ from clipwatcher.render.branding import FONTS_DIR
 from clipwatcher.render.captions import _emphasis
 
 LABEL_S = 0.9  # a beat label stays this long (captions.LABEL_S)
-MIN_ACTIVE_S = 1 / 30  # every word is highlighted for at least one frame at 30 fps
+MIN_ACTIVE_S = 0.1  # every word is highlighted for at least three frames at 30 fps
 MIN_LABEL_S = 0.25
 MIN_EXIT_S = 0.1  # three frames at 30 fps
 MIN_SHOWN_S = 0.1  # a word a label would cut off sooner than this is not shown at all
@@ -361,7 +364,7 @@ def plan(
     for i, w in sorted(enumerate(words), key=lambda iw: (iw[1].start, iw[0])):
         text = clean_text(w.text, params, emoji)
         start = max(0.0, float(w.start) - lead)
-        if not text or start >= dur_s - 0.02:
+        if not text or start > dur_s - MIN_ACTIVE_S:
             out.dropped.append(i)
             continue
         end = min(max(float(w.end) - lead, start + 0.04), dur_s)
@@ -377,7 +380,7 @@ def plan(
         if b.start < a.start + MIN_ACTIVE_S:
             b.start, b.moved = a.start + MIN_ACTIVE_S, True
             b.end = max(b.end, b.start + 0.04)
-    kept = [w for w in kept if w.start < dur_s - 0.02 or out.dropped.append(w.src)]
+    kept = [w for w in kept if w.start <= dur_s - MIN_ACTIVE_S or out.dropped.append(w.src)]
 
     gap_s, linger = float(pg["gapS"]), float(pg["lingerS"])
     for i, w in enumerate(kept):  # the highlight stays until the next word, or lingers into a pause

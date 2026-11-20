@@ -143,7 +143,7 @@ def test_words_start_on_their_timestamps():
         assert got[i].active_end - got[i].start >= rm_plan.MIN_ACTIVE_S - 1e-6
 
 
-def test_words_with_the_same_timestamp_are_spaced_one_frame_apart():
+def test_words_with_the_same_timestamp_are_spaced_three_frames_apart():
     pl = plan_of([Word(0.5, 0.9, "is"), Word(0.5, 0.8, "that"), Word(0.5, 1.0, "it")], 2.0)
     ws = [w for p in pl.pages for w in p.words]
     assert [w.text for w in ws] == ["IS", "THAT", "IT"]
@@ -152,6 +152,26 @@ def test_words_with_the_same_timestamp_are_spaced_one_frame_apart():
         and ws[1].moved
         and ws[2].moved
     )
+    assert rm_plan.MIN_ACTIVE_S * 30 >= 3 - 1e-9  # three frames at 30 fps: a highlight can be animated
+
+
+def test_nothing_is_planned_for_less_than_three_frames():
+    """A page of one word that the next page replaces, a word the clip ends on: each is up for at least
+    MIN_ACTIVE_S or is not shown (one frame of a word is a flash, whatever the template does with it)."""
+    for tpl in ("slam", "reel", "punch", "bounce"):  # one word a page, three, four
+        P = rm.load_template(tpl)
+        words = [Word(0.2, 0.5, "what"), Word(0.5, 1.3, "is"), Word(0.5, 0.9, "that"), Word(1.96, 2.0, "bro")]
+        pl = plan_of(words, 2.0, P)
+        assert [w.text.upper() for p in pl.pages for w in p.words] == [
+            "WHAT",
+            "IS",
+            "THAT",
+        ] and pl.dropped == [3]
+        for a, b in zip(pl.pages, pl.pages[1:], strict=False):
+            assert b.start - a.start >= rm_plan.MIN_ACTIVE_S - 1e-6
+        for p in pl.pages:
+            assert p.end - p.start >= rm_plan.MIN_ACTIVE_S - 1e-6
+            assert all(w.active_end - w.start >= rm_plan.MIN_ACTIVE_S - 1e-6 for w in p.words)
 
 
 def test_pages_are_phrases():

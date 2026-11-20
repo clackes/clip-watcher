@@ -13,8 +13,8 @@ Checks, per frame unless noted:
   highlight        (per page) the spoken word looks different from the same word when it is not spoken
   blank            a frame with nothing planned is fully transparent
   ink              every drawn word has pixels where the renderer says it is, and there is no ink elsewhere
-  specks           (reported in stats, not a failure) walled-in specks of video under 5 px across: the renderer
-                   closes letter counters that would leave one, nooks between two outlines can still do
+  specks           no speck of video inside the caption: a see-through gap that ink walls in and that is
+                   under 5 px across (the renderer closes them as the last step of a frame)
   safe_area        no ink outside the caption box (so never near the edges or in the platform dead zone)
   lines_clear      (per page) lines do not overlap; words_clear: neighbours on a line do not overlap
   jump / flash     position, scale, rotation and colour of every unit change without one-frame jumps or
@@ -23,6 +23,9 @@ Checks, per frame unless noted:
   font             (per case) all glyphs come from the bundled fonts; drawn widths match the font file
   contrast         every fill against the pixels right next to it, composited over adversarial backgrounds
   fps_match        (per 30/60 pair) both frame rates show the same motion
+  phase sweep      (run_sweep, --phases) all of the above again with the words moved by fractions of a frame:
+                   a fixture tests the instants its word times happen to fall on, and a change that is spread
+                   over three frames at one of them can land in a single frame at another
   deterministic    (per case, optional) a second render gives byte-identical frames
   composite        (per case, optional) ffmpeg's composite equals the exact composite on every frame
 
@@ -41,7 +44,7 @@ import subprocess
 import sys
 import time
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from clipwatcher import config
@@ -70,6 +73,22 @@ class Fixture:
 
     def word_list(self) -> list[Word]:
         return [Word(s, e, t) for s, e, t in self.words]
+
+    def shifted(self, phase: float, fps: float = 30.0) -> Fixture:
+        """The same talk `phase` of a frame later (a frame at `fps`): every word, beat and action label
+        keeps its length and its distance to the others, and all of them fall on other instants of the
+        frame. The clip is one frame longer, so nothing is cut off that was not before."""
+        if not phase:
+            return self
+        d = phase / fps
+        return replace(
+            self,
+            name=f"{self.name}+{phase:g}",
+            dur=round(self.dur + 1.0 / fps, 4),
+            words=tuple((round(s + d, 4), round(e + d, 4), t) for s, e, t in self.words),
+            beats=tuple((round(b[0] + d, 4), *b[1:]) for b in self.beats),
+            actions=tuple((round(a[0] + d, 4), round(a[1] + d, 4), *a[2:]) for a in self.actions),
+        )
 
 
 def _seq(t0: float, step: float, text: str, gap: float = 0.0) -> tuple[tuple[float, float, str], ...]:
@@ -173,6 +192,11 @@ FIXTURES: dict[str, Fixture] = {
 }
 QUICK = ("short", "single", "empty")
 FULL = ("mix", "fast", "overlap", "single", "empty", "long", "tall", "shouts")
+# The phase sweep: the words moved by these fractions of a frame at SWEEP_FPS (a quarter of a frame at
+# 30 fps is half a frame at 60), on the fixtures with the fastest talk.
+PHASES = (0.0, 0.25, 0.5, 0.75)
+SWEEP = ("shouts",)
+SWEEP_FPS = 30.0
 
 
 def pseudo_transcript(dur: float, seed: int = 7) -> list[Word]:
@@ -557,28 +581,36 @@ def _reached(np, clear):
     return r[1:-1, 1:-1]
 
 
-def pinholes(np, alpha) -> int:
-    """Transparent pixels in specks that ink walls in: inside a counter an outline has all but closed, or
-    between two outlines that touch above and below. A see-through region counts when no path of
-    transparent pixels leads from it to the outside of the drawing and no part of it is 5 px across (the
-    renderer fills counters whose opening would be under 7 px, so anything smaller is a defect). The open
-    counters of big letters and the gaps between words do not count."""
+def speck_mask(np, alpha):
+    """The transparent pixels in specks that ink walls in, as a mask the size of the picture: inside a
+    counter an outline has all but closed, or between two outlines that touch above and below. A
+    see-through region counts when no path of transparent pixels leads from it to the outside of the
+    drawing and no part of it is 5 px across (the renderer fills counters whose opening would be under
+    7 px, so anything smaller is a defect). The open counters of big letters and the gaps between words do
+    not count."""
     clear = alpha < 128
+    out = np.zeros(alpha.shape, bool)
     if not (~clear).any():
-        return 0
+        return out
     ys, xs = np.nonzero(~clear)
     y0, y1, x0, x1 = max(0, ys.min() - 2), ys.max() + 3, max(0, xs.min() - 2), xs.max() + 3
     crop = clear[y0:y1, x0:x1]
     enclosed = crop & ~_reached(np, crop)
     if not enclosed.any():
-        return 0
+        return out
     big = _morph(np, enclosed, 5, grow=False)  # the parts at least 5 px across ...
-    for _ in range(80):  # ... and all of the region each belongs to
+    while True:  # ... and all of the region each belongs to, however far it runs on (2 px a step)
         grown = _morph(np, big, 5, grow=True) & enclosed
         if (grown == big).all():
             break
         big = grown
-    return int((enclosed & ~big).sum())
+    out[y0:y1, x0:x1] = enclosed & ~big
+    return out
+
+
+def pinholes(np, alpha) -> int:
+    """How many pixels of the picture are specks (speck_mask)."""
+    return int(speck_mask(np, alpha).sum())
 
 
 def check_geometry(
@@ -653,13 +685,18 @@ def check_geometry(
                 allowed[
                     max(0, int(y) - 8) : min(H, int(y + h) + 9), max(0, int(x) - 8) : min(W, int(x + w) + 9)
                 ] = True
-        if rec["u"]:
-            # reported, not failed: counters are closed by the renderer, but a speck can still be left in a
-            # nook where two outlines almost meet (between a 0 and a %), and closing those needs more work
-            holes = pinholes(np, alpha)
-            res.stats["speck_frames_checked"] = res.stats.get("speck_frames_checked", 0) + 1
+        if rec["u"] or rec["s"]:
+            res.ran("specks")
+            gaps = speck_mask(np, alpha)
+            holes = int(gaps.sum())
             if holes:
+                ys, xs = np.nonzero(gaps)
+                res.fail(
+                    "specks",
+                    f"frame {f}: {holes} px of video walled in by the caption, the first at x {int(xs[0])} y {int(ys[0])}",
+                )
                 res.stats["speck_frames"] = res.stats.get("speck_frames", 0) + 1
+                res.stats["speck_px"] = res.stats.get("speck_px", 0) + holes
                 if holes > res.stats.get("speck_px_max", 0):
                     res.stats["speck_px_max"], res.stats["speck_px_at"] = holes, f  # the frame to look at
         if rec["u"] or rec["s"]:
@@ -751,13 +788,27 @@ def check_geometry(
     return hashes
 
 
+def _wiped(u: dict) -> bool:
+    """... or shown through a window that lets nothing of it through: not its letters, and not the outline
+    and shadow that reach past them (a word a wipe has passed, still in the scene for a frame)."""
+    if not u.get("clip") or not u.get("box"):
+        return False
+    x, y, w, h = u["box"]
+    cx, cy, cw, ch = u["clip"]
+    m = u.get("m") or [1, 0, 0, 1, 0, 0]
+    grow = u.get("reach", 0.0) * max(math.hypot(m[0], m[1]), math.hypot(m[2], m[3]), 0.2) + 1
+    wide = min(x + w + grow, cx + cw) - max(x - grow, cx)
+    tall = min(y + h + grow, cy + ch) - max(y - grow, cy)
+    return wide <= 0 or tall <= 0
+
+
 def _moved(a: dict | None, b: dict) -> bool:
     """True when some unit visibly differs between two scene records (more than a hundredth of a pixel)."""
     if a is None:
         return False
 
-    def shown(rec: dict) -> list[dict]:  # a unit scaled to nothing draws no pixel: it cannot stutter
-        return [u for u in rec["u"] if not (u["box"] and u["sc"] < 0.02)]
+    def shown(rec: dict) -> list[dict]:  # a unit that draws no pixel cannot stutter: scaled to nothing, ...
+        return [u for u in rec["u"] if not (u["box"] and u["sc"] < 0.02) and not _wiped(u)]
 
     ua = {u["id"]: u for u in shown(a)}
     for u in (ub := shown(b)):
@@ -1091,11 +1142,15 @@ def run_case(
     template: str, fixture: Fixture | str, fps: float, work: Path, *, colors: str = "fixed",
     synth: tuple[str, ...] = SYNTH, own_colours: bool = True, deterministic: bool = False,
     composite_check: bool = False, keep: bool = False, bg_video=None, words: list[Word] | None = None,
-    dur: float | None = None, box_kind: str | None = None, params: dict | None = None,
+    dur: float | None = None, box_kind: str | None = None, params: dict | None = None, pixels: bool = True,
+    raw: bool = False,
 ) -> tuple[CaseResult, dict[int, dict]]:  # fmt: skip
     """Render one case with every frame kept and check it. colors "fixed" checks contrast over the
     synthetic backgrounds; "auto" needs bg_video = (label, Background, fn(frame) -> pixels) and checks
-    contrast over that. Returns the result and the per-frame scene records (for fps pairs)."""
+    contrast over that. pixels=False draws nothing: every frame is laid out and only the checks that read
+    the scene run (plan, highlight, layout, jump, flash, lifetime), in a fraction of the time. raw=True
+    takes the frames as the browser drew them, before the renderer closes the gaps in them (to show that
+    `specks` sees one). Returns the result and the per-frame scene records (for fps pairs)."""
     fx = FIXTURES[fixture] if isinstance(fixture, str) else fixture
     wl = words if words is not None else fx.word_list()
     dur = dur if dur is not None else fx.dur
@@ -1114,18 +1169,24 @@ def run_case(
     out = work / "frames"
     shutil.rmtree(out, ignore_errors=True)
     t0 = time.monotonic()
-    ov = rm.render_props(props, out, y=box.y0 - PAD, debug=work / "scene.jsonl", all_frames=True)
+    ov = rm.render_props(
+        props, out, y=box.y0 - PAD, debug=work / "scene.jsonl", all_frames=True, scene_only=not pixels, raw=raw
+    )  # fmt: skip
     res.render_s = time.monotonic() - t0
     n = ov.frames
     res.frames = n
+    if pixels and not raw:  # what the renderer's last step had to close: the specks there were before it
+        res.stats["gaps_closed_frames"], res.stats["gaps_closed_px"] = ov.gap_frames, ov.gap_px
     init, frames = load_debug(work / "scene.jsonl")
     res.stats["_pages"] = init.get("pages", [])
     check_layout(res, init, P, props)
     check_plan_frames(res, plan, P, frames, n, fps)
     check_highlight(res, plan, frames, fps)
-    hashes = check_geometry(res, plan, P, props, frames, out, n, fps)
+    hashes = check_geometry(res, plan, P, props, frames, out, n, fps) if pixels else {}
     check_continuity(res, frames, n, fps)
-    if bg_video:
+    if not pixels:
+        res.stats["scene_only"] = 1
+    elif bg_video:
         check_contrast(
             res, frames, out, n, [(bg_video[0], lambda f, y0, y1, x0, x1: bg_video[2](f)[y0:y1, x0:x1])]
         )
@@ -1139,16 +1200,16 @@ def run_case(
             res, frames, out, n,
             [(k, (lambda f, y0, y1, x0, x1, k=k: background(k, f, y1 - y0, x1 - x0, y0, x0))) for k in kinds],
         )  # fmt: skip
-    if deterministic:
+    if deterministic and pixels:
         again = work / "frames2"
         shutil.rmtree(again, ignore_errors=True)
-        rm.render_props(props, again, y=box.y0 - PAD, all_frames=True)
+        rm.render_props(props, again, y=box.y0 - PAD, all_frames=True, raw=raw)
         for f in range(n):
             res.ran("deterministic")
             if hashlib.sha1(load_frame(again, f).tobytes()).hexdigest() != hashes.get(f):
                 res.fail("deterministic", f"frame {f} differs between two renders of the same props")
         shutil.rmtree(again, ignore_errors=True)
-    if composite_check:
+    if composite_check and pixels:
         check_composite(res, ov, work, n, fps)
     res.stats.pop("_pages", None)
     res.stats["plan_pages"] = len(plan.pages)
@@ -1256,11 +1317,72 @@ def run_template(
     return out
 
 
+def run_sweep(
+    template: str,
+    work: Path,
+    *,
+    fixtures=SWEEP,
+    phases=PHASES,
+    fps_list=(SWEEP_FPS,),
+    pixels: bool = True,
+    keep: bool = False,
+) -> list[CaseResult]:
+    """The phase sweep for one template: every fixture again with its words moved by each of `phases` (a
+    fraction of a frame at SWEEP_FPS), so every start, end and turn of the motion is sampled at several
+    instants of the frame. A motion that is one function of time passes at all of them or has a change
+    that fits into a single frame. With both 30 and 60 in fps_list the two are compared at every phase."""
+    out: list[CaseResult] = []
+    for fx in fixtures:
+        for ph in phases:
+            case = FIXTURES[fx].shifted(ph, SWEEP_FPS)
+            recs = {}
+            for fps in fps_list:
+                res, frames = run_case(
+                    template,
+                    case,
+                    fps,
+                    Path(work) / f"{template}-{case.name}-{fps:g}",
+                    pixels=pixels,
+                    keep=keep,
+                )
+                res.stats["phase"] = ph
+                recs[fps] = (res, frames)
+                out.append(res)
+            if 30.0 in recs and 60.0 in recs:
+                check_fps_pair(recs[30.0][0], recs[30.0][1], recs[60.0][1], recs[30.0][0].frames)
+    return out
+
+
+def parse_phases(text: str) -> tuple[float, ...]:
+    """ "4" -> four phases evenly over the frame (0, 0.25, 0.5, 0.75); "0,0.3,0.9" -> those."""
+    parts = [x for x in text.split(",") if x.strip()]
+    if len(parts) == 1 and float(parts[0]) >= 1:
+        n = int(float(parts[0]))
+        return tuple(round(i / n, 6) for i in range(n))
+    out = tuple(float(x) for x in parts)
+    if not out or any(not 0 <= x < 1 for x in out):
+        raise ValueError(f"phases are fractions of a frame, 0 <= phase < 1: {text!r}")
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Frame-by-frame checks of the Remotion caption templates.")
     ap.add_argument("--templates", default="all", help="comma-separated names, or all")
-    ap.add_argument("--fixtures", default="full", help="quick | full | comma-separated fixture names")
-    ap.add_argument("--fps", default="30,60")
+    ap.add_argument(
+        "--fixtures", default=None, help="quick | full | comma-separated fixture names (default: full)"
+    )
+    ap.add_argument("--fps", default=None, help="frame rates (default 30,60; the phase sweep: 30)")
+    ap.add_argument(
+        "--phases",
+        help="the phase sweep instead of the plain run: the words moved by these fractions of a 30 fps "
+        "frame (0,0.25,0.5,0.75), or a count (8 = eight phases evenly over the frame); fixtures default "
+        f"to {','.join(SWEEP)}",
+    )
+    ap.add_argument(
+        "--scene-only",
+        action="store_true",
+        help="draw nothing: only the checks that read the scene (plan, highlight, jump, flash, lifetime)",
+    )
     ap.add_argument("--work", required=True, help="scratch folder for frames")
     ap.add_argument("--report", help="write a JSON report here")
     ap.add_argument("--keep", action="store_true", help="keep the rendered frames")
@@ -1273,14 +1395,28 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Remotion is not set up: {why}", file=sys.stderr)
         return 2
     names = rm.templates() if a.templates == "all" else a.templates.split(",")
-    fixtures = {"quick": QUICK, "full": FULL}.get(a.fixtures) or tuple(a.fixtures.split(","))
-    fps_list = tuple(float(x) for x in a.fps.split(","))
+    phases = parse_phases(a.phases) if a.phases else None
+    named = a.fixtures or ("sweep" if phases else "full")
+    fixtures = {"quick": QUICK, "full": FULL, "sweep": SWEEP}.get(named) or tuple(named.split(","))
+    fps_list = tuple(float(x) for x in (a.fps or ("30" if phases else "30,60")).split(","))
     results: list[CaseResult] = []
     for name in names:
         t0 = time.monotonic()
-        rs = run_template(
-            name, Path(a.work), fixtures=fixtures, fps_list=fps_list, extras=not a.no_extras, keep=a.keep
-        )
+        if phases:
+            rs = run_sweep(
+                name, Path(a.work), fixtures=fixtures, phases=phases, fps_list=fps_list,
+                pixels=not a.scene_only, keep=a.keep,
+            )  # fmt: skip
+        elif a.scene_only:
+            rs = [
+                run_case(name, fx, fps, Path(a.work) / f"{name}-{fx}-{fps:g}", pixels=False)[0]
+                for fx in fixtures
+                for fps in fps_list
+            ]
+        else:
+            rs = run_template(
+                name, Path(a.work), fixtures=fixtures, fps_list=fps_list, extras=not a.no_extras, keep=a.keep
+            )
         results += rs
         bad = [r for r in rs if not r.ok]
         print(
@@ -1294,6 +1430,8 @@ def main(argv: list[str] | None = None) -> int:
         "checks": sum(r.total_checks for r in results),
         "failures": sum(r.total_fails for r in results),
     }
+    if phases:
+        total["phases"] = list(phases)
     print(json.dumps(total))
     if a.report:
         Path(a.report).write_text(

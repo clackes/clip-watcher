@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Affine } from "../core/affine";
 import { contrast, mix, parseHex, toHex } from "../core/color";
-import { clamp, E, hash01, lerp, prog, spring, springSettle } from "../core/ease";
+import { clamp, E, hash01, lerp, prog, pulse, spring, springSettle } from "../core/ease";
 import { paramsSchema } from "../core/schema";
 import { rect, wordUnit, type Ctx, type Grad, type LabelCtx, type Layer, type Rect, type Scene, type Shape, type WordState } from "../core/scene";
 import { defineTemplate, em } from "../core/template";
@@ -235,7 +235,10 @@ export default defineTemplate<P>({
     const hotShout = mix(colors.emph, colors.plateText, fx.emphHot);
     let shout = 0;
     const tubes = c.words.map((w): Tube => {
-      const heat = clamp(w.a);
+      // a tube heats up evenly over the time the highlight takes. (On the shared curve, which is most of
+      // the way there after a third of that time, a tube went from its colour to nearly white in one frame
+      // at 30 fps whenever its word began just after a frame, and then hardly changed: a jump.)
+      const heat = clamp(pulse(c.t, w.start, w.activeEnd, P.timing.activeInS, P.timing.activeOutS, E.inOutSine));
       if (w.emph) shout = Math.max(shout, heat);
       return {
         w,
