@@ -187,9 +187,8 @@ class RunManager:
 
     def _spawn(self, run: Run, cmd: list[str]) -> subprocess.Popen[str]:
         env = {**os.environ, "CLIPWATCHER_EVENTS": str(run.dir / "events.jsonl"), "PYTHONUNBUFFERED": "1"}
-        if (
-            run.kind == "tests"
-        ):  # the tests see the project as it is checked out, never this machine's folders
+        if run.kind == "tests":
+            # the tests see the project as it is checked out, never this machine's own folders
             for name in TESTS_WITHOUT:
                 env.pop(name, None)
             env["DRY_RUN"] = "1"
