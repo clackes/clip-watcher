@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from clipwatcher import config
-from clipwatcher.ui import NotFound, captions, connect, data, library, settings
+from clipwatcher.ui import NotFound, captions, connect, data, friendly, library, settings
 from clipwatcher.ui.profiles import Profiles
 from clipwatcher.ui.runs import RunManager
 
@@ -272,7 +272,8 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                     if run is None and past is None:
                         return self._error(404, "No such run.")
                     summary = run.summary() if run else past
-                    return self._json({**summary, "events": m.events_of(parts[1]) or []})
+                    told = [friendly.dress(e) for e in m.events_of(parts[1]) or []]
+                    return self._json({**summary, "events": told})
             self._error(404, "Not found.")
 
         def _stream(self, run: Any, seq: int) -> None:
@@ -287,9 +288,9 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
             self.end_headers()
             while True:
                 events = run.after(seq, timeout=15.0)
+                told = [(e["seq"], friendly.dress(e)) for e in events]  # with its line in plain words
                 out = "".join(
-                    f"id: {e['seq']}\ndata: {json.dumps(e, ensure_ascii=False, default=str)}\n\n"
-                    for e in events
+                    f"id: {n}\ndata: {json.dumps(e, ensure_ascii=False, default=str)}\n\n" for n, e in told
                 )
                 self.wfile.write((out or ": still here\n\n").encode())
                 self.wfile.flush()

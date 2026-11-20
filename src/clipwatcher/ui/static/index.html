@@ -26,7 +26,7 @@
   <ol class="wiz" id="wiz" aria-label="Steps of a run"></ol>
 
   <div class="stepbox" id="s1">
-    <div class="vhead"><div><h1 data-a>What do you want to <span class="gt">run</span>?</h1><p class="lead" data-a id="s1lead">Pick one. Every run is the same command you would type in a terminal.</p></div></div>
+    <div class="vhead"><div><h1 data-a>What do you want to <span class="gt">run</span>?</h1><p class="lead" data-a id="s1lead">Pick what the bot should do. You can watch every step as it happens.</p></div></div>
     <div class="choices" id="modeCards" data-a></div>
     <div class="actions" data-a><span></span><button class="btn btn-primary btn-lg" id="next1">Continue</button></div>
   </div>
@@ -79,7 +79,10 @@
         <div id="resultBox" hidden></div>
       </div>
     </div>
-    <details class="logd" data-a><summary>Show the log</summary><div class="log" id="log"></div></details>
+    <details class="logd" data-a><summary>Read what happened, step by step</summary>
+      <ol class="story" id="story" aria-live="polite"></ol>
+      <details class="tech"><summary>Technical details</summary><div class="log" id="log"></div></details>
+    </details>
   </div>
 </section>
 

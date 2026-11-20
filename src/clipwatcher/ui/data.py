@@ -18,6 +18,7 @@ from clipwatcher import config
 from clipwatcher.judge import ledger
 from clipwatcher.queue.staging import staging_root
 from clipwatcher.ui import captions as library
+from clipwatcher.ui import friendly
 
 CLIP_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,180}")
 FILES = ("short_9x16.mp4", "clean_16x9.mp4")
@@ -34,19 +35,7 @@ STEP_ORDER = (
     "render_clean",
     "stage",
 )
-STEP_NAMES = {
-    "wait": "Wait for the recording",
-    "chat": "Read the chat",
-    "cut": "Cut the window",
-    "loudness": "Measure loudness",
-    "transcribe": "Transcribe",
-    "screen": "Screen the text",
-    "judge": "Judge",
-    "layout": "Find the webcam",
-    "render_short": "Render the 9:16 Short",
-    "render_clean": "Render the clean 16:9",
-    "stage": "Stage for approval",
-}
+STEP_NAMES = friendly.STEP_NAMES  # what a person reads for each step, in plain words
 
 
 def _platform(meta: dict[str, Any]) -> str:

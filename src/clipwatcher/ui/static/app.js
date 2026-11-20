@@ -300,7 +300,7 @@ function paintTpls() {
 }
 
 /* ---------- a run, as the server reports it ---------- */
-const R = { id: null, kind: null, es: null, params: {}, started: 0, clips: [], clip: 0, tick: 0, tests: { seen: 0, failed: [] }, ended: false, replay: false, timers: [] };
+const R = { id: null, kind: null, es: null, params: {}, started: 0, clips: [], clip: 0, tick: 0, tests: { seen: 0, failed: [] }, ended: false, replay: false, timers: [], problem: '' };
 const STEP_PHONE = { cut: 'cut', loudness: 'cut', transcribe: 'cut', judge: 'cut', screen: 'cut', layout: 'split', render_short: 'render', render_clean: 'render', stage: 'render' };
 function stepName(k) { return (S.ov && S.ov.steps[k]) || k; }
 function row(key, name, state, detail, seconds) {
@@ -309,20 +309,35 @@ function row(key, name, state, detail, seconds) {
   li.dataset.s = state; li.querySelector('.nm').textContent = name;
   li.querySelector('.bub').innerHTML = ic(state === 'run' ? 'spin' : state === 'done' ? 'check' : state === 'skip' ? 'skip' : state === 'failed' ? 'cross' : 'dotc');
   if (detail != null) li.querySelector('.dt').innerHTML = detail;
-  if (seconds != null) li.querySelector('.tm').textContent = fmtS(seconds);
+  if (seconds != null) li.querySelector('.tm').textContent = seconds >= .1 ? fmtS(seconds) : '';
   return li;
 }
+/* What happened, in plain words (the server words every event: ui/friendly.py). A line with a key is one
+   line that changes: a step that starts and ends, the count of messages read. */
+const testWords = s => { const w = String(s || '').replace(/^tests\//, '').replace(/^test_/, '').replace(/\.py$/, '').replace(/_/g, ' ').trim(); return w ? w[0].toUpperCase() + w.slice(1) : ''; };
+function story(say, t) {
+  if (!say) return;
+  const el = $('#story'), key = say.key ? say.key + ':' + R.clip : '';
+  let li = key ? $$('li', el).find(x => x.dataset.key === key) : null;
+  if (say.drop || !say.text) { if (li && say.drop) li.remove(); return; }
+  if (!li) { const prev = el.lastElementChild; if (!key && prev && (prev.dataset.text === say.text || (say.tone === 'bad' && prev.dataset.text.includes(say.text.split('. ')[0])))) return; li = document.createElement('li'); if (key) li.dataset.key = key; el.appendChild(li); if (el.childElementCount > 400) el.firstChild.remove(); }
+  else if (li.dataset.text === say.text) return;
+  const tone = say.tone || 'info'; li.dataset.tone = tone; li.dataset.text = say.text;
+  li.innerHTML = `<span class="t">${clockOf(t || Date.now() / 1000)}</span><i class="dot ${tone === 'good' ? '' : tone === 'warn' ? 'warn' : tone === 'bad' ? 'bad' : 'off'}"></i><span>${esc(say.text)}</span>`;
+  el.scrollTop = el.scrollHeight;
+}
+const told = e => e.problem ? e.problem.text + (e.problem.fix ? ' ' + e.problem.fix : '') : '';
 function logLine(text, cls, t) { const el = $('#log'), d = document.createElement('div'); d.innerHTML = `<span class="t">${clockOf(t || Date.now() / 1000)}</span><span class="${cls || ''}">${esc(text)}</span>`; el.appendChild(d); if (el.childElementCount > 1500) el.firstChild.remove(); el.scrollTop = el.scrollHeight; }
 function pill(o, cls) { const el = $(`.opill[data-o="${o}"]`); if (el) { el.classList.remove('on', 'skip'); if (cls) el.classList.add(cls); } }
 function resetRunView(kind, params) {
   R.timers.forEach(clearTimeout); clearInterval(R.tick); if (R.es) { R.es.close(); R.es = null; }
-  Object.assign(R, { kind, params, clips: [], clip: 0, tests: { seen: 0, failed: [] }, ended: false, timers: [] });
+  Object.assign(R, { kind, params, clips: [], clip: 0, tests: { seen: 0, failed: [] }, ended: false, timers: [], problem: '' });
   const tests = kind === 'tests', name = kind === 'live' ? 'live lane' : kind === 'vod' ? 'VOD lane' : 'test suite';
   $('#runTitle').innerHTML = kind === 'render' ? 'Rendering the Short <span class="gt">again</span>' : `Running the <span class="gt">${name}</span>`;
-  $('#runNote').textContent = kind === 'live' ? `${params.streamer}, ${+params.minutes ? 'for ' + params.minutes + ' minutes' : 'until you stop it'}.` : kind === 'vod' ? `${params.streamer} on ${PFN[params.platform] || 'Twitch'}: up to ${plural(params.top || 3, 'clip')}.` : kind === 'render' ? `${params.clip}: ${params.captions ? capName(params.captions) : 'the same'} captions${params.settings && Object.keys(params.settings).length ? ' with settings of their own' : ''}, ${params.layout === 'stack' ? 'the older stack' : 'webcam over gameplay'}.` : 'Every test of the project, as pytest runs them.';
+  $('#runNote').textContent = kind === 'live' ? `${params.streamer}, ${+params.minutes ? 'for ' + params.minutes + ' minutes' : 'until you stop it'}.` : kind === 'vod' ? `${params.streamer} on ${PFN[params.platform] || 'Twitch'}: up to ${plural(params.top || 3, 'clip')}.` : kind === 'render' ? `${params.clip}: ${params.captions ? capName(params.captions) : 'the same'} captions${params.settings && Object.keys(params.settings).length ? ' with settings of their own' : ''}, ${params.layout === 'stack' ? 'the older stack' : 'webcam over gameplay'}.` : 'Every check the project has, one after another.';
   const rp = kind === 'vod' ? params.platform : platformOf(params.streamer), rw = $('#runWho'); rw.hidden = !(kind === 'live' || kind === 'vod');
   rw.innerHTML = rw.hidden ? '' : `${avatar(rp, params.streamer, 'lg')}<span class="who"><b>${named(rp, params.streamer)}${badges(rp, params.streamer, 4)}</b><small data-fo="${esc(pkey(rp, params.streamer))}">${rp === 'kick' ? 'kick.com/' : 'twitch.tv/'}${esc(params.streamer)}</small></span>`;
-  $('#steps').innerHTML = ''; $('#log').innerHTML = ''; $('#stepsBox').hidden = false; $('#resultBox').hidden = true; $('#resultBox').innerHTML = '';
+  $('#steps').innerHTML = ''; $('#log').innerHTML = ''; $('#story').innerHTML = ''; $('.logd').open = false; $('#stepsBox').hidden = false; $('#resultBox').hidden = true; $('#resultBox').innerHTML = '';
   $('#runCtl').hidden = false; $('#stopBtn').disabled = false; $('#stopBtn').textContent = 'Stop'; $('#forceBtn').hidden = true; $('#forceBtn').disabled = false;
   $('#stagePhone').hidden = tests; $('#stageDots').hidden = !tests; $('#dots').innerHTML = ''; $('#dotsNote').textContent = 'Collecting the tests';
   const ph = $('#phone'); ph.dataset.st = 'wait'; const v = $('#phoneVid'); v.hidden = true; v.removeAttribute('src'); try { v.load(); } catch (e) {}
@@ -333,37 +348,38 @@ function resetRunView(kind, params) {
 }
 function onEvent(e) {
   const k = e.kind;
+  if (e.say) { story(e.say, e.t); if (e.say.tone === 'bad' && k !== 'end') R.problem = told(e) || e.say.text; }
   if (k === 'log') return logLine(e.line, /error|traceback|failed/i.test(e.line) ? 'w' : '', e.t);
   if (k === 'start') { R.started = e.t; return; }
-  if (k === 'recording') { row('join', 'Join the stream', 'done', 'Recording into the rolling window'); pill(e.platform === 'kick' ? 'kick' : 'twitch', 'on'); $('#forceBtn').hidden = R.replay; $('#runState').textContent = 'Recording'; return; }
-  if (k === 'baseline') { row('baseline', 'Read the chat so far', e.more ? 'run' : 'done', `<b>${(+e.messages).toLocaleString('en-US')}</b> messages, ${e.hours} h of the broadcast${e.category ? ' · ' + esc(e.category) : ''}${e.more ? '. The rest is being read in the background.' : ''}`); const b = $('#steps [data-key="baseline"]'), w = $('#steps [data-key="watch"]'); if (b && w && (w.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)) $('#steps').insertBefore(b, w); return; }
-  if (k === 'watching') { row('watch', 'Watch for a spike', 'run', `<b>${plural(e.messages, 'message')}</b> read${e.per_minute ? ', ' + e.per_minute + ' a minute' : ''}`); $('#runState').textContent = 'Watching the chat'; return; }
-  if (k === 'step' && e.step === 'chat') { row('chat', 'Read the chat of the broadcast', e.state === 'start' ? 'run' : e.state === 'done' ? 'done' : 'failed', e.state === 'failed' ? esc(e.error) : null, e.seconds); $('#runState').textContent = 'Reading the chat'; pill(R.params.platform === 'kick' ? 'kick' : 'twitch', 'on'); return; }
+  if (k === 'recording') { row('join', 'Join the stream', 'done', 'Recording has started'); pill(e.platform === 'kick' ? 'kick' : 'twitch', 'on'); $('#forceBtn').hidden = R.replay; $('#runState').textContent = 'Recording'; return; }
+  if (k === 'baseline') { row('baseline', 'Catch up on the chat', e.more ? 'run' : 'done', `<b>${(+e.messages).toLocaleString('en-US')}</b> messages from ${e.hours} hours of the broadcast${e.category ? ' · ' + esc(e.category) : ''}${e.more ? '. The rest is being read in the background.' : ''}`); const b = $('#steps [data-key="baseline"]'), w = $('#steps [data-key="watch"]'); if (b && w && (w.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)) $('#steps').insertBefore(b, w); return; }
+  if (k === 'watching') { row('watch', 'Watch the chat for a moment', 'run', `<b>${plural(e.messages, 'message')}</b> read${e.per_minute ? ', about ' + e.per_minute + ' a minute' : ''}`); $('#runState').textContent = 'Watching the chat'; return; }
+  if (k === 'step' && e.step === 'chat') { row('chat', 'Read the chat of the broadcast', e.state === 'start' ? 'run' : e.state === 'done' ? 'done' : 'failed', e.state === 'failed' ? esc(told(e) || e.error) : null, e.seconds); $('#runState').textContent = 'Reading the chat'; pill(R.params.platform === 'kick' ? 'kick' : 'twitch', 'on'); return; }
   if (k === 'chat') { row('chat', 'Read the chat of the broadcast', 'done', `<b>${(+e.messages).toLocaleString('en-US')}</b> messages`); return; }
   if (k === 'candidates') { row('found', 'Find the moments', 'done', `<b>${e.count}</b> ${e.count === 1 ? 'moment stands' : 'moments stand'} out${e.category ? ' · ' + esc(e.category) : ''}`); return; }
-  if (k === 'moment') { R.clip++; const w = $(`#steps [data-key="watch"]`); if (w) w.dataset.s = 'done'; row('m' + R.clip, `Moment ${R.clip}`, 'done', `Chat score <b>${e.chat_score}</b>${e.chatters ? ', ' + e.chatters + ' chatters' : ''}, ${e.seconds} s of footage`); $('#phone').dataset.st = 'cut'; const v = $('#phoneVid'); v.hidden = true; $('#runState').textContent = 'Making a clip'; return; }
-  if (k === 'step') { const key = e.step + ':' + R.clip, note = e.state === 'failed' ? esc(e.error) : e.step === 'transcribe' && e.state === 'done' && S.ov && !S.ov.speech ? 'No speech model on this machine, so no captions' : e.step === 'layout' && e.state === 'done' && S.ov && S.ov.tools && !S.ov.tools.face_detector ? 'No face detector on this machine: the layout set for the streamer is used' : null; row(key, stepName(e.step), e.state === 'start' ? 'run' : e.state === 'done' ? 'done' : 'failed', note, e.seconds); if (e.state === 'start' && STEP_PHONE[e.step]) $('#phone').dataset.st = STEP_PHONE[e.step]; if (e.state === 'start') $('#runState').textContent = stepName(e.step); return; }
-  if (k === 'judged') { const ai = e.source === 'claude'; row('judge:' + R.clip, 'Judge', ai ? 'done' : 'skip', ai ? `Claude scored it <b>${e.score}</b> of 10` : 'No API key: the fallback wrote the title'); pill('cl', ai ? 'on' : 'skip'); return; }
+  if (k === 'moment') { R.clip++; const w = $(`#steps [data-key="watch"]`); if (w) w.dataset.s = 'done'; row('m' + R.clip, `Moment ${R.clip}`, 'done', e.chatters ? `<b>${plural(e.chatters, 'person', 'people')}</b> reacting at once · ${Math.round(e.seconds)} seconds kept · score ${e.chat_score}` : `${Math.round(e.seconds)} seconds kept`); $('#phone').dataset.st = 'cut'; const v = $('#phoneVid'); v.hidden = true; $('#runState').textContent = 'Making a clip'; return; }
+  if (k === 'step') { const key = e.step + ':' + R.clip, note = e.state === 'failed' ? esc(told(e) || e.error) : e.step === 'transcribe' && e.state === 'done' && S.ov && !S.ov.speech ? 'No speech model on this machine, so no captions' : e.step === 'layout' && e.state === 'done' && S.ov && S.ov.tools && !S.ov.tools.face_detector ? 'No face detector on this machine: the layout set for the streamer is used' : null; row(key, stepName(e.step), e.state === 'start' ? 'run' : e.state === 'done' ? 'done' : 'failed', note, e.seconds); if (e.state === 'start' && STEP_PHONE[e.step]) $('#phone').dataset.st = STEP_PHONE[e.step]; if (e.state === 'start') $('#runState').textContent = e.say ? e.say.text.replace(/…$/, '') : stepName(e.step); return; }
+  if (k === 'judged') { const ai = e.source === 'claude'; row('judge:' + R.clip, 'Ask the judge', ai ? 'done' : 'skip', ai ? `Claude gave it <b>${e.score}</b> out of 10` : 'No judge on this run: the built-in rules wrote the title'); pill('cl', ai ? 'on' : 'skip'); return; }
   if (k === 'staged') { R.clips.push(e); row('staged:' + R.clip, e.again ? 'Rendered again' : 'Clip ready', 'done', `<b>${esc(e.title)}</b>`); const v = $('#phoneVid'); v.src = `/media/${encodeURIComponent(e.clip_id)}/short_9x16.mp4`; v.hidden = false; v.play().catch(() => {}); $('#phone').dataset.st = 'done'; pill('tg', S.ov && S.ov.telegram ? 'on' : 'skip'); pill('yt', 'skip'); if (!R.replay) { toast('Clip staged: ' + e.title); S.clips = []; } return; }
-  if (k === 'rejected' || k === 'failed') { row(k + ':' + R.clip + ':' + e.seq, k === 'rejected' ? 'Not staged' : 'Could not be made', 'failed', esc(e.reason || '')); return; }
+  if (k === 'rejected' || k === 'failed') { row(k + ':' + R.clip + ':' + e.seq, k === 'rejected' ? 'Not kept' : 'Could not be made', 'failed', esc(told(e) || e.reason || '')); return; }
   if (k === 'forced') { if (!R.replay) toast('Clipping the last ' + e.seconds + ' seconds'); return; }
-  if (k === 'test') { R.tests.seen++; const d = document.createElement('i'); d.className = e.outcome === 'PASSED' ? 'ok' : e.outcome === 'SKIPPED' ? '' : 'now'; d.title = `${e.file}::${e.name} ${e.outcome}`; $('#dots').appendChild(d); if (e.outcome === 'FAILED' || e.outcome === 'ERROR') R.tests.failed.push(e.file + '::' + e.name); $('#dotsNote').textContent = `${R.tests.seen} tests run, ${R.tests.failed.length} failed`; $('#totalBar').style.width = e.percent + '%'; $('#runState').textContent = e.file; row('t:' + e.file, e.file.replace('tests/', ''), 'run', null); const prev = $('#steps').children; if (prev.length > 1) { const p = prev[prev.length - 2]; if (p.dataset.s === 'run') { p.dataset.s = R.tests.failed.some(f => f.startsWith('tests/' + p.querySelector('.nm').textContent)) ? 'failed' : 'done'; p.querySelector('.bub').innerHTML = ic(p.dataset.s === 'done' ? 'check' : 'cross'); } } return; }
-  if (k === 'stopping') { $('#runState').textContent = 'Stopping: finishing what is in progress'; $('#stopBtn').disabled = true; return; }
+  if (k === 'test') { R.tests.seen++; const d = document.createElement('i'); d.className = e.outcome === 'PASSED' ? 'ok' : e.outcome === 'SKIPPED' ? '' : 'now'; d.title = `${testWords(e.name)}: ${{ PASSED: 'works', SKIPPED: 'left out here', FAILED: 'does not work', ERROR: 'could not be checked' }[e.outcome] || e.outcome.toLowerCase()}`; $('#dots').appendChild(d); if (e.outcome === 'FAILED' || e.outcome === 'ERROR') R.tests.failed.push(e.file + '::' + e.name); $('#dotsNote').textContent = `${R.tests.seen} checks done, ${R.tests.failed.length} failed`; $('#totalBar').style.width = e.percent + '%'; $('#runState').textContent = 'Checking: ' + testWords(e.file).toLowerCase(); row('t:' + e.file, testWords(e.file), 'run', null); const prev = $('#steps').children; if (prev.length > 1) { const p = prev[prev.length - 2]; if (p.dataset.s === 'run') { p.dataset.s = R.tests.failed.some(f => f.startsWith(p.dataset.key.slice(2) + '::')) ? 'failed' : 'done'; p.querySelector('.bub').innerHTML = ic(p.dataset.s === 'done' ? 'check' : 'cross'); } } return; }
+  if (k === 'stopping') { $('#runState').textContent = 'Stopping: what is in progress is finished first'; $('#stopBtn').disabled = true; return; }
   if (k === 'end') return finish(e);
 }
 function finish(e) {
   if (!R.replay) busy(false);
   R.ended = true; clearInterval(R.tick); if (R.es) { R.es.close(); R.es = null; }
-  $('#runCtl').hidden = true; $('#total').classList.remove('ind'); $('#totalBar').style.width = '100%'; $('#runState').textContent = e.state === 'done' ? 'Finished' : e.state === 'stopped' ? 'Stopped' : 'Ended with an error'; $('#runClock').textContent = fmtS(e.seconds);
+  $('#runCtl').hidden = true; $('#total').classList.remove('ind'); $('#totalBar').style.width = '100%'; $('#runState').textContent = e.state === 'done' ? 'Finished' : e.state === 'stopped' ? 'Stopped' : 'Stopped by a problem'; $('#runClock').textContent = fmtS(e.seconds);
   $$('#steps .step[data-s="run"]').forEach(li => { li.dataset.s = e.state === 'failed' ? 'failed' : 'done'; li.querySelector('.bub').innerHTML = ic(e.state === 'failed' ? 'cross' : 'check'); });
   W.step = 5; paintWiz();
   let html;
   if (R.kind === 'tests') {
     const t = e.tests || {}, bad = (t.failed || 0) + (t.error || 0), ok = e.state === 'done' && !bad;
-    $('#runTitle').innerHTML = ok ? `All ${t.passed || R.tests.seen} tests <span class="gt">passed</span>` : `The tests <span class="gt">did not pass</span>`;
+    $('#runTitle').innerHTML = ok ? `All ${t.passed || R.tests.seen} checks <span class="gt">passed</span>` : `Some checks <span class="gt">did not pass</span>`;
     html = `<span class="badge ${ok ? 'live' : 'warn'}"><i class="dot ${ok ? '' : 'warn'}"></i>${ok ? 'All green' : e.state === 'stopped' ? 'Stopped before the end' : bad + ' failed'}</span><h2>${ok ? 'Every part of the bot still works' : 'Something needs a look'}</h2>
       <div class="grid statrow"><div class="card"><div class="tile"><b class="num">${t.passed || 0}</b><span>passed</span></div></div><div class="card"><div class="tile"><b class="num">${bad}</b><span>failed</span></div></div><div class="card"><div class="tile">${numb(fmtS(t.seconds || e.seconds))}<span>in total</span></div></div></div>
-      ${R.tests.failed.length ? `<div class="tbl-wrap"><table><tbody>${R.tests.failed.slice(0, 30).map(f => `<tr><td>${esc(f)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
+      ${R.tests.failed.length ? `<div class="tbl-wrap"><table><tbody>${R.tests.failed.slice(0, 30).map(f => { const [file, name] = f.split('::'); return `<tr><td><b>${esc(testWords(file))}</b>: ${esc(testWords(name).toLowerCase())}</td></tr>`; }).join('')}</tbody></table></div>` : ''}`;
   } else if (R.clips.length) {
     const c = R.clips[R.clips.length - 1], n = R.clips.length;
     $('#runTitle').innerHTML = R.kind === 'render' ? 'Rendered <span class="gt">again</span>' : n === 1 ? 'Clip <span class="gt">staged</span>' : `${n} clips <span class="gt">staged</span>`;
@@ -372,10 +388,10 @@ function finish(e) {
       <p class="cap-note">${S.ov && S.ov.dry_run ? 'Nothing was uploaded: this is a dry run, and only clips a person approves go to YouTube.' : 'It is uploaded once a person approves it.'}</p>`;
   } else if (R.kind === 'render') {
     $('#runTitle').innerHTML = 'Not rendered <span class="gt">again</span>';
-    html = `<span class="badge"><i class="dot off"></i>${e.state === 'stopped' ? 'Stopped' : 'Not rendered'}</span><h2>${e.state === 'stopped' ? 'Stopped before it finished' : 'The render did not finish'}</h2><p class="lead">The clip keeps the video it had.${e.state === 'stopped' ? '' : ' The log below says why.'}</p>`;
+    html = `<span class="badge"><i class="dot off"></i>${e.state === 'stopped' ? 'Stopped' : 'Not rendered'}</span><h2>${e.state === 'stopped' ? 'Stopped before it finished' : 'The render did not finish'}</h2><p class="lead">The clip keeps the video it had.${e.state === 'stopped' ? '' : ' ' + esc(R.problem || 'What happened is written below.')}</p>`;
   } else {
     $('#runTitle').innerHTML = e.state === 'failed' ? 'The run <span class="gt">stopped early</span>' : 'No clip <span class="gt">this time</span>';
-    html = `<span class="badge"><i class="dot off"></i>${e.state === 'failed' ? 'Exit code ' + e.code : 'Nothing staged'}</span><h2>${e.state === 'failed' ? 'It ended with an error' : 'No moment stood out'}</h2><p class="lead">${e.state === 'failed' ? 'The last lines of the log say why. Open "Show the log" below.' : R.kind === 'live' ? 'Chat stayed under the bar while the bot was watching. Try a longer run, or a busier stream.' : 'Nothing in this broadcast passed the detector and the judge.'}</p>`;
+    html = `<span class="badge${e.state === 'failed' ? ' warn' : ''}"><i class="dot ${e.state === 'failed' ? 'warn' : 'off'}"></i>${e.state === 'failed' ? 'Stopped by a problem' : 'Nothing staged'}</span><h2>${e.state === 'failed' ? 'It could not finish' : 'No moment stood out'}</h2><p class="lead">${e.state === 'failed' ? esc(R.problem || 'Something went wrong.') + ' The whole story is below.' : R.kind === 'live' ? 'Chat stayed under the bar while the bot was watching. Try a longer run, or a busier stream.' : 'Nothing in this broadcast passed the detector and the judge.'}</p>`;
   }
   html += `<div class="row" style="margin-top:4px"><button class="btn btn-primary btn-lg" id="again">Run something else</button>${R.clips.length ? '<button class="btn btn-glass btn-lg" id="openIt">Open the clip</button>' : ''}<button class="btn btn-ghost btn-lg" id="watchIt">Watch it again</button></div>`;
   const box = $('#resultBox'); box.innerHTML = `<div class="result">${html}</div>`; $('#stepsBox').hidden = true; box.hidden = false;
