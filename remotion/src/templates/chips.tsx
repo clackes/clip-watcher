@@ -59,6 +59,9 @@ type Box = { l: number; r: number; t: number; b: number };
 // the picture of a system emoji in its em box: how tall it is and where its middle sits above the baseline, em
 const EMOJI_H = 1.03;
 const EMOJI_MID = 0.35;
+// a face is turned to only when it will then be seen for at least this long, seconds (two frames at
+// 30 fps): shown for less, before the page goes, it is a flash and not a turn
+const SEEN = 0.07;
 
 /** The chip: shadow, plate with its rim, and on the flipped face the inset line. */
 function chip(id: string, b: Box, fx: P["fx"], u: number, o: { plate: string; rim: string; shadow: string; line: string | null; m: Affine; under: Affine; clip?: Rect }): Shape[] {
@@ -140,12 +143,19 @@ export default defineTemplate<P>({
       const turned = (deg: number, rise: number) => Math.min(deg, (Math.atan2(rise * u, W / 2) * 180) / Math.PI);
       const tilt = w.emph ? (odd ? 1 : -1) * turned(fx.emphTiltDeg, fx.emphRise) : 0;
 
-      // the flip: over when the word starts, back when the next one does (but never back at once, and not
-      // at all when it would still be turning as the page leaves). Which face shows is settled when the
-      // exit begins: a chip on its way out is never swapped for its other face for a frame or two.
+      // the flip: over when the word starts, back when the next one does (but never back at once). A
+      // turn is made only for a face that will then be seen: the new face shows from the middle of the
+      // turn, and the page must keep it for the rest of the turn (and never under SEEN) before it goes,
+      // whether it leaves or the next page replaces it with a cut. So the last chip of fast talk is not
+      // turned over for the one frame before the cut, and a chip is not turned back to a front nobody
+      // gets to read: each stays on the face it has. Which face shows is settled when the exit begins: a
+      // chip on its way out is never swapped for its other face for a frame or two.
+      const leaves = c.exit > 0 ? c.exitT : c.dur;
+      const seen = fx.flipS / 2 + Math.max(fx.flipS / 2, SEEN); // from the start of a turn until its face has been seen
+      const turns = w.start + seen <= leaves;
       const back0 = Math.max(w.activeEnd + fx.flipBackLagS, w.start + fx.flipS + fx.flipHoldS);
-      const stays = c.exit > 0 && back0 + fx.flipS > c.exitT;
-      const turnAt = (at: number) => prog(at, w.start, fx.flipS) - (stays ? 0 : prog(at, back0, fx.flipS));
+      const stays = back0 + seen > leaves;
+      const turnAt = (at: number) => (turns ? prog(at, w.start, fx.flipS) - (stays ? 0 : prog(at, back0, fx.flipS)) : 0);
       const turn = turnAt(t);
       const flipped = turnAt(c.exit > 0 ? Math.min(t, c.exitT) : t) > 0.5;
       const sx = Math.max(fx.flipThin, Math.abs(Math.cos(Math.PI * turn)));
