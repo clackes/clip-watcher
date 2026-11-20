@@ -10,11 +10,15 @@ template, and stages the clip for approval, usually within about a minute of the
 python3.12 -m venv .venv
 .venv/bin/pip install -e ".[dev,judge,telegram,live,calibrate,publish,publish-browser]" streamlink==8.6.3
 cp .env.example .env && cp config/streamers.example.yaml config/streamers.yaml
+mkdir -p models && curl -L -o models/blaze_face_short_range.tflite \
+  https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite
 scripts/run_live_mac.sh illojuan,teegrizzley      # stops the Mac sleeping while it runs
 ```
 
 Clips land in `staging/<clip_id>/` (`short_9x16.mp4`, `clean_16x9.mp4`, `meta.json`). Streamers don't need
 to be in `streamers.yaml`: each clip's layout (webcam / gameplay / full-cam) is detected from its own frames.
+That detection needs the face model above (with the `calibrate` extra) or OpenCV; without either, a clip
+gets the layout its streamer has in `streamers.yaml`, or the whole frame.
 
 ## The companion app
 

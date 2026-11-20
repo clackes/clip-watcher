@@ -202,6 +202,29 @@ python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"
   for "verified": the page draws that tick. Checked 20 Nov through the page on real streams: two live runs (kaicenat, clix) with a
   forced clip each, staged and played in the page; a Short rendered again with another caption style; a
   render stopped midway (the clip kept its video).
+- D18 The webcam is read from the picture (owner, 19 Nov: verify adversarially, on many streams and frame
+  by frame, that the webcam is found every time and the 9:16 looks right; measured 20 Nov, not there yet).
+  `layout.resolve` finds the overlay's own rectangle in the frames around the moment and that rectangle is
+  the cam crop, not a box guessed around the face (too tight: 27% more enlargement at the median, or
+  reaching into the game); webcam-like rectangles are enlarged and searched again for small, dark or
+  profile faces. The config counts only while the picture agrees: confirmed `layouts:` rects are checked
+  against what is found (the rects of zackrawrr, clix, tfue and ishowspeed were elsewhere than the cam,
+  and kaicenat, `has_webcam: false`, had one); `has_webcam: false` no longer skips detection, `layout:
+  fixed` does. Panels are crops of the panel's own shape inside the picture, never stretched
+  (`template.split_crops`, `fit_crop`). Checked with scripts/webcam_record.py, webcam_check.py and
+  webcam_sharpness.py (record, label, detect, render, every frame, sharpness, gallery). On 31 channels the
+  code had never seen: 119 of 155 moments laid out right (33% before), 20 channels right at all five
+  moments, 23 of 31 Shorts right on every frame (54,899 frames; none with black bars, a stretched panel or
+  a wrong length); on 59 development channels 260 of 295 moments (96 before). Still failing: bars and
+  sponsor panels attached to the cam with no edge between them, cut-out cams away from a lower corner,
+  dark cams on dark games, two people in a full-screen camera split as an overlay, a layout switched
+  inside the clip. Sharpness: scaler and encoder lose little (PSNR 45 dB, SSIM 0.989 against a clean
+  enlargement of the same crop); what was lost was the over-tight crop (median enlargement 4.25x -> 3.4x);
+  unsharp and CAS were rejected (halos double on compressed input). A cam under about 300 px wide is
+  limited by the source, and a 720p recording keeps 27-49% of 1080p's fine detail in the cam panel
+  (`buffer.quality`; the owner's call: disk and line). Detection needs a face detector: mediapipe with
+  models/blaze_face_short_range.tflite (README), else OpenCV; without one the configured default scene is
+  used and the companion app says so on the step.
 - D9 .ts seek bug: never `-ss` exact on MPEG-TS. Coarse input seek to max(0, START-6), then
   trim/atrim=start=TRIM in the graph, then setpts=PTS-STARTPTS. Regression test required. Commands that decode
   only the picture or only the sound (judge frames, transcript, loudness, reframe) go through
