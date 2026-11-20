@@ -1,0 +1,76 @@
+{
+  "title": "Label",
+  "description": "The social label look: every line on its own tight white plate, dark letters, no outline. Plates wipe open from the left; the part under the spoken word opens in the highlight colour and lifts with its word; shouted words sit on their own tilted plate in the emphasis colour.",
+  "font": { "family": "Bricolage Grotesque", "file": "captions/BricolageGrotesque-ExtraBold.ttf", "weight": 800, "style": "normal" },
+  "emphFont": null,
+  "size": 86,
+  "minSize": 50,
+  "lineHeight": 1.09,
+  "letterSpacing": -0.01,
+  "wordGap": 0.3,
+  "case": "keep",
+  "emphScale": 1,
+  "grow": 0.02,
+  "tilt": 0,
+  "margin": { "x": 38, "y": 28 },
+  "paging": {
+    "mode": "page",
+    "maxWords": 5,
+    "maxLines": 2,
+    "gapS": 0.6,
+    "holdS": 0.5,
+    "lingerS": 0.3,
+    "minShowS": 0.14,
+    "leadS": 0.03,
+    "overlapS": 0
+  },
+  "timing": { "enterS": 0.26, "exitS": 0.2, "activeInS": 0.12, "activeOutS": 0.14, "colorS": 0.25, "staggerS": 0 },
+  "colors": {
+    "text": "#FFFFFF",
+    "active": "#8DFF2F",
+    "emph": "#FF70CB",
+    "stroke": "#000000",
+    "shadow": "#000000",
+    "plate": "#FFFFFF",
+    "plateText": "#0B0B12",
+    "accent": "#8DFF2F",
+    "accent2": "#FF70CB",
+    "cycle": ["#8DFF2F"]
+  },
+  "auto": {
+    "candidates": {
+      "active": ["lime", "yellow", "cyan", "mint", "orange"],
+      "emph": ["pink", "orange", "violet", "red", "sky"],
+      "plate": ["white"],
+      "plateText": ["ink"]
+    },
+    "pairs": [
+      ["plateText", "plate"],
+      ["plateText", "active"],
+      ["plateText", "emph"],
+      ["plateText", "text"]
+    ],
+    "avoidHue": ["active", "emph"],
+    "distinct": [["active", "emph"]]
+  },
+  "label": { "size": 84, "enterS": 0.24, "exitS": 0.14, "rotate": -3 },
+  "fx": {
+    "halo": 0.07,
+    "padX": 0.22,
+    "padY": 0.12,
+    "radius": 0.16,
+    "lineLagS": 0.07,
+    "openOvershoot": 0.6,
+    "slide": 0.4,
+    "closeLag": 0.3,
+    "segPadX": 0.12,
+    "segInset": 0,
+    "segRadius": 0.14,
+    "segOvershoot": 1.8,
+    "nudge": 0.07,
+    "depth": 0.45,
+    "emphTilt": 3.5,
+    "emphPop": 1.06,
+    "labelPop": 1.06
+  }
+}

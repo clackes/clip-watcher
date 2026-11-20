@@ -1,0 +1,73 @@
+{
+  "title": "Glide",
+  "description": "A rounded highlight box glides from word to word and stretches as it goes; the word inside it turns dark on the box colour, the rest stay white with an outline.",
+  "font": { "family": "Archivo Black", "file": "captions/ArchivoBlack-Regular.ttf", "weight": 400, "style": "normal" },
+  "emphFont": null,
+  "size": 80,
+  "minSize": 50,
+  "lineHeight": 1.42,
+  "letterSpacing": 0,
+  "wordGap": 0.5,
+  "case": "upper",
+  "emphScale": 1,
+  "grow": 0,
+  "tilt": 0,
+  "margin": { "x": 40, "y": 34 },
+  "paging": {
+    "mode": "page",
+    "maxWords": 4,
+    "maxLines": 2,
+    "gapS": 0.6,
+    "holdS": 0.5,
+    "lingerS": 0.3,
+    "minShowS": 0.14,
+    "leadS": 0.03,
+    "overlapS": 0
+  },
+  "timing": { "enterS": 0.24, "exitS": 0.14, "activeInS": 0.1, "activeOutS": 0.14, "colorS": 0.25, "staggerS": 0 },
+  "colors": {
+    "text": "#FFFFFF",
+    "active": "#FFE600",
+    "emph": "#FF70CB",
+    "stroke": "#000000",
+    "shadow": "#000000",
+    "plate": "#FFE600",
+    "plateText": "#000000",
+    "accent": "#FFE600",
+    "accent2": "#00E5FF",
+    "cycle": ["#FFE600"]
+  },
+  "auto": {
+    "candidates": {
+      "text": ["white"],
+      "active": ["yellow", "lime", "cyan", "orange", "mint"],
+      "emph": ["pink", "red", "orange", "violet"],
+      "stroke": ["black"],
+      "plateText": ["black"]
+    },
+    "pairs": [
+      ["text", "stroke"],
+      ["plateText", "active"],
+      ["plateText", "emph"]
+    ],
+    "avoidHue": ["active", "emph"],
+    "distinct": [["active", "emph"]]
+  },
+  "label": { "size": 92, "enterS": 0.18, "exitS": 0.12, "rotate": -3 },
+  "fx": {
+    "halo": 0.085,
+    "shadowY": 0.06,
+    "padX": 0.17,
+    "padY": 0.15,
+    "radius": 0.2,
+    "rim": 0.07,
+    "glideS": 0.2,
+    "stretch": 0.7,
+    "enterScale": 0.7,
+    "enterFreq": 4.5,
+    "enterDamp": 0.6,
+    "enterRise": 0.35,
+    "emphGrow": 0.05,
+    "exitDrop": 0.3
+  }
+}

@@ -19,3 +19,7 @@ config/operators.yaml
 config/local.yaml
 *.db
 models/
+remotion/node_modules/
+remotion/build/
+remotion/build.*/
+!remotion/src/**/*.ts

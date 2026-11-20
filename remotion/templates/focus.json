@@ -1,0 +1,77 @@
+{
+  "title": "Focus",
+  "description": "A lens moves along the line: the spoken word is large and coloured with a soft glow under it, its neighbours are small, and the whole line re-flows smoothly as the lens moves on; shouted words swell even more; words grow out of the baseline and shrink back into it.",
+  "font": { "family": "Titan One", "file": "captions/TitanOne-Regular.ttf", "weight": 400, "style": "normal" },
+  "emphFont": null,
+  "size": 84,
+  "minSize": 40,
+  "lineHeight": 1.3,
+  "letterSpacing": 0.005,
+  "wordGap": 0.3,
+  "case": "lower",
+  "emphScale": 1,
+  "grow": 0.13,
+  "tilt": 0,
+  "margin": { "x": 20, "y": 36 },
+  "paging": {
+    "mode": "page",
+    "maxWords": 3,
+    "maxLines": 1,
+    "gapS": 0.6,
+    "holdS": 0.55,
+    "lingerS": 0.3,
+    "minShowS": 0.14,
+    "leadS": 0.03,
+    "overlapS": 0
+  },
+  "timing": { "enterS": 0.25, "exitS": 0.28, "activeInS": 0.1, "activeOutS": 0.18, "colorS": 0.25, "staggerS": 0.06 },
+  "colors": {
+    "text": "#FFFFFF",
+    "active": "#00E5FF",
+    "emph": "#FF70CB",
+    "stroke": "#0A1238",
+    "shadow": "#0A1238",
+    "plate": "#0A1238",
+    "plateText": "#FFFFFF",
+    "accent": "#B9A0FF",
+    "accent2": "#FFE600",
+    "cycle": ["#00E5FF"]
+  },
+  "auto": {
+    "candidates": {
+      "text": ["white"],
+      "active": ["cyan", "lime", "yellow", "mint"],
+      "emph": ["pink", "orange", "gold"],
+      "stroke": ["navy"],
+      "shadow": ["navy"],
+      "accent": ["violet", "sky", "pink"],
+      "accent2": ["yellow", "cream"]
+    },
+    "pairs": [
+      ["text", "stroke"],
+      ["active", "stroke"],
+      ["emph", "stroke"],
+      ["text", "shadow"],
+      ["active", "shadow"],
+      ["emph", "shadow"]
+    ],
+    "avoidHue": ["active", "emph"],
+    "distinct": [["active", "emph"]]
+  },
+  "label": { "size": 120, "enterS": 0.25, "exitS": 0.22, "rotate": 0 },
+  "fx": {
+    "halo": 0.085,
+    "haloFloor": 4.6,
+    "shadowY": 0.05,
+    "focusScale": 1.75,
+    "emphScale": 2.1,
+    "lensS": 0.2,
+    "glow": 0.1,
+    "glowAlpha": 0.55,
+    "glowRings": 5,
+    "growHz": 4.5,
+    "growDamp": 0.7,
+    "shrinkStepS": 0.05,
+    "shrinkShare": 0.5
+  }
+}

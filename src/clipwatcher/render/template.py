@@ -14,6 +14,7 @@ from pathlib import Path
 from clipwatcher import config
 from clipwatcher.config import ffmpeg_bin, ffprobe_bin
 from clipwatcher.models import Word
+from clipwatcher.render import remotion as rm
 from clipwatcher.render import seek
 from clipwatcher.render.branding import ACCENTS, BRANDING_DIR, FONTS_DIR, ensure_branding, hook_pill
 from clipwatcher.render.captions import caption_style, write_ass
@@ -316,8 +317,11 @@ def build_short_graph(
     gradient_idx: int, logo_idx: int, hook_idx: int, ass: Path, fontsdir: Path, cta_idx: int = -1,
     hook_s: float = 3.5, cold_open: tuple[float, float] | None = None, zoom: float = 1.15,
     measured: dict | None = None, src_wh: tuple[int, int] = (1920, 1080), fps: float = 30.0,
-    face: Rect | None = None,
+    face: Rect | None = None, overlay: tuple[int, rm.Overlay] | None = None, probe: str | None = None,
 ) -> str:  # fmt: skip
+    """overlay = (ffmpeg input index, Remotion caption overlay) laid over the picture after the ASS pass;
+    probe = a filter chain that replaces the captions and the sound: the graph then ends in the picture
+    under the captions, sampled for the auto colours."""
     g: list[str] = []
     use_bg = style == "ambient"
     grad = f"[{gradient_idx}:v]"
@@ -376,11 +380,19 @@ def build_short_graph(
         )
     else:
         g.append("[v3]null[v4]")
-    g.append(
-        f"[v4]ass=filename={esc_filter_path(ass)}:fontsdir={esc_filter_path(fontsdir)},format=yuv420p[v]"
-    )
+    if probe:
+        return ";".join([*g, f"[v4]{probe}[v]"])
+    g += _caption_tail("[v4]", ass, fontsdir, overlay)
     g.append(_audio_chain(trim, dur, cold_open, measured))
     return ";".join(g)
+
+
+def _caption_tail(last: str, ass: Path, fontsdir: Path, overlay: tuple[int, rm.Overlay] | None) -> list[str]:
+    """last -> [v]: the ASS pass (captions, or only the credit), then the Remotion overlay if there is one."""
+    burn = f"{last}ass=filename={esc_filter_path(ass)}:fontsdir={esc_filter_path(fontsdir)},format=yuv420p"
+    if not overlay:
+        return [burn + "[v]"]
+    return [burn + "[capbase]", rm.overlay_filter(overlay[0], overlay[1], "[capbase]", "[v]")]
 
 
 # -- split layout (owner, 17 Nov evening): full-bleed webcam over gameplay, 1080x960 each, captions on the
@@ -527,9 +539,11 @@ def build_split_graph(
     face: Rect | None = None, beats: list[tuple] | None = None,
     sfx: list[tuple[float, int]] | None = None, sfx_gain_db: float = -4.0,
     keep: list[tuple[float, float]] | None = None, reframe_x: str | None = None,
+    overlay: tuple[int, rm.Overlay] | None = None, probe: str | None = None,
 ) -> str:  # fmt: skip
     """beats are on the output timeline (after the cold open); sfx = (output time, ffmpeg input index);
-    keep = jump-cut stretches of the clip (relative to its start), None = the whole clip."""
+    keep = jump-cut stretches of the clip (relative to its start), None = the whole clip.
+    overlay / probe: as in build_short_graph."""
     g: list[str] = []
     co_d = cold_open[1] if cold_open else 0.0
     keep = keep or [(0.0, dur)]
@@ -580,9 +594,9 @@ def build_split_graph(
             d, f = FX_FILTERS[k]
             g.append(f"{last}{f}:enable='between(t,{t:.3f},{t + d:.3f})'[fx{i}]")
             last = f"[fx{i}]"
-    g.append(
-        f"{last}ass=filename={esc_filter_path(ass)}:fontsdir={esc_filter_path(fontsdir)},format=yuv420p[v]"
-    )
+    if probe:
+        return ";".join([*g, f"{last}{probe}[v]"])
+    g += _caption_tail(last, ass, fontsdir, overlay)
     audio = _audio_chain(trim, dur, cold_open, measured, keep=keep)
     if sfx:
         audio = audio[: audio.rindex("[a]")] + "[am];" + _sfx_mix(sfx, sfx_gain_db)
@@ -660,10 +674,7 @@ def render_short(
 
     with tempfile.TemporaryDirectory(prefix="clipwatcher_") as td:
         work = Path(td)
-        ass = write_ass(
-            work / "subs.ass", words, total, credit=config.credit(streamer),
-            style=captions or caption_style(clip_id),
-        )  # fmt: skip
+        cap_style = captions or caption_style(clip_id)
         cmd = [ffmpeg_bin(), "-y", "-hide_banner", "-ss", f"{coarse:.3f}", "-i", str(src)]
         idx = 1
         logo_idx = idx
@@ -687,19 +698,82 @@ def render_short(
                 str(BRANDING_DIR / f"frame_gradient_{accent}.png"),
             ]
             idx += 1
-        graph = build_short_graph(
+        gk = dict(
             trim=trim, dur=dur_s, style=style, has_webcam=has_webcam, has_hook=bool(hook), cam=cam,
             game=game, gradient_idx=gradient_idx, logo_idx=logo_idx, hook_idx=hook_idx,
-            ass=ass, fontsdir=FONTS_DIR, hook_s=hook_seconds(), cold_open=cold_open,
+            fontsdir=FONTS_DIR, hook_s=hook_seconds(), cold_open=cold_open,
             zoom=co_settings()[1], measured=_measure(src, coarse, trim, dur_s, cold_open),
             src_wh=(info.width, info.height), fps=fps, face=parse_rect(face),
         )  # fmt: skip
-        cmd += ["-filter_complex", graph, "-map", "[v]", "-map", "[a]", *video_args(profile)]
-        cmd += ["-fps_mode", "cfr", "-r", f"{fps:g}", "-c:a", "aac", "-b:a", "192k", "-ar", "48000"]
-        cmd += ["-t", f"{total:.3f}", "-movflags", "+faststart", str(out)]
-        _run(cmd)
+        tail = [*video_args(profile), "-fps_mode", "cfr", "-r", f"{fps:g}", "-c:a", "aac", "-b:a", "192k"]
+        tail += ["-ar", "48000", "-t", f"{total:.3f}", "-movflags", "+faststart", str(out)]
+
+        def encode(style_: str, overlay: rm.Overlay | None) -> None:
+            shown = [] if overlay or rm.is_rm(style_) else words  # with an overlay the ASS file is the credit
+            ass = write_ass(
+                work / "subs.ass", shown, total, credit=config.credit(streamer),
+                style="word" if rm.is_rm(style_) else style_,
+            )  # fmt: skip
+            extra = rm.overlay_input(overlay) if overlay else []
+            graph = build_short_graph(**gk, ass=ass, overlay=(idx, overlay) if overlay else None)
+            _run([*cmd, *extra, "-filter_complex", graph, "-map", "[v]", "-map", "[a]", *tail])
+
+        _encode_with_captions(
+            encode, cap_style, work, words, total, fps, rm.caption_box(1495, "stack"), None, None,
+            lambda p: [*cmd, "-filter_complex", build_short_graph(**gk, ass=work / "none.ass", probe=p)],
+        )  # fmt: skip
     _verify(out, total)
     return out
+
+
+def _probe_background(cmd: list[str], total: float) -> rm.Background | None:
+    """The picture under the captions, sampled small and slow, for the auto colours. cmd is the render
+    command with a probe graph; None when it cannot be read (the fixed colours are used then)."""
+    try:
+        r = subprocess.run(
+            [*cmd, "-map", "[v]", "-t", f"{total:.3f}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+            capture_output=True, timeout=600,
+        )  # fmt: skip
+    except (OSError, subprocess.SubprocessError) as e:
+        log.warning("caption colours: could not sample the picture (%s), using the fixed colours", e)
+        return None
+    if r.returncode != 0 or not r.stdout:
+        log.warning("caption colours: sampling failed, using the fixed colours: %s", r.stderr[-300:])
+        return None
+    return rm.background_from_raw(r.stdout)
+
+
+def _encode_with_captions(
+    encode, style: str, work: Path, words: list[Word], total: float, fps: float, box: rm.Box,
+    beats: list | None, actions: list | None, probe_cmd,
+) -> None:  # fmt: skip
+    """Run encode(style, overlay) with the captions the style asks for. For rm:<template> the overlay is
+    rendered first; if Node, the bundle or the render is missing or fails, or ffmpeg cannot use the result,
+    the clip is encoded with the ASS fallback style instead: captions never cost a clip."""
+    if not rm.is_rm(style):
+        encode(style, None)
+        return
+    fb = rm.fallback_style()
+    try:
+        bg = None
+        if rm.color_mode() == "auto":
+            bg = _probe_background(probe_cmd(rm.probe_filter(box)), total)
+        overlay = rm.render_overlay(
+            words, total, rm.template_name(style), work / "rm", box=box, fps=fps, beats=beats,
+            actions=actions, background=bg,
+        )  # fmt: skip
+    except Exception as e:  # noqa: BLE001 - any failure here means ASS captions, never a lost clip
+        level = log.warning if isinstance(e, rm.RemotionError) else log.exception
+        level("Remotion captions %s not rendered (%s): using the ASS style %s", style, e, fb)
+        encode(fb, None)
+        return
+    try:
+        encode(style, overlay)
+    except RuntimeError as e:
+        if overlay is None:
+            raise
+        log.warning("render with the Remotion overlay failed (%s): using the ASS style %s", str(e)[-300:], fb)
+        encode(fb, None)
 
 
 def _reframe_path(
@@ -742,11 +816,8 @@ def _render_split(
         (7, 24, SEAM_Y + 75) if has_webcam else (7, 24, 170) if reframe_x else (7, 24, FRAME_Y + FRAME_H + 12)
     )
     use_logo = bool(config.global_config().get("render", {}).get("logo", True))
+    label_beats = beats if cue_beats is None else cue_beats
     with tempfile.TemporaryDirectory(prefix="clipwatcher_") as td:
-        ass = write_ass(
-            Path(td) / "subs.ass", words, total, credit=config.credit(streamer), style=captions,
-            y=cap_y, beats=beats if cue_beats is None else cue_beats, credit_pos=credit_pos, actions=actions,
-        )  # fmt: skip
         cmd = [ffmpeg_bin(), "-y", "-hide_banner", "-ss", f"{coarse:.3f}", "-i", str(src)]
         if use_logo:
             cmd += ["-i", str(BRANDING_DIR / "top_logo.png")]
@@ -755,16 +826,34 @@ def _render_split(
             cmd += ["-i", str(f)]
         sfx_in = [(t, first + j) for j, (t, _) in enumerate(sfx or [])]
         gain = float(config.global_config().get("render", {}).get("sfx_gain_db", -4.0))
-        graph = build_split_graph(
+        gk = dict(
             trim=trim, dur=dur_s, has_webcam=has_webcam, cam=cam, game=game, logo_idx=1 if use_logo else -1,
-            ass=ass, fontsdir=FONTS_DIR, cold_open=cold_open, zoom=co_settings()[1],
+            fontsdir=FONTS_DIR, cold_open=cold_open, zoom=co_settings()[1],
             measured=_measure(src, coarse, trim, dur_s, cold_open, keep), src_wh=(info.width, info.height),
             fps=fps, face=face, beats=beats, sfx=sfx_in, sfx_gain_db=gain, keep=keep, reframe_x=reframe_x,
         )  # fmt: skip
-        cmd += ["-filter_complex", graph, "-map", "[v]", "-map", "[a]", *video_args(profile)]
-        cmd += ["-fps_mode", "cfr", "-r", f"{fps:g}", "-c:a", "aac", "-b:a", "192k", "-ar", "48000"]
-        cmd += ["-t", f"{total:.3f}", "-movflags", "+faststart", str(out)]
-        _run(cmd)
+        tail = [*video_args(profile), "-fps_mode", "cfr", "-r", f"{fps:g}", "-c:a", "aac", "-b:a", "192k"]
+        tail += ["-ar", "48000", "-t", f"{total:.3f}", "-movflags", "+faststart", str(out)]
+        n_inputs = first + len(sfx or [])
+
+        def encode(style: str, overlay: rm.Overlay | None) -> None:
+            blank = bool(overlay) or rm.is_rm(
+                style
+            )  # the overlay carries the words: the ASS file is the credit
+            ass = write_ass(
+                Path(td) / "subs.ass", [] if blank else words, total, credit=config.credit(streamer),
+                style="word" if blank else style, y=cap_y, beats=None if blank else label_beats,
+                credit_pos=credit_pos, actions=None if blank else actions,
+            )  # fmt: skip
+            extra = rm.overlay_input(overlay) if overlay else []
+            graph = build_split_graph(**gk, ass=ass, overlay=(n_inputs, overlay) if overlay else None)
+            _run([*cmd, *extra, "-filter_complex", graph, "-map", "[v]", "-map", "[a]", *tail])
+
+        kind = "seam" if has_webcam else "reframe" if reframe_x else "frame"
+        _encode_with_captions(
+            encode, captions, Path(td), words, total, fps, rm.caption_box(cap_y, kind), label_beats, actions,
+            lambda p: [*cmd, "-filter_complex", build_split_graph(**gk, ass=Path(td) / "no.ass", probe=p)],
+        )  # fmt: skip
     _verify(out, total)
     return out
 
