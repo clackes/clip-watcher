@@ -221,10 +221,11 @@ async def _upload(
 
 
 async def _published(page, timeout_s: float = 90.0) -> None:
-    """Publish went through only when Studio says so ("Video published", or "Video saved" for a private
-    one): a click that did nothing must not mark the clip PUBLISHED. Not the Publish button going away:
-    on the server's first uploads (21 Nov) the video was out and the button never counted as hidden."""
-    done = page.get_by_text(re.compile(r"^\s*Video (published|saved)\s*$", re.I)).first
+    """Publish went through only when Studio says so: "Video published", "Video processing" (public once
+    the SD version is ready), or "Video saved" for a private one. A click that did nothing must not mark
+    the clip PUBLISHED. Not the Publish button going away: on the server's first uploads (21 Nov) the video
+    was out and the button never counted as hidden."""
+    done = page.get_by_text(re.compile(r"^\s*Video (published|processing|saved)\s*$", re.I)).first
     t_end = time.monotonic() + timeout_s
     while time.monotonic() < t_end:
         try:

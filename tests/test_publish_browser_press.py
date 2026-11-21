@@ -87,7 +87,8 @@ def test_published_waits_for_studio_to_say_so(monkeypatch):
     page = StudioPage(shown_after=3)
     run(yb._published(page))
     assert page.looks == 3
-    assert page.texts[0].match("Video published") and page.texts[0].match("Video saved")
+    for said in ("Video published", "Video processing", "Video saved"):
+        assert page.texts[0].match(said)
     assert not page.texts[0].match("Publish")
 
 
