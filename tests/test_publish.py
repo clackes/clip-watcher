@@ -258,8 +258,8 @@ def _fake_patchright(monkeypatch, log):
 @pytest.mark.parametrize(("platform", "select_all"), [("win32", "Control+A"), ("linux", "Control+A"),
                                                       ("darwin", "Meta+A")])  # fmt: skip
 def test_browser_upload_replaces_the_prefilled_title(tmp_path, monkeypatch, platform, select_all):
-    """Studio prefills the title with the file name. Meta+A selects nothing on Windows, so the real title
-    was typed behind 'short_9x16'."""
+    """Studio prefills the title with the file name and the description with the channel's defaults.
+    Meta+A selects nothing on Windows, so the real title was typed behind 'short_9x16'."""
     import asyncio
     import sys
 
@@ -278,5 +278,6 @@ def test_browser_upload_replaces_the_prefilled_title(tmp_path, monkeypatch, plat
                                      on_video_id=ids.append)  # fmt: skip
     assert asyncio.run(upload) == "https://youtube.com/shorts/aBcDeFgHiJk" and ids == ["aBcDeFgHiJk"]
     keys = [entry for entry in log if entry[0] in ("press", "type")]
-    assert keys == [("press", select_all), ("press", "Delete"), ("type", "Real title"), ("type", "Line 1")]
+    clear = [("press", select_all), ("press", "Delete")]
+    assert keys == [*clear, ("type", "Real title"), *clear, ("type", "Line 1")]
     assert ("click", "radio:^Private$") in log and log[-1] == ("closed", "")

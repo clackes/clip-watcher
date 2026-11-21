@@ -171,7 +171,11 @@ async def _upload(
             await page.keyboard.press("Delete")
             await page.keyboard.type(title[:95])
 
+            # The channel's upload defaults prefill the description too ("#shorts"): on 21 Nov our first line
+            # came out as "#shortsDrone mode...". Clear it like the title.
             await boxes.nth(1).click()
+            await page.keyboard.press(_select_all_key())
+            await page.keyboard.press("Delete")
             await page.keyboard.type(description[:4900])
 
             # Audience: Not made for kids.
