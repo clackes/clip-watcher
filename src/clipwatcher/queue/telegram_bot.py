@@ -278,7 +278,10 @@ def build_application(db: ClipDB, token: str | None = None, root: Path | None = 
     async def on_id(update: Any, context: Any) -> None:
         u = update.effective_user
         log.info("telegram id: %s %s (@%s)", u.id, u.full_name, u.username)
-        await update.message.reply_text(f"{u.full_name}: your Telegram ID is {u.id}")
+        # the chat id too: it is telegram_chat_id in operators.yaml when /id is sent in the team group
+        await update.message.reply_text(
+            f"{u.full_name}: your Telegram ID is {u.id}; this chat's ID is {update.effective_chat.id}"
+        )
 
     app.add_handler(CommandHandler("id", on_id))
     app.add_handler(CallbackQueryHandler(on_button))

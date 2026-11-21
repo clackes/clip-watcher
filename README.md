@@ -4,6 +4,8 @@ Watches Twitch (and Kick) streams **while they are live**, reads chat anonymousl
 explodes, cuts that moment from a rolling recording, adds word-by-word captions and the branded 9:16
 template, and stages the clip for approval, usually within about a minute of the moment. No login needed.
 
+**Install, move to a new machine, day-to-day use: [SETUP.md](SETUP.md).**
+
 ## Run it on this Mac (test)
 
 ```bash
