@@ -23,13 +23,14 @@ REDO_ASK = "🔁 Redo: what should change?"
 
 
 def operator_for(telegram_id: int, operators: dict[str, Any] | None = None) -> str | None:
-    """Operator name for a Telegram user id, or None (ignored)."""
+    """Operator name for a Telegram user id. The owner dropped per-operator ids and the Claim lock
+    (21 Nov): anyone in the approval group may act, labelled by their Telegram id in the log."""
     ops = config.operators() if operators is None else operators
     for name, o in ops.items():
         tid = o.get("telegram_id")
         if tid and int(tid) == int(telegram_id):
             return name
-    return None
+    return f"tg{telegram_id}"
 
 
 def claim_expired(row: dict[str, Any] | None, now: float | None = None) -> bool:
@@ -44,10 +45,6 @@ def card_text(row: dict[str, Any]) -> str:
 
     meta = json.loads(row.get("meta_json") or "{}")
     lines = [f"Clip {row['id']} - {row['streamer']}", f"State: {row['state']}"]
-    if claim_expired(row):
-        lines.append(f"Claim by {row['claimed_by']} expired: free to claim")
-    elif row.get("claimed_by"):
-        lines.append(f"Held by: {row['claimed_by']}")
     lines += _youtube_lines(row)
     for k in ("title", "hook", "why"):
         if meta.get(k):
@@ -85,22 +82,15 @@ def upload_unfinished(row: dict[str, Any]) -> bool:
 
 
 def buttons_for(row: dict[str, Any], operators: dict[str, Any] | None = None) -> list[list[tuple[str, str]]]:
-    """Rows of (label, callback_data). READY or an expired claim -> one Claim button per operator;
-    CLAIMED -> holder actions; APPROVED with an upload that did not go through -> Retry."""
+    """Rows of (label, callback_data). The Claim lock was removed (owner, 21 Nov): anyone in the group acts
+    straight on a READY clip. APPROVED with an upload that did not go through -> Retry."""
     cid = row["id"]
     if upload_unfinished(row):
         return [[("Retry YouTube upload", f"publish:{cid}")]]
-    if row["state"] == "READY" or claim_expired(row):
-        ops = config.operators() if operators is None else operators
+    if row["state"] in ("READY", "CLAIMED") or claim_expired(row):
         return [
-            [(f"Claim: {o.get('label', n)}", f"claim:{cid}:{n}") for n, o in ops.items()],
-            [("🔁 Redo", f"redo:{cid}")],
-        ]
-    if row["state"] == "CLAIMED":
-        return [
-            [("Approve", f"approve:{cid}"), ("Edit", f"edit:{cid}")],
-            [("Reject", f"reject:{cid}"), ("Release", f"release:{cid}")],
-            [("🔁 Redo", f"redo:{cid}")],
+            [("✅ Approve", f"approve:{cid}"), ("✏️ Edit", f"edit:{cid}")],
+            [("❌ Reject", f"reject:{cid}"), ("🔁 Redo", f"redo:{cid}")],
         ]
     return []
 
@@ -114,20 +104,15 @@ def handle_action(
     root: Path | None = None,
 ) -> tuple[str, dict[str, Any] | None]:
     """Process a button press. Returns (answer text, updated clip row or None). Pure DB logic."""
-    op = operator_for(telegram_id, operators)
-    if op is None:
-        return "", None  # ignore non-operators silently
+    op = operator_for(telegram_id, operators) or f"tg{telegram_id}"
     parts = data.split(":")
     action, clip_id = parts[0], parts[1] if len(parts) > 1 else ""
-    if action == "claim":
-        who = parts[2] if len(parts) > 2 else op
-        if who != op:
-            return "That claim button is not yours.", db.get(clip_id)
-        ok, holder = db.claim(clip_id, op)
+    # The Claim lock was removed (owner, 21 Nov): approve/reject/edit act straight on a READY clip. The row's
+    # internal lock is still taken so two simultaneous presses stay atomic (the first one wins).
+    if action in ("approve", "reject", "edit"):
         row = db.get(clip_id)
-        if ok:
-            return "Claimed.", row
-        return (f"Already held by {holder}." if holder else _refusal(row, "claim")), row
+        if row and (row["state"] == "READY" or claim_expired(row)):
+            db.claim(clip_id, op)
     if action == "approve":
         ok = db.approve(clip_id, op)
         if ok:
@@ -148,10 +133,6 @@ def handle_action(
         ok = db.reject(clip_id, op)
         row = db.get(clip_id)
         return ("Rejected." if ok else _refusal(row, "reject")), row
-    if action == "release":
-        ok = db.release(clip_id, op)
-        row = db.get(clip_id)
-        return ("Released." if ok else _refusal(row, "release")), row
     if action == "edit":
         row = db.get(clip_id)
         if not row or row["state"] != "CLAIMED" or row["claimed_by"] != op or claim_expired(row):
@@ -180,17 +161,12 @@ def request_redo(
 
 
 def _refusal(row: dict[str, Any] | None, verb: str) -> str:
-    """Why a holder action was refused. The card is redrawn from the same row, so after an expired claim it
-    shows the Claim buttons again."""
+    """Why an action was refused. The card is redrawn from the same row."""
     if row is None:
         return "This clip is no longer in the queue."
-    if claim_expired(row):
-        return f"The claim expired. Claim the clip again to {verb} it."
-    if row["state"] == "READY":
-        return f"Claim the clip first to {verb} it."
-    if row["state"] != "CLAIMED":
-        return f"Already {row['state'].lower()}."
-    return f"Only the holder can {verb}."
+    if row["state"] in ("READY", "CLAIMED"):
+        return f"Someone else just acted on it - refresh the card to {verb}."
+    return f"Already {row['state'].lower()}."
 
 
 def handle_edit_reply(

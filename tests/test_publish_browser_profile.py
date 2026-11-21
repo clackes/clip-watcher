@@ -1,7 +1,9 @@
 from clipwatcher.publish import youtube_browser as yb
 
 
-def test_profile_dir_per_account(monkeypatch):
+def test_profile_dir_per_account(tmp_path, monkeypatch):
+    # isolate the accounts registry: without this the test reads whatever account this machine signed in
+    monkeypatch.setenv("CLIPWATCHER_ACCOUNTS", str(tmp_path / "youtube"))
     monkeypatch.delenv("YT_BROWSER_PROFILE", raising=False)
     monkeypatch.delenv("YT_BROWSER_ACCOUNT", raising=False)
     assert yb.profile_dir() == yb.DEFAULT_PROFILE

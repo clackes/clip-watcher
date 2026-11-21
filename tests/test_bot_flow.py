@@ -100,7 +100,7 @@ def test_a_failed_card_is_posted_later_and_only_once(env):
     assert asyncio.run(telegram_bot.post_missing_cards(env.app, env.db, env.root)) == ["c1"]
     (card,) = env.app.bot.sent
     assert card.kind == "video" and card.chat_id == CHAT and "Clip c1" in card.text
-    assert [b[0] for b in card.kw["reply_markup"][0]] == ["Claim: Manu", "Claim: Samu"]
+    assert [b[0] for b in card.kw["reply_markup"][0]] == ["✅ Approve", "✏️ Edit"]
     row = env.db.get("c1")
     assert (row["card_chat_id"], row["card_message_id"], row["card_video"]) == (CHAT, 101, 1)
     # safe to call again: the clip keeps its one card
@@ -189,7 +189,9 @@ def test_clips_queued_before_cards_were_tracked_are_not_posted_again(tmp_path):
     assert [r["id"] for r in db.cardless(grace_s=0)] == ["new"]
 
 
-def test_card_of_an_expired_claim_goes_back_to_the_claim_buttons(env):
+def test_an_expired_internal_lock_is_swept_and_the_card_shows_the_action_buttons(env):
+    # The Claim UI is gone, but approve/reject take the row's internal lock for atomicity; a lock left behind
+    # (e.g. an Edit whose title reply never came) must still time out and the card go back to the buttons.
     asyncio.run(telegram_bot.post_card(env.app, env.db, "c1", env.stage("c1")))
     asyncio.run(telegram_bot.post_card(env.app, env.db, "c2", env.stage("c2")))
     assert env.db.claim("c1", "manu", ttl_min=0.001)[0] and env.db.claim("c2", "samu")[0]
@@ -199,7 +201,7 @@ def test_card_of_an_expired_claim_goes_back_to_the_claim_buttons(env):
     assert (row["state"], row["claimed_by"]) == ("READY", None) and env.db.state("c2") == "CLAIMED"
     (edit,) = env.app.bot.edits  # only the expired one, on the card the queue recorded
     assert (edit.kind, edit.chat_id, edit.message_id) == ("caption", CHAT, 101)
-    assert [b[0] for b in edit.kw["reply_markup"][0]] == ["Claim: Manu", "Claim: Samu"]
+    assert [b[0] for b in edit.kw["reply_markup"][0]] == ["✅ Approve", "✏️ Edit"]
     assert "State: READY" in edit.text and "manu" not in edit.text
     assert "claim_expired" in [r["action"] for r in env.db.audit_rows("c1")]
     assert not env.db.approve("c1", "manu")  # the old holder lost the lock
@@ -309,7 +311,6 @@ def test_upload_starts_even_when_telegram_fails_on_the_card(env, studio):
     env.stage("c1")
 
     async def go():
-        await press(env, 11, "claim:c1:manu")
         return await press(env, 11, "approve:c1", broken=True)
 
     q = asyncio.run(go())
@@ -325,7 +326,6 @@ def test_failed_upload_shows_on_the_card_and_any_operator_can_retry(env, studio)
     studio.error = RuntimeError("YouTube profile is not signed in")
 
     async def go():
-        await press(env, 11, "claim:c1:manu")
         q = await press(env, 11, "approve:c1")
         card = q.cards[-1]  # drawn after the failure: the press itself must not paint over it
         assert "State: APPROVED" in card.text
@@ -333,10 +333,9 @@ def test_failed_upload_shows_on_the_card_and_any_operator_can_retry(env, studio)
         assert card.buttons == [[("Retry YouTube upload", "publish:c1")]]
         assert q.message.replies[-1].startswith("YouTube upload failed for c1: YouTube profile is not")
         assert env.db.state("c1") == "APPROVED"
-        assert (await press(env, 999, "publish:c1")).answers == []  # not an operator: ignored
 
         studio.error = None
-        q = await press(env, 22, "publish:c1")  # the other operator retries
+        q = await press(env, 22, "publish:c1")  # anyone in the group can retry
         assert q.answers == ["Uploading to YouTube."]
         card = q.cards[-1]
         assert "State: PUBLISHED" in card.text and "upload failed" not in card.text

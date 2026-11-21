@@ -53,13 +53,19 @@ def kill_tree(proc: subprocess.Popen, *, gentle_s: float = 40.0) -> None:
             pass
 
 
-# what points the bot at this machine's own folders: a test run must not find them
+# what points the bot at this machine's own folders, accounts or keys: a test run must not find them, or
+# env-sensitive tests (profile_dir resolution, the Connect page's key/account state) fail on a live box.
 TESTS_WITHOUT = (
     "CLIPWATCHER_EVENTS",
     "CLIPWATCHER_STAGING",
     "CLIPWATCHER_CONFIG",
     "CLIPWATCHER_LEDGER",
     "CLIPWATCHER_UI_WORK",
+    "CLIPWATCHER_ACCOUNTS",
+    "ANTHROPIC_API_KEY",
+    "TELEGRAM_BOT_TOKEN",
+    "YT_BROWSER_ACCOUNT",
+    "YT_BROWSER_PROFILE",
 )
 
 
