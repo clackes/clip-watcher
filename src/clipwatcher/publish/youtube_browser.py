@@ -8,7 +8,7 @@ Sign in once in the companion app (Connect, YouTube: one Chrome profile per acco
 ``~/.clipwatcher/youtube/``, the upload uses the account that posts) or with
 ``python scripts/yt_browser_login.py`` (the single profile ``~/.clipwatcher/yt-chrome-profile``,
 used while no account is kept). ``YT_BROWSER_PROFILE`` overrides both. Screenshots on failure go to
-``YT_BROWSER_SHOTS`` when set.
+``YT_BROWSER_SHOTS``, else work/yt_shots.
 
 DRY_RUN=1 skips the browser and returns a ``dryrun-...`` id, matching
 ``publish/youtube.py`` behaviour. Set ``YT_BROWSER_FORCE=1`` to upload even
@@ -58,8 +58,61 @@ def profile_dir(account: str | None = None) -> Path:
 
 
 def _shots_dir() -> Path | None:
+    """Where a failed upload leaves a picture of Studio: YT_BROWSER_SHOTS, else work/yt_shots (empty
+    YT_BROWSER_SHOTS turns it off)."""
     s = os.environ.get("YT_BROWSER_SHOTS")
+    if s is None:
+        return config.ROOT / "work" / "yt_shots"
     return Path(s).expanduser() if s else None
+
+
+async def _shot(page, shots: Path | None, name: str) -> None:
+    if not shots:
+        return
+    try:
+        await page.screenshot(path=str(shots / f"yt-{name}-{uuid.uuid4().hex[:8]}.png"), full_page=True)
+    except Exception:
+        log.exception("screenshot failed")
+
+
+# Studio's own pop-ups (a tip, a notice, a survey) open over the upload dialog and take every click
+# (owner's first real upload, 21 Nov: a backdrop held Publish for 30 s). Dismiss them by their own buttons,
+# never one inside the upload dialog, whose Close would throw the upload away.
+_DISMISS_JS = r"""() => {
+  const up = document.querySelector('ytcp-uploads-dialog');
+  const words = /^(got it|dismiss|ok|okay|no thanks|not now|skip|maybe later|close)$/i;
+  const done = [];
+  const sel = 'tp-yt-paper-dialog, ytcp-dialog, [role="dialog"], [role="alertdialog"]';
+  for (const d of document.querySelectorAll(sel)) {
+    if (up && (up.contains(d) || d.contains(up))) continue;
+    if (!d.getClientRects().length) continue;
+    for (const b of d.querySelectorAll('button, ytcp-button, tp-yt-paper-button, ytcp-icon-button')) {
+      const t = (b.getAttribute('aria-label') || b.innerText || '').trim();
+      if (words.test(t)) { b.click(); done.push(t); break; }
+    }
+  }
+  return done;
+}"""
+
+
+async def _press(page, button, *, shots: Path | None, name: str, timeout_ms: int = 15_000) -> None:
+    """Click a Studio button that a pop-up may be covering: a real click; else dismiss the pop-ups and click
+    again; else click the button itself from the page (what the pop-up's backdrop does not stop)."""
+    try:
+        await button.click(timeout=timeout_ms)
+        return
+    except Exception as e:
+        log.warning("youtube: %s click blocked (%s): dismissing pop-ups", name, str(e).splitlines()[0])
+        await _shot(page, shots, f"{name}-blocked")
+    dismissed = await page.evaluate(_DISMISS_JS)
+    if dismissed:
+        log.info("youtube: dismissed %s", dismissed)
+    try:
+        await button.click(timeout=timeout_ms)
+        return
+    except Exception:
+        log.warning("youtube: %s still blocked: clicking it from the page", name)
+    await button.evaluate("b => b.click()")
 
 
 def _select_all_key() -> str:
@@ -140,35 +193,40 @@ async def _upload(
 
             # Details → Video elements → Checks → Visibility: three Next clicks.
             for _ in range(3):
-                await page.get_by_role("button", name="Next", exact=True).click()
+                nxt = page.get_by_role("button", name="Next", exact=True)
+                await _press(page, nxt, shots=shots, name="next")
                 await asyncio.sleep(0.8)
 
             label = "Private" if private else "Public"
-            await page.get_by_role("radio", name=re.compile(rf"^{label}$")).click()
+            radio = page.get_by_role("radio", name=re.compile(rf"^{label}$"))
+            await _press(page, radio, shots=shots, name="visibility")
 
             # Publish (public) or Save (private). Studio applies this even if
             # the upload is still finishing.
-            await page.get_by_role("button", name=re.compile(r"^(Publish|Save)$")).click()
+            publish = page.get_by_role("button", name=re.compile(r"^(Publish|Save)$"))
+            await _press(page, publish, shots=shots, name="publish")
+            await _published(publish)
 
             # Dismiss the "done" dialog if one appears.
             try:
-                await page.get_by_role("button", name=re.compile(r"^Close$", re.I)).click(
-                    timeout=timeout_s * 1000
-                )
+                await page.get_by_role("button", name=re.compile(r"^Close$", re.I)).click(timeout=30_000)
             except Exception:
                 pass
             return href
         except Exception:
-            if shots:
-                try:
-                    await page.screenshot(
-                        path=str(shots / f"yt-fail-{uuid.uuid4().hex[:8]}.png"), full_page=True
-                    )
-                except Exception:
-                    log.exception("screenshot failed")
+            await _shot(page, shots, "fail")
             raise
         finally:
             await ctx.close()
+
+
+async def _published(publish, timeout_ms: int = 90_000) -> None:
+    """Publish went through only when its button goes away (the upload dialog gives way to "Video
+    published"): a click that did nothing must not mark the clip PUBLISHED."""
+    try:
+        await publish.wait_for(state="hidden", timeout=timeout_ms)
+    except Exception:
+        raise RuntimeError("Publish was pressed but Studio did not publish the video") from None
 
 
 @contextlib.contextmanager
