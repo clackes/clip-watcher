@@ -43,6 +43,12 @@ uvx ruff check . && uvx ruff format --check .
   lane/Telegram bot). Since 18 Nov it runs logged on or not, starts at boot, no window (`cwr install`, password
   logon: a Remote Desktop sign-out killed the old interactive task). Only one Telegram bot per token may poll:
   never start a second copy.
+- Second task `cw-companion` runs `scripts\run_companion_windows.ps1`: the companion app (`clipwatcher.ui`) on
+  127.0.0.1:8765, restarts on a crash. `cwr companion` registers it over WinRM (elevated → S4U, at boot, no
+  password: the page is loopback-only and the app never uploads); `scripts\install_companion_task_windows.ps1`
+  does the same on the server (`-Interactive` for a password logon, or at-log-on when not elevated). The page is
+  this machine only: reach it from the server desktop (RDP) or a tunnel. YouTube sign-in from the page needs the
+  desktop (it opens Chrome), so that stays a logged-on action.
 - `config/streamers.yaml` / `operators.yaml` are not in git: edit on the Mac, `cwr put` them to `C:\clip-watcher\config\`.
 - Remote desktop (YouTube login, watching windows): `scripts/remote/clipwatcher-server.rdp` in Windows App.
   YouTube login: `run_live_windows.ps1 -YtLogin -Account <username>` on the server desktop.

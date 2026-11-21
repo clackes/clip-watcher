@@ -8,6 +8,7 @@
     logs [-n N] [-g REGEX]       tail today's live log (optionally only lines matching REGEX)
     restart [list|all]           restart the bot; a comma list (or all) becomes its streamers
     install                      (re)register task cw-live: runs logged on or not, starts at boot
+    companion [--port N]         (re)register task cw-companion: the companion app (clipwatcher.ui) at boot
     stop                         stop the bot and its recorders
     ps [FILE|-]                  run a PowerShell script (file or stdin) in C:\\clip-watcher
     put LOCAL REMOTE             upload a small file (configs; chunked, ~1 MB max is sensible)
@@ -182,6 +183,7 @@ def cmd_status(_: argparse.Namespace) -> None:
     print(
         ps(
             "'task cw-live: ' + (Get-ScheduledTask cw-live).State; "
+            "'task cw-companion: ' + (Get-ScheduledTask cw-companion -EA SilentlyContinue).State; "
             "'bot python: ' + ((Get-CimInstance Win32_Process "
             "| ? { $_.CommandLine -match 'clipwatcher\\.(live|queue)' } "
             "| % { ($_.CommandLine -replace '.*-m ','').Trim() } | Sort-Object -Unique) -join ', '); "
@@ -233,6 +235,41 @@ def cmd_install(_: argparse.Namespace) -> None:
             " Start-ScheduledTask cw-live; Start-Sleep 30;"
             " $t = Get-ScheduledTask cw-live; 'task: ' + $t.State + ', logon ' + $t.Principal.LogonType;"
             " 'streamlink: ' + (Get-Process streamlink -EA SilentlyContinue).Count"
+        )
+    )
+
+
+KILL_COMPANION = (
+    "Stop-ScheduledTask cw-companion -EA SilentlyContinue; "
+    "Get-CimInstance Win32_Process | "
+    "? { $_.CommandLine -match 'clipwatcher\\.ui|run_companion_windows' } | "
+    "% { taskkill /T /F /PID $_.ProcessId 2>&1 | Out-Null };"
+)
+
+
+def cmd_companion(a: argparse.Namespace) -> None:
+    """Task cw-companion: the companion app (clipwatcher.ui) as the second background task beside cw-live.
+    Over WinRM we are elevated, so S4U is used: it starts at boot whether anyone is logged on or not, no
+    password stored (the page serves 127.0.0.1 only and the app never uploads, so it needs no DPAPI). The
+    page is on 127.0.0.1:<port>; reach it from the server desktop (RDP) or a tunnel."""
+    print(
+        ps(
+            KILL_COMPANION
+            + " $arg = '-ExecutionPolicy Bypass -File "
+            + SRV
+            + rf"\scripts\run_companion_windows.ps1 -Port {a.port}';"
+            f" $act = New-ScheduledTaskAction -Execute powershell.exe -WorkingDirectory {SRV} -Argument $arg;"
+            " $trg = New-ScheduledTaskTrigger -AtStartup; $trg.Delay = 'PT1M';"
+            " $set = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances"
+            " IgnoreNew -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries"
+            " -DontStopIfGoingOnBatteries -StartWhenAvailable;"
+            f" $prin = New-ScheduledTaskPrincipal -UserId {USER} -LogonType S4U -RunLevel Limited;"
+            " Unregister-ScheduledTask cw-companion -Confirm:$false -EA SilentlyContinue;"
+            " Register-ScheduledTask cw-companion -Action $act -Trigger $trg -Settings $set -Principal $prin"
+            " | Out-Null; Start-ScheduledTask cw-companion; Start-Sleep 15;"
+            " $t = Get-ScheduledTask cw-companion; 'task: ' + $t.State + ', logon ' + $t.Principal.LogonType;"
+            f" try {{ 'page: HTTP ' + (Invoke-WebRequest http://127.0.0.1:{a.port}/ -UseBasicParsing"
+            " -TimeoutSec 10).StatusCode } catch { 'page: not answering yet' }"
         )
     )
 
@@ -304,6 +341,9 @@ def main() -> None:
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status").set_defaults(fn=cmd_status)
     sub.add_parser("install").set_defaults(fn=cmd_install)
+    cp = sub.add_parser("companion")
+    cp.add_argument("--port", type=int, default=8765)
+    cp.set_defaults(fn=cmd_companion)
     u = sub.add_parser("asuser")
     u.add_argument("file")
     u.add_argument("--minutes", type=int, default=12)
