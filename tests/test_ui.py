@@ -398,6 +398,23 @@ def test_the_page_its_data_and_a_clip_video_are_served(served):
     )
 
 
+def test_extra_trusted_hosts_let_a_tailscale_proxy_reach_the_page(tmp_path, monkeypatch):
+    # tailscale serve forwards to 127.0.0.1 with the tailnet name as Host; the app must trust it
+    monkeypatch.setenv("CLIPWATCHER_STAGING", str(tmp_path / "staging"))
+    server, app = make_server("127.0.0.1", 0, allow=["Clackes-Dsktop.ts.net", "", "100.1.2.3"])
+    assert {"127.0.0.1", "localhost", "clackes-dsktop.ts.net", "100.1.2.3"} <= set(app.hosts)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        port = server.server_address[1]
+        g = lambda h: _call(port, "GET", "/manifest.webmanifest", headers={"Host": h})[0]  # noqa: E731
+        # the trusted name is matched case-insensitively (Host headers are not case-sensitive)
+        assert g("clackes-dsktop.ts.net") == 200 and g("CLACKES-DSKTOP.ts.net:443") == 200
+        assert g("evil.example") == 403
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_only_this_machine_and_only_the_page_may_start_things(served):
     port, app = served
     assert (

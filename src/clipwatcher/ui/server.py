@@ -14,6 +14,7 @@ import secrets
 import threading
 import time
 import urllib.parse
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -173,12 +174,12 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
 
         # -- guards ------------------------------------------------------------------------------------
         def _own_host(self) -> bool:
-            host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]")
+            host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]").lower()
             return host in app.hosts
 
         def _may_change(self) -> bool:
             origin = self.headers.get("Origin")
-            if origin and urllib.parse.urlsplit(origin).hostname not in app.hosts:
+            if origin and (urllib.parse.urlsplit(origin).hostname or "").lower() not in app.hosts:
                 return False
             return secrets.compare_digest(self.headers.get("X-Companion-Token") or "", app.token)
 
@@ -427,10 +428,17 @@ class _Server(ThreadingHTTPServer):
 
 
 def make_server(
-    host: str = "127.0.0.1", port: int = 8765, app: App | None = None
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    app: App | None = None,
+    allow: Iterable[str] = (),
 ) -> tuple[ThreadingHTTPServer, App]:
-    hosts = (
-        ("127.0.0.1", "localhost") if host in ("127.0.0.1", "localhost") else ("127.0.0.1", "localhost", host)
-    )
-    app = app or App(hosts=hosts)
+    """``allow`` names extra Host values the page may be reached by (e.g. a Tailscale name that a
+    `tailscale serve` proxy forwards to 127.0.0.1); the loopback names are always trusted."""
+    names = ["127.0.0.1", "localhost"]
+    for name in (host, *allow):
+        n = (name or "").strip().lower()
+        if n and n not in names:
+            names.append(n)
+    app = app or App(hosts=tuple(names))
     return _Server((host, port), make_handler(app)), app

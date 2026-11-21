@@ -251,7 +251,8 @@ def cmd_companion(a: argparse.Namespace) -> None:
     """Task cw-companion: the companion app (clipwatcher.ui) as the second background task beside cw-live.
     Over WinRM we are elevated, so S4U is used: it starts at boot whether anyone is logged on or not, no
     password stored (the page serves 127.0.0.1 only and the app never uploads, so it needs no DPAPI). The
-    page is on 127.0.0.1:<port>; reach it from the server desktop (RDP) or a tunnel."""
+    page is on 127.0.0.1:<port>; run_companion_windows.ps1 also publishes it on the tailnet over HTTPS with
+    `tailscale serve` (so the PWA installs on a phone)."""
     print(
         ps(
             KILL_COMPANION
@@ -269,7 +270,10 @@ def cmd_companion(a: argparse.Namespace) -> None:
             " | Out-Null; Start-ScheduledTask cw-companion; Start-Sleep 15;"
             " $t = Get-ScheduledTask cw-companion; 'task: ' + $t.State + ', logon ' + $t.Principal.LogonType;"
             f" try {{ 'page: HTTP ' + (Invoke-WebRequest http://127.0.0.1:{a.port}/ -UseBasicParsing"
-            " -TimeoutSec 10).StatusCode } catch { 'page: not answering yet' }"
+            " -TimeoutSec 15).StatusCode } catch { 'page: not answering yet' };"
+            " $ts = 'C:\\Program Files\\Tailscale\\tailscale.exe';"
+            " if (Test-Path $ts) { try { $n = ((& $ts status --json | ConvertFrom-Json).Self.DNSName)."
+            "TrimEnd('.'); if ($n) { 'tailnet: https://' + $n + '/' } } catch {} }"
         )
     )
 

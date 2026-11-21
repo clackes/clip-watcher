@@ -48,5 +48,7 @@ Start-ScheduledTask cw-companion
 Start-Sleep 15
 $t = Get-ScheduledTask cw-companion
 "task cw-companion: $($t.State), $how"
-"page: http://127.0.0.1:$Port/   (this machine only)"
+"page (this machine): http://127.0.0.1:$Port/"
+$ts = "C:\Program Files\Tailscale\tailscale.exe"; if (-not (Test-Path $ts)) { $ts = (Get-Command tailscale -EA SilentlyContinue).Source }
+if ($ts) { try { $n = ((& $ts status --json | ConvertFrom-Json).Self.DNSName).TrimEnd('.'); if ($n) { "page (tailnet, HTTPS): https://$n/" } } catch {} }
 "logs: $repo\work\logs\companion-$(Get-Date -Format yyyyMMdd).log"
