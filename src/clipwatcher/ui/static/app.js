@@ -89,7 +89,8 @@ function show(name) {
 addEventListener('hashchange', () => show(location.hash.slice(1)));
 
 /* ---------- the walk: Choose, Source, Captions, Run, Result ---------- */
-const W = { step: 1, mode: store.get('mode', 'live'), streamer: store.get('streamer', ''), minutes: store.get('minutes', 15), platform: store.get('platform', 'twitch'), vodWho: '', vod: '', top: 3 };
+const W = { step: 1, mode: store.get('mode', 'live'), streamers: (() => { const a = store.get('streamers', null); if (Array.isArray(a)) return a.filter(Boolean); const one = store.get('streamer', ''); return one ? [one] : []; })(), extra: '', minutes: store.get('minutes', 15), platform: store.get('platform', 'twitch'), vodWho: '', vod: '', top: 3 };
+const liveLogins = () => [...new Set([...W.streamers, ...(W.extra ? [W.extra] : [])])];
 const WIZ = ['Choose', 'Source', 'Captions', 'Run', 'Result'];
 const paneOf = n => n >= 4 ? 's4' : 's' + n;
 const skipped = n => (n === 2 || n === 3) && (W.step >= 4 ? R.kind === 'tests' || R.kind === 'render' : W.mode === 'tests');
@@ -118,12 +119,14 @@ function paintSource() {
   $('#s2lead').textContent = live ? 'The bot joins, reads the chat from the start of the broadcast and clips what stands out.' : 'Paste the link of a finished broadcast. Its whole chat is read first, then the best moments are cut from the video.';
   const list = S.ov ? S.ov.streamers : [];
   if (live) {
-    if (!list.some(s => s.login === W.streamer)) { $('#otherWho').value = W.streamer; }
-    if (!list.length) { $('#whoCards').innerHTML = `<div class="empty card" style="grid-column:1 / -1"><span class="tile">${ic('run')}</span><b>No channels of your own yet</b><span>Type a Twitch channel below. To have yours listed here with their live status, copy <code>config/streamers.example.yaml</code> to <code>config/streamers.yaml</code> and put them in.</span></div>`; }
+    const extra = W.streamers.filter(x => !list.some(s => s.login === x));
+    if ($('#otherWho').value.trim().toLowerCase() !== (extra[0] || '')) $('#otherWho').value = extra[0] || '';
+    if (!list.length && !W.streamers.length) { $('#whoCards').innerHTML = `<div class="empty card" style="grid-column:1 / -1"><span class="tile">${ic('run')}</span><b>No channels of your own yet</b><span>Type a Twitch channel below. To have yours listed here with their live status, copy <code>config/streamers.example.yaml</code> to <code>config/streamers.yaml</code> and put them in.</span></div>`; }
     else {
     const on = s => { const st = liveOf(s.login); return st && st.live ? 1 : 0; };
     $('#whoCards').innerHTML = [...list].sort((a, b) => on(b) - on(a)).map(s => { const st = liveOf(s.login), line = !S.live ? 'Checking...' : !st ? '' : st.error ? 'Could not be checked' : st.live ? `<i class="dot"></i>Live${st.category ? ' · ' + esc(st.category) : ''}` : 'Offline';
-      return `<button type="button" class="choice sm${S.live && !on(s) ? ' off' : ''}" data-k="${s.login}" aria-pressed="${W.streamer === s.login}"><span class="tick">${ic('check')}</span><span class="byline">${avatar(s.platform, s.login, on(s) ? 'live' : '')}<span class="who"><b>${named(s.platform, s.login)}${badges(s.platform, s.login)}</b><small>${line}</small></span></span></button>`; }).join(''); }
+      return `<button type="button" class="choice sm${S.live && !on(s) ? ' off' : ''}" data-k="${s.login}" aria-pressed="${W.streamers.includes(s.login)}"><span class="tick">${ic('check')}</span><span class="byline">${avatar(s.platform, s.login, on(s) ? 'live' : '')}<span class="who"><b>${named(s.platform, s.login)}${badges(s.platform, s.login)}</b><small>${line}</small></span></span></button>`; }).join(''); }
+    paintPicked();
     seg($('#minSeg'), [[5, '5 minutes'], [15, '15 minutes'], [60, '1 hour'], [0, 'Until I stop it']], W.minutes, v => { W.minutes = +v; store.set('minutes', +v); });
     if (!S.live && list.length) api.get('/api/live').then(rows => { S.live = rows; if (W.step === 2 && W.mode === 'live') paintSource(); }).catch(() => { S.live = []; });
   } else {
@@ -133,6 +136,26 @@ function paintSource() {
     seg($('#topSeg'), [[1, '1'], [2, '2'], [3, '3'], [5, '5']], W.top, v => { W.top = +v; });
     $('#vodNeeds').hidden = !needsTool(); $('#vodNeeds').innerHTML = needsTool() ? '<i class="dot warn"></i><span>Twitch broadcasts are fetched with TwitchDownloaderCLI, which is not installed on this machine (put it in <code>bin/</code>, or name it in CLIPWATCHER_TDL). Kick broadcasts need nothing extra.</span>' : '';
   }
+}
+/* The streams chosen for a live run, as removable chips. One run can watch several at once. */
+function paintPicked() {
+  const picked = liveLogins(), el = $('#pickLine'); if (!el) return;
+  el.hidden = !picked.length;
+  el.innerHTML = !picked.length ? '' : `<span class="cap-note">${plural(picked.length, 'stream')} selected</span>` + picked.map(login => {
+    const pl = platformOf(login);
+    return `<span class="chip" data-chip="${esc(login)}">${avatar(pl, login, 'xs')}${named(pl, login)}<button type="button" class="x" data-rm="${esc(login)}" aria-label="Remove ${esc(login)}">${ic('cross')}</button></span>`;
+  }).join('');
+  paintProfiles();
+}
+function pickToggle(login) {
+  login = String(login || '').toLowerCase(); if (!login) return;
+  if (W.extra === login && !W.streamers.includes(login)) { W.extra = ''; $('#otherWho').value = ''; paintPicked(); return; }
+  const i = W.streamers.indexOf(login);
+  if (i >= 0) W.streamers.splice(i, 1); else W.streamers.push(login);
+  if (W.extra === login) { W.extra = ''; $('#otherWho').value = ''; }
+  store.set('streamers', W.streamers);
+  $$('#whoCards .choice').forEach(x => x.setAttribute('aria-pressed', W.streamers.includes(x.dataset.k)));
+  paintPicked();
 }
 /* ---------- the caption library ----------
    Every style a Short can get: four built in, the animated templates that ship and the ones made in the
@@ -397,20 +420,37 @@ function story(say, t) {
 const told = e => e.problem ? e.problem.text + (e.problem.fix ? ' ' + e.problem.fix : '') : '';
 function logLine(text, cls, t) { const el = $('#log'), d = document.createElement('div'); d.innerHTML = `<span class="t">${clockOf(t || Date.now() / 1000)}</span><span class="${cls || ''}">${esc(text)}</span>`; el.appendChild(d); if (el.childElementCount > 1500) el.firstChild.remove(); el.scrollTop = el.scrollHeight; }
 function pill(o, cls) { const el = $(`.opill[data-o="${o}"]`); if (el) { el.classList.remove('on', 'skip'); if (cls) el.classList.add(cls); } }
+const runWhos = (kind, params) => kind === 'live' ? (Array.isArray(params.streamers) ? params.streamers : params.streamer ? [params.streamer] : []) : params.streamer ? [params.streamer] : [];
+/* One live run can watch several streams: show a clip button per stream once it is recording. */
+function renderForce() {
+  if (R.replay || R.kind !== 'live') return;
+  const who = runWhos(R.kind, R.params);
+  if (who.length <= 1) { $('#forceBtn').hidden = !R.rec.length; return; }
+  $('#forceBtn').hidden = true;
+  $('#forceWrap').innerHTML = R.rec.map(login => `<button type="button" class="btn btn-glass btn-sm" data-force="${esc(login)}">Clip ${esc(login)}</button>`).join('');
+}
 function resetRunView(kind, params) {
   R.timers.forEach(clearTimeout); clearInterval(R.tick); if (R.es) { R.es.close(); R.es = null; }
   Object.assign(R, { kind, params, clips: [], clip: 0, tests: { seen: 0, failed: [] }, ended: false, timers: [], problem: '' });
   const tests = kind === 'tests', name = kind === 'live' ? 'live lane' : kind === 'vod' ? 'VOD lane' : 'test suite';
   $('#runTitle').innerHTML = kind === 'render' ? 'Rendering the Short <span class="gt">again</span>' : `Running the <span class="gt">${name}</span>`;
-  $('#runNote').textContent = kind === 'live' ? `${params.streamer}, ${+params.minutes ? 'for ' + params.minutes + ' minutes' : 'until you stop it'}.` : kind === 'vod' ? `${params.streamer} on ${PFN[params.platform] || 'Twitch'}: up to ${plural(params.top || 3, 'clip')}.` : kind === 'render' ? `${params.clip}: ${params.captions ? capName(params.captions) : 'the same'} captions${params.settings && Object.keys(params.settings).length ? ' with settings of their own' : ''}, ${params.layout === 'stack' ? 'the older stack' : 'webcam over gameplay'}.` : 'Every check the project has, one after another.';
-  const rp = kind === 'vod' ? params.platform : platformOf(params.streamer), rw = $('#runWho'); rw.hidden = !(kind === 'live' || kind === 'vod');
-  rw.innerHTML = rw.hidden ? '' : `${avatar(rp, params.streamer, 'lg')}<span class="who"><b>${named(rp, params.streamer)}${badges(rp, params.streamer, 4)}</b><small data-fo="${esc(pkey(rp, params.streamer))}">${rp === 'kick' ? 'kick.com/' : 'twitch.tv/'}${esc(params.streamer)}</small></span>`;
+  const who = runWhos(kind, params), first = who[0] || params.streamer || '';
+  $('#runNote').textContent = kind === 'live' ? `${who.length > 1 ? plural(who.length, 'stream') + ' at once' : first}, ${+params.minutes ? 'for ' + params.minutes + ' minutes' : 'until you stop it'}.` : kind === 'vod' ? `${params.streamer} on ${PFN[params.platform] || 'Twitch'}: up to ${plural(params.top || 3, 'clip')}.` : kind === 'render' ? `${params.clip}: ${params.captions ? capName(params.captions) : 'the same'} captions${params.settings && Object.keys(params.settings).length ? ' with settings of their own' : ''}, ${params.layout === 'stack' ? 'the older stack' : 'webcam over gameplay'}.` : 'Every check the project has, one after another.';
+  const rp = kind === 'vod' ? params.platform : platformOf(first), rw = $('#runWho'); rw.hidden = !(kind === 'live' || kind === 'vod');
+  if (!rw.hidden && kind === 'live' && who.length > 1) {
+    rw.classList.add('many');
+    rw.innerHTML = who.map(login => { const pl = platformOf(login); return `<span class="whotag" data-w="${esc(login)}">${avatar(pl, login, 'sm')}<b>${named(pl, login)}</b><i class="dot off" title="offline"></i></span>`; }).join('');
+  } else {
+    rw.classList.remove('many');
+    rw.innerHTML = rw.hidden ? '' : `${avatar(rp, first, 'lg')}<span class="who"><b>${named(rp, first)}${badges(rp, first, 4)}</b><small data-fo="${esc(pkey(rp, first))}">${rp === 'kick' ? 'kick.com/' : 'twitch.tv/'}${esc(first)}</small></span>`;
+  }
   $('#steps').innerHTML = ''; $('#log').innerHTML = ''; $('#story').innerHTML = ''; $('.logd').open = false; $('#stepsBox').hidden = false; $('#resultBox').hidden = true; $('#resultBox').innerHTML = '';
-  $('#runCtl').hidden = false; $('#stopBtn').disabled = false; $('#stopBtn').textContent = 'Stop'; $('#forceBtn').hidden = true; $('#forceBtn').disabled = false;
+  $('#runCtl').hidden = false; $('#stopBtn').disabled = false; $('#stopBtn').textContent = 'Stop'; $('#forceBtn').hidden = true; $('#forceBtn').disabled = false; $('#forceWrap').innerHTML = '';
+  R.rec = [];
   $('#stagePhone').hidden = tests; $('#stageDots').hidden = !tests; $('#dots').innerHTML = ''; $('#dotsNote').textContent = 'Collecting the tests';
   const ph = $('#phone'); ph.dataset.st = 'wait'; const v = $('#phoneVid'); v.hidden = true; v.removeAttribute('src'); try { v.load(); } catch (e) {}
   $$('.opill').forEach(o => o.classList.remove('on', 'skip'));
-  $('#credit').textContent = kind === 'tests' || kind === 'render' ? '' : (params.platform === 'kick' || (S.ov && (S.ov.streamers.find(s => s.login === params.streamer) || {}).platform === 'kick') ? 'kick.com/' : 'twitch.tv/') + (params.streamer || '');
+  $('#credit').textContent = kind === 'tests' || kind === 'render' ? '' : (platformOf(first) === 'kick' ? 'kick.com/' : 'twitch.tv/') + (first || '');
   $('#total').classList.toggle('ind', kind === 'vod' || kind === 'render' || (kind === 'live' && !+params.minutes)); $('#totalBar').style.width = kind === 'tests' || (kind === 'live' && +params.minutes) ? '0' : '';
   $('#runState').textContent = 'Starting'; $('#runClock').textContent = '0 s';
 }
@@ -419,7 +459,7 @@ function onEvent(e) {
   if (e.say) { story(e.say, e.t); if (e.say.tone === 'bad' && k !== 'end') R.problem = told(e) || e.say.text; }
   if (k === 'log') return logLine(e.line, /error|traceback|failed/i.test(e.line) ? 'w' : '', e.t);
   if (k === 'start') { R.started = e.t; return; }
-  if (k === 'recording') { row('join', 'Join the stream', 'done', 'Recording has started'); pill(e.platform === 'kick' ? 'kick' : 'twitch', 'on'); $('#forceBtn').hidden = R.replay; $('#runState').textContent = 'Recording'; return; }
+  if (k === 'recording') { row('join', 'Join the stream', 'done', 'Recording has started'); pill(e.platform === 'kick' ? 'kick' : 'twitch', 'on'); if (e.streamer && !R.rec.includes(e.streamer)) R.rec.push(e.streamer); const tag = e.streamer && $(`.whotag[data-w="${CSS.escape(e.streamer)}"] .dot`); if (tag) { tag.classList.remove('off'); tag.title = 'recording'; } renderForce(); $('#runState').textContent = 'Recording'; return; }
   if (k === 'baseline') { row('baseline', 'Catch up on the chat', e.more ? 'run' : 'done', `<b>${(+e.messages).toLocaleString('en-US')}</b> messages from ${e.hours} hours of the broadcast${e.category ? ' · ' + esc(e.category) : ''}${e.more ? '. The rest is being read in the background.' : ''}`); const b = $('#steps [data-key="baseline"]'), w = $('#steps [data-key="watch"]'); if (b && w && (w.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)) $('#steps').insertBefore(b, w); return; }
   if (k === 'watching') { row('watch', 'Watch the chat for a moment', 'run', `<b>${plural(e.messages, 'message')}</b> read${e.per_minute ? ', about ' + e.per_minute + ' a minute' : ''}`); $('#runState').textContent = 'Watching the chat'; return; }
   if (k === 'step' && e.step === 'chat') { row('chat', 'Read the chat of the broadcast', e.state === 'start' ? 'run' : e.state === 'done' ? 'done' : 'failed', e.state === 'failed' ? esc(told(e) || e.error) : null, e.seconds); $('#runState').textContent = 'Reading the chat'; pill(R.params.platform === 'kick' ? 'kick' : 'twitch', 'on'); return; }
@@ -490,19 +530,20 @@ async function replay(id) {
   evs.forEach(e => { R.timers.push(setTimeout(() => { if (!R.replay || R.id !== run.id) return; $('#runClock').textContent = fmtS(e.t - t0); if (e.kind !== 'end') $('#totalBar').style.width = Math.min(100, 100 * (e.t - t0) / span) + '%'; try { onEvent(e); } catch (err) { console.error(err); } }, play * (e.t - t0) / span)); });
 }
 async function startRun() {
-  const params = W.mode === 'live' ? { streamer: W.streamer, minutes: W.minutes } : W.mode === 'vod' ? { streamer: W.vodWho, platform: W.platform, vod: W.vod, top: W.top } : {};
+  const params = W.mode === 'live' ? { streamers: liveLogins(), minutes: W.minutes } : W.mode === 'vod' ? { streamer: W.vodWho, platform: W.platform, vod: W.vod, top: W.top } : {};
   try { if (W.mode !== 'tests') await useCaptions(true); const run = await api.post('/api/runs', { kind: W.mode, params }); goStep(4); follow(run); }
   catch (err) { toast(err.message); }
 }
 function initRun() {
   paintModes(); paintWiz();
   $('#modeCards').onclick = e => { const b = e.target.closest('.choice'); if (!b) return; W.mode = b.dataset.k; store.set('mode', W.mode); $$('#modeCards .choice').forEach(x => x.setAttribute('aria-pressed', x === b)); paintWiz(); };
-  $('#whoCards').onclick = e => { const b = e.target.closest('.choice'); if (!b) return; W.streamer = b.dataset.k; store.set('streamer', W.streamer); $('#otherWho').value = ''; $$('#whoCards .choice').forEach(x => x.setAttribute('aria-pressed', x === b)); };
-  $('#otherWho').oninput = e => { const v = e.target.value.trim().toLowerCase().replace(/^.*twitch\.tv\//, '').replace(/[^a-z0-9_]/g, ''); W.streamer = v; store.set('streamer', v); $$('#whoCards .choice').forEach(x => x.setAttribute('aria-pressed', x.dataset.k === v)); };
+  $('#whoCards').onclick = e => { const b = e.target.closest('.choice'); if (!b) return; pickToggle(b.dataset.k); };
+  $('#otherWho').oninput = e => { W.extra = e.target.value.trim().toLowerCase().replace(/^.*twitch\.tv\//, '').replace(/[^a-z0-9_]/g, ''); paintPicked(); };
+  $('#pickLine').onclick = e => { const b = e.target.closest('[data-rm]'); if (b) pickToggle(b.dataset.rm); };
   $('#next1').onclick = () => W.mode === 'tests' ? startRun() : goStep(2);
   $('#back2').onclick = () => goStep(1);
   $('#next2').onclick = () => {
-    if (W.mode === 'live' && !W.streamer) return toast('Pick a stream, or type a channel');
+    if (W.mode === 'live' && !liveLogins().length) return toast('Pick a stream, or type a channel');
     if (needsTool()) return toast('Twitch broadcasts need TwitchDownloaderCLI on this machine');
     if (W.mode === 'vod') { W.vodWho = $('#vodWho').value.trim(); W.vod = $('#vodLink').value.trim(); if (!W.vodWho) return toast('Whose broadcast is it?'); if (!W.vod) return toast('Paste the link of the VOD'); }
     goStep(3);
@@ -510,7 +551,9 @@ function initRun() {
   $('#back3').onclick = () => goStep(2); $('#next3').onclick = startRun;
   $('#wiz').onclick = e => { const b = e.target.closest('button:not([disabled])'); if (b) goStep(+b.dataset.go); };
   $('#stopBtn').onclick = async () => { try { await api.post(`/api/runs/${encodeURIComponent(R.id)}/stop`); } catch (err) { toast(err.message); } };
-  $('#forceBtn').onclick = async () => { $('#forceBtn').disabled = true; setTimeout(() => { $('#forceBtn').disabled = false; }, 60000); try { await api.post(`/api/runs/${encodeURIComponent(R.id)}/force`, { seconds: 45 }); } catch (err) { toast(err.message); $('#forceBtn').disabled = false; } };
+  const doForce = async (btn, body) => { btn.disabled = true; setTimeout(() => { btn.disabled = false; }, 60000); try { await api.post(`/api/runs/${encodeURIComponent(R.id)}/force`, { seconds: 45, ...body }); toast('Clipping the last 45 seconds' + (body.login ? ' of ' + body.login : '')); } catch (err) { toast(err.message); btn.disabled = false; } };
+  $('#forceBtn').onclick = e => doForce(e.currentTarget, {});
+  $('#forceWrap').onclick = e => { const b = e.target.closest('[data-force]'); if (b) doForce(b, { login: b.dataset.force }); };
   $$('.opill').forEach(o => { const map = { twitch: ['twitch', 'Twitch'], kick: ['kick', 'Kick'], cl: ['claude', 'Judge'], tg: ['telegram', 'Approval'], yt: ['youtube', 'YouTube'] }[o.dataset.o]; o.innerHTML = ic(map[0], 'pf-' + map[0]) + `<span>${map[1]}</span>`; });
   phoneTilt($('#stagePhone'), $('#phone'));
 }
@@ -727,4 +770,7 @@ initRun(); initClips(); initInsights(); initSettings();
 show(location.hash.slice(1) || store.get('view', 'run'));
 loadOverview().then(ov => { if (ov && ov.active) { if (['live', 'vod', 'tests'].includes(ov.active.kind)) W.mode = ov.active.kind; W.step = 4; $$('.stepbox').forEach(b => { b.hidden = b.id !== 's4'; }); follow(ov.active); paintWiz(); if (!location.hash) location.hash = 'run'; } });
 });
+/* Make the app installable and quick to reopen. The worker only caches versioned assets and the shell;
+   the server, the API and the token are always reached fresh (see sw.js). */
+if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
 })();

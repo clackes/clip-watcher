@@ -4,9 +4,37 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#11111c">
 <meta name="companion-token" content="__TOKEN__">
 <title>ClipVision Companion</title>
-<link rel="icon" href="data:,">
+<meta name="description" content="Run Clip Watcher and watch every step: live and VOD lanes, staged clips, caption templates, insights and settings.">
+<meta name="application-name" content="ClipVision Companion">
+<meta name="robots" content="noindex, nofollow">
+
+<!-- Installable app (PWA) -->
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ClipVision">
+<link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+
+<!-- Icons -->
+<link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png">
+<link rel="icon" type="image/png" sizes="192x192" href="/static/img/icon-192.png">
+<link rel="icon" href="/static/img/favicon-32.png">
+
+<!-- Branding when the link is shared -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="ClipVision Companion">
+<meta property="og:title" content="ClipVision Companion">
+<meta property="og:description" content="Run Clip Watcher and watch every step: live and VOD lanes, staged clips, caption templates, insights and settings.">
+<meta property="og:image" content="/static/img/icon-512.png">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="ClipVision Companion">
+<meta name="twitter:description" content="Run Clip Watcher and watch every step, from live lane to staged Short.">
+<meta name="twitter:image" content="/static/img/icon-512.png">
+
 <link rel="stylesheet" href="/static/app.css?v=__VER__">
 <link rel="stylesheet" href="/static/library.css?v=__VER__">
 <link rel="stylesheet" href="/static/connect.css?v=__VER__">
@@ -34,8 +62,10 @@
   <div class="stepbox" id="s2" hidden>
     <div class="vhead"><div><h1 data-a id="s2title"></h1><p class="lead" data-a id="s2lead"></p></div></div>
     <div id="srcLive" data-a>
+      <p class="cap-note" id="pickHint" style="margin:-6px 0 14px">Pick one or more streams to watch — the lane clips them all at once.</p>
       <div class="choices who" id="whoCards"></div>
-      <div class="field" style="max-width:420px;margin-top:20px"><label class="eyebrow" for="otherWho">Or another Twitch channel</label><input type="text" id="otherWho" autocomplete="off" spellcheck="false" placeholder="channel name"></div>
+      <div class="field" style="max-width:420px;margin-top:20px"><label class="eyebrow" for="otherWho">Add another Twitch channel</label><input type="text" id="otherWho" autocomplete="off" spellcheck="false" placeholder="channel name"></div>
+      <div class="picked" id="pickLine" hidden></div>
       <div class="row" style="gap:14px;margin-top:20px"><span class="eyebrow">Watch for</span><div class="seg" id="minSeg"></div></div>
     </div>
     <div id="srcVod" class="srcrow" data-a hidden>
@@ -56,7 +86,7 @@
 
   <div class="stepbox" id="s4" hidden>
     <div class="vhead"><div><h1 data-a id="runTitle"></h1><p class="lead" data-a id="runNote"></p><div class="byline" data-a id="runWho" hidden></div></div>
-      <div class="row" data-a id="runCtl"><button class="btn btn-glass" id="forceBtn" hidden>Clip the last 45 seconds</button><button class="btn btn-ghost" id="stopBtn">Stop</button></div></div>
+      <div class="row" data-a id="runCtl"><span class="row" id="forceWrap" style="gap:8px;flex-wrap:wrap"></span><button class="btn btn-glass" id="forceBtn" hidden>Clip the last 45 seconds</button><button class="btn btn-ghost" id="stopBtn">Stop</button></div></div>
     <div data-a><div class="total" id="total"><i id="totalBar"></i></div><div class="row" style="justify-content:space-between;margin-top:8px"><span class="cap-note" id="runState">Starting</span><span class="num" id="runClock" style="font-weight:600;color:var(--soft)">0 s</span></div></div>
     <div class="runwrap">
       <div class="card" id="stageCard" data-a>

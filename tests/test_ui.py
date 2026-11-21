@@ -272,8 +272,14 @@ def test_commands_are_built_from_checked_values(monkeypatch):
     assert "--vod" in command(
         "vod", {"streamer": "zack", "vod": "https://www.twitch.tv/videos/123", "top": 2}
     )
+    # one live run can watch several streams at once (deduped, lower-cased)
+    assert command("live", {"streamers": ["Zack", "clix", "zack"]})[-4:-2] == ["--streamers", "zack,clix"]
     bad = [
         ("live", {"streamer": ""}),
+        ("live", {"streamers": []}),
+        ("live", {"streamers": ["ok", "bad name"]}),
+        ("live", {"streamers": "zack"}),  # a string, not a list
+        ("live", {"streamers": ["a"] * 13}),
         ("live", {"streamer": "zack", "minutes": 99999}),
         ("live", {"streamer": "zack; rm -rf"}),
         ("vod", {"streamer": "zack", "vod": "a b"}),
@@ -283,6 +289,39 @@ def test_commands_are_built_from_checked_values(monkeypatch):
     for kind, params in bad:
         with pytest.raises(ValueError):
             command(kind, params)
+
+
+# a lane that records two streams, then idles so the run stays alive for a forced clip
+TWO_LANE = (
+    "import json, os, sys, time\n"
+    "f = open(os.environ['CLIPWATCHER_EVENTS'], 'a')\n"
+    "say = lambda **d: (f.write(json.dumps(d) + chr(10)), f.flush())\n"
+    "say(t=1.0, kind='recording', streamer='zack', ring='/ring/zack')\n"
+    "say(t=1.1, kind='recording', streamer='clix', ring='/ring/clix')\n"
+    "time.sleep(60)\n"
+)
+
+
+def test_a_live_run_can_watch_and_clip_several_streams(tmp_path):
+    spawned = []
+    m = RunManager(tmp_path, build=lambda kind, params: [sys.executable, "-c", TWO_LANE])
+    orig_spawn = m._spawn
+    m._spawn = lambda run, cmd: (spawned.append(cmd), orig_spawn(run, cmd))[1]
+    run = m.start("live", {"streamers": ["zack", "clix"]})
+    try:
+        end = time.time() + 10
+        while len(run.rings) < 2 and time.time() < end:
+            time.sleep(0.05)
+        assert run.rings == {"zack": "/ring/zack", "clix": "/ring/clix"}
+        with pytest.raises(RuntimeError):  # two streams: which one?
+            m.force(run.id, 45)
+        with pytest.raises(RuntimeError):  # a stream that is not being recorded
+            m.force(run.id, 45, "nobody")
+        m.force(run.id, 30, "clix")
+        assert any("/ring/clix" in c and "clix" in c for c in spawned)
+    finally:
+        m.stop(run.id)
+        _wait(run)
 
 
 def test_the_example_file_is_not_offered_as_a_list_of_channels(tmp_path, monkeypatch):
@@ -320,6 +359,22 @@ def _call(port, method, path, body=None, headers=None):
     conn.request(method, path, json.dumps(body).encode() if body is not None else None, headers or {})
     resp = conn.getresponse()
     return resp.status, resp.getheaders(), resp.read()
+
+
+def test_the_app_is_installable_as_a_pwa(served):
+    port, app = served
+    status, headers, sw = _call(port, "GET", "/sw.js")
+    h = {k.lower(): v for k, v in headers}
+    assert status == 200 and b"serviceWorker" not in sw  # the worker itself, not the page
+    assert "javascript" in h["content-type"] and h.get("service-worker-allowed") == "/"
+    assert h["cache-control"] == "no-store"  # a new worker is always fetched fresh
+    status, headers, mf = _call(port, "GET", "/manifest.webmanifest")
+    man = json.loads(mf)
+    assert status == 200 and man["name"] == "ClipVision Companion" and man["display"] == "standalone"
+    assert man["icons"] and all(i["src"].startswith("/static/img/") for i in man["icons"])
+    assert _call(port, "GET", "/static/img/icon-512.png")[0] == 200
+    page = _call(port, "GET", "/")[2]
+    assert b'rel="manifest"' in page and b'name="theme-color"' in page and b"apple-touch-icon" in page
 
 
 def test_the_page_its_data_and_a_clip_video_are_served(served):

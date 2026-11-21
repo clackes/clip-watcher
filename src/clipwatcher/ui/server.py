@@ -117,7 +117,13 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
         def _error(self, code: int, message: str) -> None:
             self._json({"error": message}, code)
 
-        def _file(self, path: Path, ctype: str | None = None, cache: str | None = None) -> None:
+        def _file(
+            self,
+            path: Path,
+            ctype: str | None = None,
+            cache: str | None = None,
+            extra: dict[str, str] | None = None,
+        ) -> None:
             """A file, whole or the byte range asked for (video players seek with ranges)."""
             size = path.stat().st_size
             ctype = ctype or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
@@ -145,6 +151,8 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
             self.send_header("X-Content-Type-Options", "nosniff")
             if cache:
                 self.send_header("Cache-Control", cache)
+            for k, v in (extra or {}).items():
+                self.send_header(k, v)
             if code == 206:
                 self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
             self.end_headers()
@@ -198,7 +206,12 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
         def _get(self, parts: list[str], query: dict[str, list[str]]) -> None:
             if not parts:
                 ver = str(
-                    int(max((p.stat().st_mtime for p in [*STATIC.glob("*.js"), *STATIC.glob("*.css")]), default=0))
+                    int(
+                        max(
+                            (p.stat().st_mtime for p in [*STATIC.glob("*.js"), *STATIC.glob("*.css")]),
+                            default=0,
+                        )
+                    )
                 )
                 page = (
                     (STATIC / "index.html")
@@ -208,6 +221,20 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                 )
                 return self._send(200, page.encode(), "text/html; charset=utf-8")
             head = parts[0]
+            if parts == ["sw.js"]:
+                # served from the root so the worker's scope is the whole app
+                return self._file(
+                    STATIC / "sw.js",
+                    "text/javascript; charset=utf-8",
+                    cache="no-store",
+                    extra={"Service-Worker-Allowed": "/"},
+                )
+            if parts == ["manifest.webmanifest"]:
+                return self._file(
+                    STATIC / "manifest.webmanifest",
+                    "application/manifest+json; charset=utf-8",
+                    cache="no-store",
+                )
             if head == "static" and len(parts) > 1:
                 path = (STATIC / Path(*parts[1:])).resolve()
                 if STATIC.resolve() in path.parents and path.is_file():
@@ -351,7 +378,7 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
             if len(parts) == 4 and parts[:2] == ["api", "runs"] and parts[3] == "stop":
                 return self._json({"stopping": m.stop(parts[2])})
             if len(parts) == 4 and parts[:2] == ["api", "runs"] and parts[3] == "force":
-                m.force(parts[2], float(body.get("seconds") or 45))
+                m.force(parts[2], float(body.get("seconds") or 45), str(body.get("login") or "") or None)
                 return self._json({"forced": True})
             if parts == ["api", "captions", "preview"]:  # made once per style and settings, then kept
                 made = captions.preview(str(body.get("style") or ""), body.get("settings") or None)

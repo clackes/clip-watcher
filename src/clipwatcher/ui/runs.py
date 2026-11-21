@@ -23,6 +23,31 @@ from clipwatcher import config
 
 LOGIN = re.compile(r"[A-Za-z0-9_]{2,40}")
 VOD = re.compile(r"[A-Za-z0-9:/._?=&%-]{4,200}")
+MAX_LIVE = 12  # how many streams one live run may watch at once
+
+
+def live_logins(params: dict[str, Any]) -> list[str]:
+    """The streamers a live run should watch: a list (``streamers``) or one (``streamer``), deduped and
+    validated. ValueError says, in words for the page, what is wrong."""
+    raw = params.get("streamers")
+    if raw is None:
+        raw = [params.get("streamer")] if params.get("streamer") else []
+    if not isinstance(raw, list):
+        raise ValueError("streamers: a list of channel names.")
+    seen: list[str] = []
+    for item in raw:
+        login = str(item or "").lower()
+        if not LOGIN.fullmatch(login):
+            raise ValueError("Pick a stream, or type a channel.")
+        if login not in seen:
+            seen.append(login)
+    if not seen:
+        raise ValueError("Pick at least one stream, or type a channel.")
+    if len(seen) > MAX_LIVE:
+        raise ValueError(f"Watch at most {MAX_LIVE} streams at once.")
+    return seen
+
+
 RUN_ID = re.compile(r"[0-9]{8}-[0-9]{6}-[a-z]{1,12}(-[0-9]{1,4})?")
 _TEST = re.compile(r"^(tests/\S+?)::(\S+) (PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)\s+\[\s*(\d+)%\]")
 _SUMMARY = re.compile(r"^=+ (.*?) in ([\d.]+)s")
@@ -106,14 +131,15 @@ def command(kind: str, params: dict[str, Any]) -> list[str]:
             library.check(str(params.get("captions") or ""), chosen)
             cmd += ["--settings", json.dumps(chosen, sort_keys=True)]
         return cmd
-    login = str(params.get("streamer") or "").lower()
-    if not LOGIN.fullmatch(login):
-        raise ValueError("Pick a streamer.")
     if kind == "live":
         minutes = float(params.get("minutes") or 0)
         if not 0 <= minutes <= 24 * 60:
             raise ValueError("Minutes: between 0 (until stopped) and 1440.")
-        return [py, "-m", "clipwatcher.live", "--streamers", login, "--minutes", f"{minutes:g}"]
+        logins = live_logins(params)
+        return [py, "-m", "clipwatcher.live", "--streamers", ",".join(logins), "--minutes", f"{minutes:g}"]
+    login = str(params.get("streamer") or "").lower()
+    if not LOGIN.fullmatch(login):
+        raise ValueError("Pick a streamer.")
     if kind == "vod":
         platform, vod = str(params.get("platform") or "twitch"), str(params.get("vod") or "").strip()
         if platform not in ("twitch", "kick"):
@@ -149,6 +175,7 @@ class Run:
         self.proc: subprocess.Popen[str] | None = None
         self.stopping = False
         self.ring: str | None = None  # the live lane's recording, once it says where it is
+        self.rings: dict[str, str] = {}  # one live run may watch several streams: ring per streamer
         self.staged: list[str] = []
         self.tests: dict[str, Any] = {}
         self._logs = 0
@@ -184,6 +211,7 @@ class Run:
             "staged": list(self.staged),
             "tests": dict(self.tests),
             "ring": self.ring,
+            "rings": dict(self.rings),
             "events": len(self.events),
         }
 
@@ -332,6 +360,9 @@ class RunManager:
             return
         if kind == "recording":
             run.ring = row.get("ring")
+            who = str(row.get("streamer") or "").lower()
+            if who and row.get("ring"):
+                run.rings[who] = str(row.get("ring"))
         elif kind == "staged" and row.get("clip_id"):
             run.staged.append(str(row["clip_id"]))
         run.add(kind, **row)
@@ -384,18 +415,29 @@ class RunManager:
         threading.Thread(target=press, daemon=True).start()
         return True
 
-    def force(self, rid: str, seconds: float = 45.0) -> None:
-        """Clip the last ``seconds`` of a live run now, through the same pipeline (scripts/force_clip.py)."""
+    def force(self, rid: str, seconds: float = 45.0, login: str | None = None) -> None:
+        """Clip the last ``seconds`` of a live run now, through the same pipeline (scripts/force_clip.py).
+
+        One run may watch several streams: ``login`` says which, and is only optional when exactly one is
+        recording."""
         run = self.runs.get(rid)
         if run is None or run.kind != "live" or run.state != "running":
             raise RuntimeError("Only a live run that is going can be asked for a clip.")
-        if not run.ring:
+        if not run.rings:
             raise RuntimeError("The recording has not started yet.")
-        login = str(run.params.get("streamer") or "").lower()
+        if login:
+            login = login.lower()
+            ring = run.rings.get(login)
+            if ring is None:
+                raise RuntimeError("That stream is not being recorded.")
+        elif len(run.rings) == 1:
+            login, ring = next(iter(run.rings.items()))
+        else:
+            raise RuntimeError("Several streams are being watched: say which one to clip.")
         cmd = [
             sys.executable,
             str(config.ROOT / "scripts" / "force_clip.py"),
-            run.ring,
+            ring,
             login,
             "--dur",
             f"{seconds:g}",
