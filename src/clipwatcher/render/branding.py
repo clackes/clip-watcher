@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -142,3 +143,49 @@ def ensure_branding(out_dir: Path | None = None) -> Path:
     out = Path(out_dir) if out_dir else BRANDING_DIR
     generate_all(out)
     return out
+
+
+# -- the top banner the companion app lets the owner set ------------------------------------------------------
+# The split layout scales it to a fixed width (render/template.py SPLIT_LOGO_W), so a wide banner (about 7:1,
+# like the placeholder's 800x110) sits best. Uploads are kept here; the render reads this file at each render.
+LOGO_FILE = BRANDING_DIR / "top_logo.png"
+_LOGO_MARK = BRANDING_DIR / ".top_logo.custom"  # present once the owner uploaded their own banner
+_LOGO_MAX = (1200, 400)  # the stored banner is fit inside this; the render scales it to the layout
+
+
+def logo_file() -> Path:
+    """The banner overlaid on clips; the placeholder is written first if nothing is there yet."""
+    if not LOGO_FILE.exists():
+        ensure_branding(BRANDING_DIR)
+    return LOGO_FILE
+
+
+def logo_is_custom() -> bool:
+    """True when the current banner is one the owner uploaded (not the generated placeholder)."""
+    return _LOGO_MARK.exists() and LOGO_FILE.exists()
+
+
+def save_logo(raw: bytes) -> dict[str, object]:
+    """Keep uploaded image bytes as the clip banner (assets/branding/top_logo.png). ValueError on anything
+    Pillow cannot open as an image. The file is written whole (temp then rename) so a render never reads half."""
+    try:
+        img = Image.open(io.BytesIO(raw))
+        img.load()
+    except Exception as e:  # noqa: BLE001 - any unreadable upload is a bad request, not a crash
+        raise ValueError("That file is not an image the app can read (PNG, JPG or WebP).") from e
+    img = img.convert("RGBA")
+    img.thumbnail(_LOGO_MAX, Image.LANCZOS)
+    BRANDING_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = LOGO_FILE.with_name(LOGO_FILE.name + ".tmp")
+    img.save(tmp, "PNG")
+    tmp.replace(LOGO_FILE)
+    _LOGO_MARK.write_text("1", encoding="utf-8")
+    return {"ok": True, "custom": True, "width": img.width, "height": img.height}
+
+
+def reset_logo() -> dict[str, object]:
+    """Put the generated placeholder banner back."""
+    BRANDING_DIR.mkdir(parents=True, exist_ok=True)
+    _logo().save(LOGO_FILE)
+    _LOGO_MARK.unlink(missing_ok=True)
+    return {"ok": True, "custom": False}

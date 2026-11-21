@@ -140,6 +140,12 @@ GROUPS: list[dict[str, Any]] = [
             ),
             _f("render.sfx", "Meme sound on judge beats", "toggle"),
             _f(
+                "render.logo",
+                "Show my banner on clips",
+                "toggle",
+                "The image at the top of the split layout; set the image under Banner image below.",
+            ),
+            _f(
                 "render.profile",
                 "Encoder profile",
                 "select",

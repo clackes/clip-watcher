@@ -197,13 +197,23 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
 
         def _get(self, parts: list[str], query: dict[str, list[str]]) -> None:
             if not parts:
-                page = (STATIC / "index.html").read_text(encoding="utf-8").replace("__TOKEN__", app.token)
+                ver = str(
+                    int(max((p.stat().st_mtime for p in [*STATIC.glob("*.js"), *STATIC.glob("*.css")]), default=0))
+                )
+                page = (
+                    (STATIC / "index.html")
+                    .read_text(encoding="utf-8")
+                    .replace("__TOKEN__", app.token)
+                    .replace("__VER__", ver)
+                )
                 return self._send(200, page.encode(), "text/html; charset=utf-8")
             head = parts[0]
             if head == "static" and len(parts) > 1:
                 path = (STATIC / Path(*parts[1:])).resolve()
                 if STATIC.resolve() in path.parents and path.is_file():
-                    return self._file(path)
+                    # the app's own JS/CSS carry no version in their URL: never cache them, or a frontend
+                    # update leaves the page running the old script until a hard refresh
+                    return self._file(path, cache="no-store")
             elif head == "fonts" and len(parts) == 2:
                 path = (FONTS / parts[1]).resolve()
                 if path.parent == FONTS.resolve() and path.suffix in (".ttf", ".woff2") and path.is_file():
@@ -261,6 +271,14 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                 return self._json(
                     {"groups": settings.schema(), "file": str(config.CONFIG_DIR / "local.yaml")}
                 )
+            if parts == ["branding"]:
+                from clipwatcher.render import branding
+
+                return self._json({"custom": branding.logo_is_custom()})
+            if parts == ["branding", "logo"]:
+                from clipwatcher.render import branding
+
+                return self._file(branding.logo_file(), "image/png", cache="no-store")
             if parts == ["runs"]:
                 return self._json(m.history())
             if len(parts) >= 2 and parts[0] == "runs":
@@ -304,6 +322,8 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
             if not self._own_host() or not self._may_change():
                 return self._error(403, "Open the page from this server and try again.")
             parts = [urllib.parse.unquote(p) for p in urllib.parse.urlsplit(self.path).path.split("/") if p]
+            if parts == ["api", "branding", "logo"]:  # a raw image body, not JSON (and may be over 1 MB)
+                return self._upload_logo()
             try:
                 length = int(self.headers.get("Content-Length") or 0)
                 body = json.loads(self.rfile.read(length) or b"{}") if 0 < length <= 1_000_000 else {}
@@ -351,7 +371,24 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                     raise ValueError("values: an object of setting to value.")
                 kept = settings.save(values, merge=body.get("merge") is True)
                 return self._json({"saved": kept, "groups": settings.schema()})
+            if parts == ["api", "branding", "logo", "reset"]:
+                from clipwatcher.render import branding
+
+                return self._json(branding.reset_logo())
             self._error(404, "Not found.")
+
+        def _upload_logo(self) -> None:
+            """Keep a raw image body as the clip banner (POST /api/branding/logo)."""
+            length = int(self.headers.get("Content-Length") or 0)
+            if not 0 < length <= 8_000_000:
+                return self._error(400, "Send an image up to 8 MB.")
+            raw = self.rfile.read(length)
+            from clipwatcher.render import branding
+
+            try:
+                self._json(branding.save_logo(raw))
+            except ValueError as e:
+                self._error(400, str(e))
 
     return Handler
 
