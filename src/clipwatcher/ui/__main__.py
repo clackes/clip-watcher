@@ -67,24 +67,36 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--open", action="store_true", help="open the page in the browser")
     a = ap.parse_args(argv)
     allow = [*a.allow_host, *(h for h in os.environ.get("CLIPWATCHER_UI_HOSTS", "").split(",") if h.strip())]
-    ts_url = None
+    ts_url, ts_ip = None, None
     if a.tailscale:
         found = tailnet_self()
         if found is None:
             print("--tailscale: Tailscale is not running here; serving loopback only.", file=sys.stderr)
         else:
-            name, ip4 = found
-            allow += [name, ip4] if ip4 else [name]
+            name, ts_ip = found
+            allow += [name, ts_ip] if ts_ip else [name]
             ts_url = f"https://{name}/"
     try:
         server, app = make_server(a.host, a.port, allow=allow)
     except OSError as e:
         print(f"Port {a.port} cannot be used ({e}). Try --port {a.port + 1}.", file=sys.stderr)
         return 2
+    # A second listener on the tailnet IP itself, sharing the same app: people the node is *shared* with
+    # often cannot reach a `tailscale serve` endpoint (serve is tailnet-only), but they can reach this
+    # directly. It binds only the Tailscale interface, never the machine's public IP.
+    extra = None
+    if ts_ip and ts_ip != a.host:
+        try:
+            extra, _ = make_server(ts_ip, a.port, app=app)
+            threading.Thread(target=extra.serve_forever, name="companion-tailnet", daemon=True).start()
+        except OSError as e:
+            print(f"could not also bind {ts_ip}:{a.port} ({e}).", file=sys.stderr)
     url = f"http://{'127.0.0.1' if a.host in ('127.0.0.1', '0.0.0.0') else a.host}:{a.port}/"  # noqa: S104
     print(f"Companion for Clip Watcher: {url}   (Ctrl-C to stop)", flush=True)
     if ts_url:
         print(f"Over Tailscale (with `tailscale serve`): {ts_url}", flush=True)
+    if extra:
+        print(f"On the tailnet directly (for shared users): http://{ts_ip}:{a.port}/", flush=True)
     print(
         "DRY_RUN is on: nothing is uploaded."
         if config.dry_run()
@@ -106,6 +118,9 @@ def main(argv: list[str] | None = None) -> int:
             app.manager.stop(active.id)
             if active.proc is not None:
                 active.proc.wait(timeout=60)
+        if extra is not None:
+            extra.shutdown()
+            extra.server_close()
         server.server_close()
     return 0
 
