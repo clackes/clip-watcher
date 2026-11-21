@@ -8,10 +8,9 @@ from clipwatcher.publish import youtube_browser as yb
 
 
 class Button:
-    def __init__(self, blocked_clicks=0, hides=True):
+    def __init__(self, blocked_clicks=0):
         self.blocked = blocked_clicks
         self.clicks = self.js = 0
-        self.hides = hides
 
     async def click(self, timeout=None):
         if self.blocked:
@@ -21,10 +20,6 @@ class Button:
 
     async def evaluate(self, js):
         self.js += 1
-
-    async def wait_for(self, state=None, timeout=None):
-        if not self.hides:
-            raise TimeoutError("still visible")
 
 
 class Page:
@@ -64,10 +59,46 @@ def test_backdrop_that_stays_gets_a_page_click(tmp_path):
     assert (b.clicks, b.js) == (0, 1)
 
 
-def test_publish_that_did_not_take_is_an_error():
-    run(yb._published(Button()))
-    with pytest.raises(RuntimeError, match="did not publish"):
-        run(yb._published(Button(hides=False)))
+class Done:
+    def __init__(self, page):
+        self.page = page
+
+    @property
+    def first(self):
+        return self
+
+    async def is_visible(self):
+        self.page.looks += 1
+        return self.page.looks >= self.page.shown_after
+
+
+class StudioPage(Page):
+    def __init__(self, shown_after):
+        super().__init__()
+        self.looks, self.shown_after, self.texts = 0, shown_after, []
+
+    def get_by_text(self, pattern):
+        self.texts.append(pattern)
+        return Done(self)
+
+
+def test_published_waits_for_studio_to_say_so(monkeypatch):
+    monkeypatch.setattr(yb.asyncio, "sleep", _no_sleep)
+    page = StudioPage(shown_after=3)
+    run(yb._published(page))
+    assert page.looks == 3
+    assert page.texts[0].match("Video published") and page.texts[0].match("Video saved")
+    assert not page.texts[0].match("Publish")
+
+
+def test_publish_that_did_not_take_is_an_error(monkeypatch):
+    monkeypatch.setattr(yb.asyncio, "sleep", _no_sleep)
+    with pytest.raises(RuntimeError, match="did not say"):
+        run(yb._published(StudioPage(shown_after=10**9), timeout_s=0.05))
+
+
+async def _no_sleep(_s):
+    return None
 
 
 def test_shots_default_and_off(monkeypatch):

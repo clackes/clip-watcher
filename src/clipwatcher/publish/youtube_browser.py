@@ -205,7 +205,7 @@ async def _upload(
             # the upload is still finishing.
             publish = page.get_by_role("button", name=re.compile(r"^(Publish|Save)$"))
             await _press(page, publish, shots=shots, name="publish")
-            await _published(publish)
+            await _published(page)
 
             # Dismiss the "done" dialog if one appears.
             try:
@@ -220,13 +220,20 @@ async def _upload(
             await ctx.close()
 
 
-async def _published(publish, timeout_ms: int = 90_000) -> None:
-    """Publish went through only when its button goes away (the upload dialog gives way to "Video
-    published"): a click that did nothing must not mark the clip PUBLISHED."""
-    try:
-        await publish.wait_for(state="hidden", timeout=timeout_ms)
-    except Exception:
-        raise RuntimeError("Publish was pressed but Studio did not publish the video") from None
+async def _published(page, timeout_s: float = 90.0) -> None:
+    """Publish went through only when Studio says so ("Video published", or "Video saved" for a private
+    one): a click that did nothing must not mark the clip PUBLISHED. Not the Publish button going away:
+    on the server's first uploads (21 Nov) the video was out and the button never counted as hidden."""
+    done = page.get_by_text(re.compile(r"^\s*Video (published|saved)\s*$", re.I)).first
+    t_end = time.monotonic() + timeout_s
+    while time.monotonic() < t_end:
+        try:
+            if await done.is_visible():
+                return
+        except Exception:
+            pass
+        await asyncio.sleep(1.0)
+    raise RuntimeError("Publish was pressed but Studio did not say the video was published")
 
 
 @contextlib.contextmanager

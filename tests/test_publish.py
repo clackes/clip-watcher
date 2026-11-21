@@ -205,6 +205,9 @@ def _fake_patchright(monkeypatch, log):
         async def get_attribute(self, name):
             return "aBcDeFgHiJk"
 
+        async def is_visible(self):  # "Video published" once Publish is pressed
+            return True
+
     class Keyboard:
         async def press(self, key):
             log.append(("press", key))
@@ -223,6 +226,12 @@ def _fake_patchright(monkeypatch, log):
 
         def locator(self, selector):
             return Locator(selector)
+
+        def get_by_text(self, text, **kw):
+            return Locator(f"text:{getattr(text, 'pattern', text)}")
+
+        async def screenshot(self, **kw):
+            pass
 
     class Context:
         pages = [Page()]
